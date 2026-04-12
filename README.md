@@ -61,37 +61,3 @@ Run `python build.py` to generate the latest standalone version.
 
 ## 📜 Legal Disclaimer
 **Command & Conquer** (including *Tiberian Sun*, *Red Alert 2*, and *Yuri's Revenge*) is a trademark or registered trademark of Electronic Arts Inc. in the U.S. and/or other countries. This project is an unofficial, community-driven toolset and is not affiliated with, endorsed by, or sponsored by Electronic Arts. It is developed for educational and modding preservation purposes.
-## ⚙️ Configuration & Vanilla Mode
-By default, the editor includes specialized presets and palettes for **C&C Reloaded** (a *Yuri's Revenge* mod by FS-21). If you prefer a **standard/vanilla** experience:
-1. Open the generated `advanced_shp_editor.html` or the `index.html` of the PWA folder in a text editor.
-2. Search for `let CnCReloadedMode = true;` near the top of the file.
-3. Change it to `let CnCReloadedMode = false;`.
-4. Save and reload the editor. This will hide all Reloaded-specific scaling presets and palette categories.
-
-## 📦 Distribution & Offline Use
-- **Self-Contained Build:** The `build.py` script generates a single, standalone file named **`advanced_shp_editor.html`**. This file is **100% portable** and works entirely **offline** without any external dependencies.
-- **PWA Ready:** The project includes a dedicated `PWA/` directory with a manifest and service worker. You can host this on any web service (GitHub Pages, Vercel, etc.) to enable "Install as App" functionality on your desktop.
-
-## 🛠️ Compatibility & Technology
-- **Performance First:** 100% Vanilla JavaScript (ES6+). Optimized for speed and large file handling.
-- **Best Experience:** Use **Chrome** or **Edge** for the full suite of features, including native file system integration.
-- **Browser Notes:** While mostly functional in **Firefox**, certain features related to PWA installation and local storage persistence for a "native-like" experience may be limited or incompatible due to browser engine differences.
-
-## 🌐 Internationalization (i18n)
-The editor is fully localized and supports multiple languages, making it accessible to the global C&C community. Supported languages include:
-- **English** (EN)
-- **Spanish** (ES)
-- **Russian** (RU)
-- **German** (DE)
-- **French** (FR)
-- **Portuguese** (PT)
-- **Chinese** (Simplified & Traditional)
-
-## 🔨 How to Build
-Run `python build.py` to generate the latest standalone version.
-
----
-*Created for the C&C Modding community.*
-
-## 📜 Legal Disclaimer
-**Command & Conquer** (including *Tiberian Sun*, *Red Alert 2*, and *Yuri's Revenge*) is a trademark or registered trademark of Electronic Arts Inc. in the U.S. and/or other countries. This project is an unofficial, community-driven toolset and is not affiliated with, endorsed by, or sponsored by Electronic Arts. It is developed for educational and modding preservation purposes.
