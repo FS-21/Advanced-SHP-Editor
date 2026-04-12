@@ -1,0 +1,73 @@
+/* Resize Dialog Refinements */
+
+/* UI Tooltip (Generic) */
+.ui-tooltip {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'Segoe UI', sans-serif;
+    pointer-events: none;
+    z-index: 10000;
+    border: 1px solid #00ffaa;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
+    max-width: 280px;
+    line-height: 1.4;
+    white-space: pre-line;
+    display: none;
+}
+
+.ui-tooltip small {
+    font-size: 11px;
+    color: #aaa;
+    display: block;
+    margin-top: 4px;
+}
+
+.ui-tooltip.active {
+    display: block;
+}
+
+/* Specialized class for large, flexible dialogs (like Animation Preview) */
+dialog.dialog-dark.dialog-preview-window[open] {
+    background: #1a202c !important;
+    border: 1px solid #4a5568 !important;
+    color: #e2e8f0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8) !important;
+
+    /* Increased Size suitable for previews */
+    width: 95vw !important;
+    max-width: 1100px !important;
+    height: 95vh !important;
+    max-height: 850px !important;
+    padding: 0 !important;
+    display: flex;
+    flex-direction: column;
+}
+
+dialog.dialog-dark.dialog-preview-window::backdrop {
+    background: rgba(0, 0, 0, 0.7);
+}
+
+/* Pixel Grid Overlay */
+.pixel-grid {
+    position: relative;
+}
+
+.pixel-grid::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+    background-size: var(--grid-size) var(--grid-size);
+    pointer-events: none;
+    z-index: 10;
+}

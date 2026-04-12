@@ -1,0 +1,9 @@
+
+export function updateModeButtons() {
+    const mode = state.selectionMode || 'new';
+    if(elements.btnSelNew) elements.btnSelNew.classList.toggle('active', mode === 'new');
+    if(elements.btnSelAdd) elements.btnSelAdd.classList.toggle('active', mode === 'add');
+    if(elements.btnSelSub) elements.btnSelSub.classList.toggle('active', mode === 'sub');
+    if(elements.btnSelInt) elements.btnSelInt.classList.toggle('active', mode === 'int');
+    if(elements.btnSelXor) elements.btnSelXor.classList.toggle('active', mode === 'xor');
+}

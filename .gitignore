@@ -1,0 +1,32 @@
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build outputs
+Build/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+
+# Temp/Backups
+.syntax_check.js
+translation_audit.txt
+scratch/
+borrable/
+*.bak
+*.tmp
+*.log
