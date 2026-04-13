@@ -98,8 +98,8 @@ export const elements = {
     // Properties
     get propBrushSize() { return document.getElementById('propBrushSize'); },
     get propBrushShape() { return document.getElementById('propBrushShape'); },
-    get btnBrushShapeSquare() { return document.getElementById('btnBrushShapeSquare'); },
-    get btnBrushShapeCircle() { return document.getElementById('btnBrushShapeCircle'); },
+    get btnBrushShapeSquare() { return document.getElementById('btnBrushSquare'); },
+    get btnBrushShapeCircle() { return document.getElementById('btnBrushCircle'); },
     get propSquareOptions() { return document.getElementById('propSquareOptions'); },
     get cbSquareFill() { return document.getElementById('cbSquareFill'); },
     get inpSquareFillColor() { return document.getElementById('inpSquareFillColor'); },
