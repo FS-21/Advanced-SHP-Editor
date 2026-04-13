@@ -30,21 +30,25 @@ jobs:
     - name: Run build script
       run: python build.py
 
+    - name: Determine Version Name
+      id: vars
+      run: |
+        if [ "${{ github.event_name }}" == "pull_request" ]; then
+          echo "version=PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+        fi
+
     - name: Prepare Standalone Asset
       run: |
         cd Build
-        # Usamos el nombre del repositorio y la versión (tag) si existe, si no usamos 'latest'
-        VERSION=${{ github.ref_name }}
-        [ -z "$VERSION" ] && VERSION="latest"
-        zip "../Advanced-SHP-Editor-${VERSION}.zip" advanced_shp_editor.html
+        zip "../Advanced-SHP-Editor-${{ steps.vars.outputs.version }}.zip" advanced_shp_editor.html
         cd ..
 
     - name: Prepare PWA Asset
       run: |
         cd Build/PWA
-        VERSION=${{ github.ref_name }}
-        [ -z "$VERSION" ] && VERSION="latest"
-        zip -r "../../Advanced-SHP-Editor-PWA-${VERSION}.zip" .
+        zip -r "../../Advanced-SHP-Editor-PWA-${{ steps.vars.outputs.version }}.zip" .
         cd ../..
 
     - name: Upload Artifacts (Push/PR)
