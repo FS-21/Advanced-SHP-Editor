@@ -1,0 +1,65 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run build script
+      run: python build.py
+
+    - name: Prepare Standalone Asset
+      run: |
+        cd Build
+        # Usamos el nombre del repositorio y la versión (tag) si existe, si no usamos 'latest'
+        VERSION=${{ github.ref_name }}
+        [ -z "$VERSION" ] && VERSION="latest"
+        zip "../Advanced-SHP-Editor-${VERSION}.zip" advanced_shp_editor.html
+        cd ..
+
+    - name: Prepare PWA Asset
+      run: |
+        cd Build/PWA
+        VERSION=${{ github.ref_name }}
+        [ -z "$VERSION" ] && VERSION="latest"
+        zip -r "../../Advanced-SHP-Editor-PWA-${VERSION}.zip" .
+        cd ../..
+
+    - name: Upload Artifacts (Push/PR)
+      uses: actions/upload-artifact@v4
+      with:
+        name: distribution-files
+        path: |
+          Advanced-SHP-Editor-*.zip
+
+    - name: Create Release and Upload Assets
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          Advanced-SHP-Editor-*.zip
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
