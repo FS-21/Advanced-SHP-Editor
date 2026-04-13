@@ -1,5 +1,7 @@
 # Advanced SHP Editor (ASE)
 
+<img width="1363" height="717" alt="image" src="https://github.com/user-attachments/assets/ddf513de-10e2-4c21-9e54-cd01f97b4fa1" />
+
 A high-performance, professional-grade web-based editor for Westwood Studios' **SHP (Format 80)** sprite format, as used in *Command & Conquer: Tiberian Sun* and *Red Alert 2*.
 
 > **Experiment & Vision:** This project is part of an exploration into **"AI-Vibe Coding"** methodologies using the **Antigravity IDE**. It was built to fulfill the need for a modern, open-source, and cross-platform alternative to aging legacy tools, ensuring the C&C modding scene remains accessible on any operating system. Developed by **FS-21** (*C&C Reloaded* modder and lead developer).
