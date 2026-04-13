@@ -51,10 +51,6 @@ jobs:
         zip -r "../../Advanced-SHP-Editor-PWA-${{ steps.vars.outputs.version }}.zip" .
         cd ../..
 
-    - name: Prepare Source Code Asset
-      run: |
-        git archive -o "Advanced-SHP-Editor-${{ steps.vars.outputs.version }}-src.zip" HEAD
-
     - name: Upload Artifacts (Push/PR)
       uses: actions/upload-artifact@v4
       with:
