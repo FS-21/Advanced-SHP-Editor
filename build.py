@@ -301,6 +301,7 @@ def bundle():
     full_content = license_header + html_content
 
     # 6.1 Write Standard Bundle Output
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(full_content)
         
