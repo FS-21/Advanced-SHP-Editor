@@ -12,7 +12,7 @@ A high-performance, professional-grade web-based editor for Westwood Studios' **
 - **Per-Frame Multi-Layer System:** The editor treats every individual frame as a complex composition. You can work with multiple layers per frame, allowing for non-destructive editing and advanced sprite assembly.
 - **Layer Groups & Blending:** For each frame organize your workflow with layer groups, visibility toggling, and alpha-blending modes, bringing a professional image editor UX (similar to Photoshop or GIMP) to the SHP format.
 - **Advanced Toolkit:** Includes Pencil, Brush (Circular/Square), Spray, Bucket Fill (with tolerance), and Magic Wand selection—all optimized for multi-layer interaction.
-- **Canvas Resizing:** Real-time canvas expansion or shrinking with high-quality resampling algorithms including **Nearest Neighbor**, **Bilinear**, **Bicubic**, and **Lanczos**, perfect for scaling sprites or adapting them to different game resolutions.
+- **Canvas Resizing:** Real-time canvas expansion or shrinking with high-quality pixel-art resampling algorithms including **Smart (Area Average)**, **Nearest Neighbor**, **xBR 4x**, **HQ4x**, **OmniScale**, **xBRZ**, and **ScaleFX**, perfect for scaling sprites or adapting them to different game resolutions.
 
 ### 🌓 Shadow Management (C&C Specialized)
 - **Shadow Automation:** Automated tools to fix invalid shadow pixels.
