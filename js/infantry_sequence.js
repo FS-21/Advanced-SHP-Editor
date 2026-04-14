@@ -402,33 +402,7 @@ function iseq_renderCards() {
         btnPlus.textContent = '+';
         btnPlus.style.cssText = 'border-radius:0 4px 4px 0; width:24px; height:24px; border:1px solid #4a5568 !important; border-left:none !important; flex-shrink:0;';
 
-        const updateSpeedValue = (v) => {
-            const sv = Math.max(0.2, Math.min(2.0, parseFloat(v) || 1.0));
-            pState.playbackSpeed = sv;
-            speedSlider.value = sv;
-            speedVal.textContent = sv.toFixed(2) + 'x';
-            const pct = ((sv - 0.2) / (2.0 - 0.2)) * 100;
-            speedBar.style.width = pct + '%';
-            if (iseq_PlayerTimers[i]) { btnPlay.click(); btnPlay.click(); }
-        };
-
-        btnReset.onclick = () => updateSpeedValue(1.0);
-        speedSlider.oninput = () => updateSpeedValue(speedSlider.value);
-        setupAutoRepeat(btnMinus, (ev) => updateSpeedValue((pState.playbackSpeed || 1.0) - 0.2));
-        setupAutoRepeat(btnPlus, (ev) => updateSpeedValue((pState.playbackSpeed || 1.0) + 0.2));
-
-        const initialPct = (((pState.playbackSpeed || 1.0) - 0.2) / (2.0 - 0.2)) * 100;
-        speedBar.style.width = initialPct + '%';
-
-        zoomGroup.append(btnReset, btnMinus, speedSliderWrap, btnPlus);
-        speedRow.appendChild(zoomGroup);
-        controls.appendChild(speedRow);
-
-        updatePreview();
-        slider.oninput = () => { pState.frameIdx = parseInt(slider.value) || 0; updatePreview(); };
-        btnStepBack.onclick = () => { if (iseq_PlayerTimers[i]) { btnPlay.click(); } pState.frameIdx--; if (pState.frameIdx < 0) pState.frameIdx = (pState.facingIdx === -1 ? iseq_getTotalFramesUsed(entry) : entry.frameCount) - 1; updatePreview(); };
-        btnStep.onclick = () => { if (iseq_PlayerTimers[i]) { btnPlay.click(); } pState.frameIdx++; if (pState.frameIdx >= (pState.facingIdx === -1 ? iseq_getTotalFramesUsed(entry) : entry.frameCount)) pState.frameIdx = 0; updatePreview(); };
-        btnPlay.onclick = () => {
+        const togglePlay = () => {
             if (iseq_PlayerTimers[i]) {
                 clearInterval(iseq_PlayerTimers[i]); delete iseq_PlayerTimers[i];
                 btnPlay.innerHTML = SVG_PLAY_MODERN;
@@ -446,6 +420,46 @@ function iseq_renderCards() {
                 updatePreview();
             }, 100 / (pState.playbackSpeed || 1.0));
         };
+
+        const updateSpeedValue = (v) => {
+            const sv = Math.max(0.2, Math.min(2.0, parseFloat(v) || 1.0));
+            pState.playbackSpeed = sv;
+            speedSlider.value = sv;
+            speedVal.textContent = sv.toFixed(2) + 'x';
+            const pct = ((sv - 0.2) / (2.0 - 0.2)) * 100;
+            speedBar.style.width = pct + '%';
+            if (iseq_PlayerTimers[i]) { 
+                // Restart timer with new speed without triggering DOM clicks
+                clearInterval(iseq_PlayerTimers[i]);
+                iseq_PlayerTimers[i] = setInterval(() => {
+                    const mx = (pState.facingIdx === -1) ? iseq_getTotalFramesUsed(entry) : entry.frameCount;
+                    if (mx <= 0) return;
+                    if (pState.frameIdx + 1 >= mx) {
+                        if (!pState.loop) { iseq_stopAllPlayers(); pState.frameIdx = 0; updatePreview(); return; }
+                        pState.frameIdx = 0;
+                    } else pState.frameIdx++;
+                    updatePreview();
+                }, 100 / (pState.playbackSpeed || 1.0));
+            }
+        };
+
+        btnReset.onclick = () => updateSpeedValue(1.0);
+        speedSlider.oninput = () => updateSpeedValue(speedSlider.value);
+        setupAutoRepeat(btnMinus, (ev) => updateSpeedValue((pState.playbackSpeed || 1.0) - 0.2));
+        setupAutoRepeat(btnPlus, (ev) => updateSpeedValue((pState.playbackSpeed || 1.0) + 0.2));
+
+        const initialPct = (((pState.playbackSpeed || 1.0) - 0.2) / (2.0 - 0.2)) * 100;
+        speedBar.style.width = initialPct + '%';
+
+        zoomGroup.append(btnReset, btnMinus, speedSliderWrap, btnPlus);
+        speedRow.appendChild(zoomGroup);
+        controls.appendChild(speedRow);
+
+        updatePreview();
+        slider.oninput = () => { pState.frameIdx = parseInt(slider.value) || 0; updatePreview(); };
+        btnStepBack.onclick = () => { if (iseq_PlayerTimers[i]) { togglePlay(); } pState.frameIdx--; if (pState.frameIdx < 0) pState.frameIdx = (pState.facingIdx === -1 ? iseq_getTotalFramesUsed(entry) : entry.frameCount) - 1; updatePreview(); };
+        btnStep.onclick = () => { if (iseq_PlayerTimers[i]) { togglePlay(); } pState.frameIdx++; if (pState.frameIdx >= (pState.facingIdx === -1 ? iseq_getTotalFramesUsed(entry) : entry.frameCount)) pState.frameIdx = 0; updatePreview(); };
+        btnPlay.onclick = togglePlay;
         body.append(controls, preview); card.appendChild(body); container.appendChild(card);
     }
 }

@@ -479,6 +479,21 @@ function vseq_renderCards() {
         btnPlus.textContent = '+';
         btnPlus.style.cssText = 'border-radius:0 4px 4px 0; width:24px; height:24px; border:1px solid #4a5568 !important; border-left:none !important; flex-shrink:0;';
 
+        const togglePlay = () => {
+            if (vseq_PlayerTimers[i]) { clearInterval(vseq_PlayerTimers[i]); delete vseq_PlayerTimers[i]; btnPlay.innerHTML = SVG_PLAY_MODERN; return; }
+            vseq_stopAllPlayers();
+            btnPlay.innerHTML = SVG_PAUSE_MODERN;
+            vseq_PlayerTimers[i] = setInterval(() => {
+                const mx = (pState.facingIdx === -1) ? vseq_getTotalFramesUsed(entry) : getAnimCount();
+                if (mx <= 0) return;
+                if (pState.frameIdx + 1 >= mx) {
+                    if (!pState.loop) { vseq_stopAllPlayers(); pState.frameIdx = 0; updatePreview(); return; }
+                    pState.frameIdx = 0;
+                } else pState.frameIdx++;
+                updatePreview();
+            }, 100 / (pState.playbackSpeed || 1.0));
+        };
+
         const updateSpeedValue = (v) => {
             const sv = Math.max(0.2, Math.min(2.0, parseFloat(v) || 1.0));
             pState.playbackSpeed = sv;
@@ -486,7 +501,19 @@ function vseq_renderCards() {
             speedVal.textContent = sv.toFixed(2) + 'x';
             const pct = ((sv - 0.2) / (2.0 - 0.2)) * 100;
             speedBar.style.width = pct + '%';
-            if (vseq_PlayerTimers[i]) { btnPlay.click(); btnPlay.click(); }
+            if (vseq_PlayerTimers[i]) { 
+                // Restart timer with new speed without triggering DOM clicks
+                clearInterval(vseq_PlayerTimers[i]);
+                vseq_PlayerTimers[i] = setInterval(() => {
+                    const mx = (pState.facingIdx === -1) ? vseq_getTotalFramesUsed(entry) : getAnimCount();
+                    if (mx <= 0) return;
+                    if (pState.frameIdx + 1 >= mx) {
+                        if (!pState.loop) { vseq_stopAllPlayers(); pState.frameIdx = 0; updatePreview(); return; }
+                        pState.frameIdx = 0;
+                    } else pState.frameIdx++;
+                    updatePreview();
+                }, 100 / (pState.playbackSpeed || 1.0));
+            }
         };
 
         btnReset.onclick = () => updateSpeedValue(1.0);
@@ -504,31 +531,18 @@ function vseq_renderCards() {
         updatePreview();
         slider.oninput = () => { pState.frameIdx = parseInt(slider.value) || 0; updatePreview(); };
         btnStepBack.onclick = () => {
-            if (vseq_PlayerTimers[i]) { btnPlay.click(); }
+            if (vseq_PlayerTimers[i]) { togglePlay(); }
             const mx = (pState.facingIdx === -1) ? vseq_getTotalFramesUsed(entry) : getAnimCount();
             pState.frameIdx--; if (pState.frameIdx < 0) pState.frameIdx = Math.max(0, mx - 1);
             updatePreview();
         };
         btnStep.onclick = () => {
-            if (vseq_PlayerTimers[i]) { btnPlay.click(); }
+            if (vseq_PlayerTimers[i]) { togglePlay(); }
             const mx = (pState.facingIdx === -1) ? vseq_getTotalFramesUsed(entry) : getAnimCount();
             pState.frameIdx++; if (pState.frameIdx >= mx) pState.frameIdx = 0;
             updatePreview();
         };
-        btnPlay.onclick = () => {
-            if (vseq_PlayerTimers[i]) { clearInterval(vseq_PlayerTimers[i]); delete vseq_PlayerTimers[i]; btnPlay.innerHTML = SVG_PLAY_MODERN; return; }
-            vseq_stopAllPlayers();
-            btnPlay.innerHTML = SVG_PAUSE_MODERN;
-            vseq_PlayerTimers[i] = setInterval(() => {
-                const mx = (pState.facingIdx === -1) ? vseq_getTotalFramesUsed(entry) : getAnimCount();
-                if (mx <= 0) return;
-                if (pState.frameIdx + 1 >= mx) {
-                    if (!pState.loop) { vseq_stopAllPlayers(); pState.frameIdx = 0; updatePreview(); return; }
-                    pState.frameIdx = 0;
-                } else pState.frameIdx++;
-                updatePreview();
-            }, 100 / (pState.playbackSpeed || 1.0));
-        };
+        btnPlay.onclick = togglePlay;
 
         body.append(controls, preview);
         card.appendChild(body); container.appendChild(card);

@@ -79,13 +79,15 @@ export function initImportShp(onConfirm) {
         reader.readAsArrayBuffer(file);
     };
 
-    elements.btnImpShpStep.onclick = () => {
+    const stepFrame = () => {
         if (!impShpData) return;
         const maxIdx = parseInt(elements.impShpSlider.max);
         impShpFrameIdx = (impShpFrameIdx + 1) > maxIdx ? 0 : impShpFrameIdx + 1;
         elements.impShpSlider.value = impShpFrameIdx;
         renderImportFrame(impShpFrameIdx);
     };
+
+    elements.btnImpShpStep.onclick = stepFrame;
 
     elements.impShpSlider.oninput = () => {
         if (!impShpData) return;
@@ -99,7 +101,7 @@ export function initImportShp(onConfirm) {
             impShpTimer = null;
             elements.btnImpShpPlay.innerHTML = SVG_PLAY;
         } else {
-            impShpTimer = setInterval(() => elements.btnImpShpStep.click(), 100);
+            impShpTimer = setInterval(stepFrame, 100);
             elements.btnImpShpPlay.innerHTML = SVG_PAUSE;
         }
     };
