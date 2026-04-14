@@ -52,7 +52,6 @@ The editor is fully localized and supports multiple languages, making it accessi
 - **Russian** (RU)
 - **German** (DE)
 - **French** (FR)
-- **Portuguese** (PT)
 - **Chinese** (Simplified & Traditional)
 
 ## 🔨 How to Build

@@ -14,6 +14,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "Preview",
         "lbl_processing": "Processing...",
         "lbl_processing_caps": "PROCESSING",
+        "lbl_processing_x_of_y": "Processing {{current}} of {{total}} ...",
         "lbl_shp_format_hint": "Standard SHP Format (TS/RA2)",
         "opt_mask_hide": "Hide",
         "opt_mask_opacity": "Opacity",
@@ -714,6 +715,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "Vista previa",
         "lbl_processing": "Procesando...",
         "lbl_processing_caps": "PROCESANDO",
+        "lbl_processing_x_of_y": "Procesando {{current}} de {{total}} ...",
         "lbl_shp_format_hint": "Formato SHP estándar (TS/RA2)",
         "opt_mask_hide": "Ocultar",
         "opt_mask_opacity": "Opacidad",
@@ -1414,6 +1416,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "Предпросмотр",
         "lbl_processing": "Обработка...",
         "lbl_processing_caps": "ОБРАБОТКА",
+        "lbl_processing_x_of_y": "Обработка {{current}} из {{total}} ...",
         "lbl_shp_format_hint": "Стандартный формат SHP (TS/RA2)",
         "opt_mask_hide": "Скрыть",
         "opt_mask_opacity": "Прозрачность",
@@ -1608,6 +1611,7 @@ export const TRANSLATIONS = {
         "btn_ok": "ОК",
         "btn_cancel": "ОТМЕНА",
         "btn_open": "ОТКРЫТЬ",
+        "msg_confirm_close_shp": "Вы уверены, что хотите закрыть текущий проект? Все несохраненные изменения будут потеряны.",
         "msg_open_shp_warning": "⚠ Открытие файла SHP перезапишет текущий проект. Сначала сохраните свою работу, если это необходимо.",
         "tt_menu_new": "Начать совершенно новый проект SHP с нуля.",
         "tt_menu_open": "Загрузить существующий SHP-файл с диска.",
@@ -2113,6 +2117,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "預覽",
         "lbl_processing": "處理中...",
         "lbl_processing_caps": "處理中",
+        "lbl_processing_x_of_y": "處理中 {{current}} / {{total}} ...",
         "lbl_shp_format_hint": "標準 SHP 格式 (TS/RA2)",
         "opt_mask_hide": "隱藏",
         "opt_mask_opacity": "不透明度",
@@ -2307,6 +2312,7 @@ export const TRANSLATIONS = {
         "btn_ok": "確定",
         "btn_cancel": "取消",
         "btn_open": "開啟",
+        "msg_confirm_close_shp": "您確定要關閉當前項目嗎？所有未保存的更改都將丟失。",
         "msg_open_shp_warning": "⚠ 打開 SHP 檔案將覆蓋當前項目。 如果需要，請先保存您的工作。",
         "tt_menu_new": "從頭開始一個全新的 SHP 專案。",
         "tt_menu_open": "從本地磁碟載入現有的 SHP 檔案。",
@@ -2812,6 +2818,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "预览",
         "lbl_processing": "处理中...",
         "lbl_processing_caps": "处理中",
+        "lbl_processing_x_of_y": "处理中 {{current}} / {{total}} ...",
         "lbl_shp_format_hint": "标准 SHP 格式 (TS/RA2)",
         "opt_mask_hide": "隐藏",
         "opt_mask_opacity": "不透明度",
@@ -3006,6 +3013,7 @@ export const TRANSLATIONS = {
         "btn_ok": "确定",
         "btn_cancel": "取消",
         "btn_open": "打开",
+        "msg_confirm_close_shp": "您确定要关闭当前项目吗？所有未保存的更改都将丢失。",
         "msg_open_shp_warning": "⚠ 打开 SHP 文件将覆盖当前项目。 如果需要，请先保存您的工作。",
         "tt_menu_new": "从头开始一个全新的 SHP 项目。",
         "tt_menu_open": "从本地磁盘加载现有的 SHP 文件。",
@@ -3511,6 +3519,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "Vorschau",
         "lbl_processing": "Verarbeitung...",
         "lbl_processing_caps": "VERARBEITUNG",
+        "lbl_processing_x_of_y": "Verarbeitung {{current}} von {{total}} ...",
         "lbl_shp_format_hint": "Standard-SHP-Format (TS/RA2)",
         "opt_mask_hide": "Ausblenden",
         "opt_mask_opacity": "Deckkraft",
@@ -3705,6 +3714,7 @@ export const TRANSLATIONS = {
         "btn_ok": "OK",
         "btn_cancel": "ABBRECHEN",
         "btn_open": "ÖFFNEN",
+        "msg_confirm_close_shp": "Sind Sie sicher, dass Sie das aktuelle Projekt schließen möchten? Alle ungespeicherten Änderungen gehen verloren.",
         "msg_open_shp_warning": "⚠ Das Öffnen einer SHP-Datei überschreibt das aktuelle Projekt. Speichern Sie ggf. zuerst Ihre Arbeit.",
         "tt_menu_new": "Starten Sie ein völlig neues SHP-Projekt von Grund auf.",
         "tt_menu_open": "Laden Sie eine vorhandene SHP-Datei von Ihrem lokalen Laufwerk.",
@@ -4210,6 +4220,7 @@ export const TRANSLATIONS = {
         "lbl_preview": "Aperçu",
         "lbl_processing": "Traitement...",
         "lbl_processing_caps": "TRAITEMENT",
+        "lbl_processing_x_of_y": "Traitement {{current}} sur {{total}} ...",
         "lbl_shp_format_hint": "Format SHP standard (TS/RA2)",
         "opt_mask_hide": "Masquer",
         "opt_mask_opacity": "Opacité",
@@ -4404,6 +4415,7 @@ export const TRANSLATIONS = {
         "btn_ok": "OK",
         "btn_cancel": "ANNULER",
         "btn_open": "OUVRIR",
+        "msg_confirm_close_shp": "Êtes-vous sûr de vouloir fermer le projet actuel ? Toute modification non enregistrée sera perdue.",
         "msg_open_shp_warning": "⚠ L'ouverture d'un fichier SHP écrasera le projet actuel. Enregistrez d'abord votre travail si nécessaire.",
         "tt_menu_new": "Démarrer un tout nouveau projet SHP à partir de zéro.",
         "tt_menu_open": "Charger un fichier SHP existant depuis votre disque local.",
@@ -4928,16 +4940,20 @@ function setLanguage(lang) {
     }
 }
 
-export function t(key) {
+export function t(key, params = {}) {
+    let text = key;
     if (TRANSLATIONS[currentLanguage] && TRANSLATIONS[currentLanguage][key]) {
-        return TRANSLATIONS[currentLanguage][key];
+        text = TRANSLATIONS[currentLanguage][key];
+    } else if (TRANSLATIONS["en"] && TRANSLATIONS["en"][key]) {
+        text = TRANSLATIONS["en"][key];
     }
-    // Fallback to English
-    if (TRANSLATIONS["en"] && TRANSLATIONS["en"][key]) {
-        return TRANSLATIONS["en"][key];
-    }
-    // If no translation found, just return original text if we stored it, or the key
-    return key;
+    
+    // Replace parameters
+    Object.entries(params).forEach(([k, v]) => {
+        text = text.replace(new RegExp(`{{${k}}}`, 'g'), String(v));
+    });
+    
+    return text;
 }
 
 // Map of elements to translate. 

@@ -345,6 +345,12 @@ export const elements = {
     get btnImpFromImageOk() { return document.getElementById('btnImpFromImageOk'); },
     get rowImpFromImageComp() { return document.getElementById('rowImpFromImageComp'); },
     get selImpFromImageComp() { return document.getElementById('selImpFromImageComp'); },
+    get impFromImageProgress() { return document.getElementById('impFromImageProgress'); },
+    get lblImpFromImageProgress() { return document.getElementById('lblImpFromImageProgress'); },
+    get barImpFromImageProgress() { return document.getElementById('barImpFromImageProgress'); },
+    get btnImpFromImageCancel() { return document.getElementById('btnImpFromImageCancel'); },
+    get btnClearFromImage() { return document.getElementById('btnClearFromImage'); },
+    get dropZoneFromImage() { return document.getElementById('dropZoneFromImage'); },
 
     get btnNewShpCancel() { return document.getElementById('btnNewShpCancel'); },
     get btnNewShpCreate() { return document.getElementById('btnNewShpCreate'); },

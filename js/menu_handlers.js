@@ -2771,8 +2771,37 @@ async function handleImportFromImage() {
 
     const startIdx = state.currentFrameIdx;
     
+    // UI Feedback & Blocking
+    const total = importFromImageFiles.length;
+    if (elements.impFromImageProgress) elements.impFromImageProgress.style.display = 'block';
+    
+    const setUIBlocked = (blocked) => {
+        if (elements.btnImpFromImageOk) elements.btnImpFromImageOk.disabled = blocked;
+        if (elements.btnImpFromImageCancel) elements.btnImpFromImageCancel.disabled = blocked;
+        if (elements.btnClearFromImage) elements.btnClearFromImage.disabled = blocked;
+        if (elements.dropZoneFromImage) {
+            elements.dropZoneFromImage.style.pointerEvents = blocked ? 'none' : 'auto';
+            elements.dropZoneFromImage.style.opacity = blocked ? '0.5' : '1';
+        }
+    };
+
+    setUIBlocked(true);
+
     // 2. Process each file
-    for (const file of importFromImageFiles) {
+    for (let i = 0; i < total; i++) {
+        const file = importFromImageFiles[i];
+        
+        // Update progress text
+        if (elements.lblImpFromImageProgress) {
+            elements.lblImpFromImageProgress.innerText = t('lbl_processing_x_of_y', { current: i + 1, total: total });
+        }
+        if (elements.barImpFromImageProgress) {
+            elements.barImpFromImageProgress.style.width = `${((i + 1) / total) * 100}%`;
+        }
+
+        // Allow UI to update
+        await new Promise(r => setTimeout(r, 0));
+
         try {
             const data = await processImageFile(file);
             if (!data) continue;
@@ -2845,6 +2874,9 @@ async function handleImportFromImage() {
             console.error(`Error processing ${file.name}:`, err);
         }
     }
+
+    setUIBlocked(false);
+    if (elements.impFromImageProgress) elements.impFromImageProgress.style.display = 'none';
 
     elements.importFromImageDialog.close();
     

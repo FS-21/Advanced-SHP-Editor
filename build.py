@@ -468,5 +468,10 @@ if __name__ == '__main__':
     trans_validator_path = os.path.join(SCRIPTS_DIR, TRANSLATION_VALIDATOR_SCRIPT)
     if os.path.exists(trans_validator_path):
         print("\nChecking translations for missing entries (parity scan)...")
-        subprocess.run(['python', trans_validator_path], cwd=COMPONENT_DIR)
+        result = subprocess.run(['python', trans_validator_path], cwd=COMPONENT_DIR)
+        if result.returncode != 0:
+            print("\n[CRITICAL] Translation parity check FAILED. Please fix missing keys above.")
+            sys.exit(1)
+        else:
+            print("[SUCCESS] Translations are consistent across all languages.")
 
