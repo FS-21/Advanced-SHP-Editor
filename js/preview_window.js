@@ -161,33 +161,30 @@ export function initPreviewWindow() {
         };
     }
 
-    // Wheel Zoom
+    // Wheel Zoom (Only with Ctrl to match main editor)
     if (displayArea) {
         displayArea.onwheel = (e) => {
-            e.preventDefault();
-            const direction = e.deltaY < 0 ? 1 : -1;
-            let current = parseInt(inpZoom.value);
-            let next;
-
             if (e.ctrlKey) {
-                // Fine zoom
-                next = current + (direction * 5);
-            } else {
-                // Snap zoom
+                e.preventDefault();
+                const direction = e.deltaY < 0 ? 1 : -1;
+                let current = parseInt(inpZoom.value);
+                let next;
+
+                // Snap zoom (Standard behavior with Ctrl)
                 if (direction > 0) {
                     next = current < 100 ? 100 : Math.floor(current / 100) * 100 + 100;
                 } else {
                     next = current <= 100 ? 50 : Math.ceil(current / 100) * 100 - 100;
                 }
-            }
 
-            const min = parseInt(inpZoom.min) || 50;
-            const max = parseInt(inpZoom.max) || 5000;
-            next = Math.max(min, Math.min(max, next));
+                const min = parseInt(inpZoom.min) || 50;
+                const max = parseInt(inpZoom.max) || 5000;
+                next = Math.max(min, Math.min(max, next));
 
-            if (next !== current) {
-                inpZoom.value = next;
-                updateZoomUI();
+                if (next !== current) {
+                    inpZoom.value = next;
+                    updateZoomUI();
+                }
             }
         };
     }

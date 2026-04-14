@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v1.0';</script>
+    <script>const APP_VERSION = 'v1.1';</script>
     <script>
         let CnCReloadedMode = true;
         document.addEventListener("DOMContentLoaded", () => {
@@ -202,7 +202,8 @@
                         </div>
                         <div class="menu-item-submenu" id="menuRecentContainer" style="display:none;">
                             <div id="triggerRecent" class="menu-action submenu-trigger">
-                                <span class="menu-icon icon-shp-file"></span><span data-i18n="menu_open_recent">Open Recent</span><span class="arrow">▶</span>
+                                <span class="menu-icon icon-shp-file"></span><span data-i18n="menu_open_recent">Open
+                                    Recent</span><span class="arrow">▶</span>
                             </div>
                             <div class="menu-dropdown submenu" id="menuRecentSubmenu">
                                 <div class="pal-menu-section-label" id="menuRecentEmpty"
@@ -225,16 +226,16 @@
                             </div>
                             <div class="menu-dropdown submenu">
                                 <div id="menuExpSpriteSheet" class="menu-action" data-i18n-title="tt_menu_exp_sheet">
-                                    <span class="menu-icon icon-sheet"></span><span
-                                        data-i18n="menu_exp_sheet">Sprite Sheet</span>
+                                    <span class="menu-icon icon-sheet"></span><span data-i18n="menu_exp_sheet">Sprite
+                                        Sheet</span>
                                 </div>
                                 <div id="menuExpRange" class="menu-action" data-i18n-title="tt_menu_exp_range">
-                                    <span class="menu-icon icon-images"></span><span
-                                        data-i18n="menu_exp_range">Frame Range -> Images</span>
+                                    <span class="menu-icon icon-images"></span><span data-i18n="menu_exp_range">Frame
+                                        Range -> Images</span>
                                 </div>
                                 <div id="menuExpCurrent" class="menu-action" data-i18n-title="tt_menu_exp_frame">
-                                    <span class="menu-icon icon-images"></span><span
-                                        data-i18n="menu_exp_frame">Current Frame -> Image</span>
+                                    <span class="menu-icon icon-images"></span><span data-i18n="menu_exp_frame">Current
+                                        Frame -> Image</span>
                                 </div>
                             </div>
                         </div>
@@ -249,12 +250,12 @@
                                         data-i18n="menu_imp_from_image">From Images</span>
                                 </div>
                                 <div id="menuImpSpriteSheet" class="menu-action" data-i18n-title="tt_menu_imp_sheet">
-                                    <span class="menu-icon icon-sheet"></span><span
-                                        data-i18n="menu_imp_sheet">From Sprite Sheet</span>
+                                    <span class="menu-icon icon-sheet"></span><span data-i18n="menu_imp_sheet">From
+                                        Sprite Sheet</span>
                                 </div>
                                 <div id="menuImpOtherShp" class="menu-action" data-i18n-title="tt_menu_imp_other">
-                                    <span class="menu-icon icon-shp-file"></span><span
-                                        data-i18n="menu_imp_other">From another SHP</span>
+                                    <span class="menu-icon icon-shp-file"></span><span data-i18n="menu_imp_other">From
+                                        another SHP</span>
                                 </div>
                             </div>
                         </div>
@@ -410,7 +411,8 @@
                         <!-- C&C Reloaded submenu -->
                         <div class="menu-item-submenu" id="palMenuCnCReloadedContainer">
                             <div id="triggerPalCnCReloaded" class="menu-action submenu-trigger">
-                                <span class="menu-icon pm-icon-cncreloaded"></span><span>C&amp;C Reloaded</span><span class="arrow">▶</span>
+                                <span class="menu-icon pm-icon-cncreloaded"></span><span>C&amp;C Reloaded</span><span
+                                    class="arrow">▶</span>
                             </div>
                             <div class="menu-dropdown submenu" id="palCnCReloadedSubmenu">
                                 <div class="pal-menu-section-label">Loading...</div>
@@ -1967,7 +1969,8 @@
                     </div>
                 </div>
                 <!-- Compression Format Selection (Visible only when no project is open) -->
-                <div class="form-row" id="rowImpFromImageComp" style="margin-top: 10px; margin-bottom: 0; display: none;">
+                <div class="form-row" id="rowImpFromImageComp"
+                    style="margin-top: 10px; margin-bottom: 0; display: none;">
                     <span class="form-label" data-i18n="lbl_compression">Compression:</span>
                     <div class="form-control">
                         <select id="selImpFromImageComp" class="input-dark" style="width:100%;">
@@ -2955,7 +2958,7 @@
 
                 <!-- Main Display Area -->
                 <!-- Main Display Area -->
-                <div class="preview-main-area"
+                <div id="prevDisplayArea" class="preview-main-area"
                     style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0;">
                     <canvas id="prevCanvas" style="image-rendering: pixelated; margin: auto;"></canvas>
                 </div>
