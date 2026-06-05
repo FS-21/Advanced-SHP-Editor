@@ -4,6 +4,8 @@ import { GAME_PALETTES } from './game_palettes.js';
 import { t } from './translations.js';
 import { parsePaletteData, parsePaletteBuffer } from './file_io.js';
 import { state } from './state.js';
+import { syncImporterPalette } from './import_shp.js';
+import { syncTmpImporterPalette } from './import_tmp.js';
 
 
 // palette_menu.js — Palette Library & Palettes Menu Manager
@@ -169,6 +171,7 @@ export function applyPaletteFromEntry(entry) {
 
         state.paletteVersion++; // Signal UI to refresh thumbnails
         _appliedPaletteId = entry.id;
+        recordUsage(entry);
         refreshPalettesMenuDynamic();
     } catch (e) {
         alert('Error applying palette: ' + e.message);
@@ -184,7 +187,7 @@ function recordUsage(libEntry) {
     lib.usageCount[libEntry.id] = (lib.usageCount[libEntry.id] || 0) + 1;
     // Update lastUsed: remove existing entry if present, then prepend
     lib.lastUsed = lib.lastUsed.filter(e => e.id !== libEntry.id);
-    lib.lastUsed.unshift({ id: libEntry.id, name: libEntry.name, path: libEntry.path });
+    lib.lastUsed.unshift({ id: libEntry.id, name: libEntry.name, path: libEntry.path || [] });
     if (lib.lastUsed.length > 8) lib.lastUsed.length = 8;
     saveLibrary();
     // Refresh UI
@@ -1196,6 +1199,30 @@ function refreshAllPaletteMenus() {
         }
     });
 
+    // Open TMP dialog menu
+    refreshDialogPaletteMenu('impTmpPalettesMenuDropdown', (node) => {
+        if (typeof parsePaletteBuffer === 'function') {
+            const buf = base64ToBuffer(node.b64);
+            const palArray = parsePaletteBuffer(buf);
+
+            // Call syncTmpImporterPalette if it exists (import_tmp.js)
+            if (typeof syncTmpImporterPalette === 'function') {
+                syncTmpImporterPalette(palArray);
+            } else {
+                // Fallback for bundle
+                if (window.syncTmpImporterPalette) window.syncTmpImporterPalette(palArray);
+            }
+
+            if (typeof renderPaletteSimple === 'function') {
+                renderPaletteSimple(palArray, document.getElementById('impTmpPalGrid'));
+            }
+
+            console.log("Selected import TMP palette:", node.name);
+            const btnOpen = document.getElementById('btnConfirmImpTmp');
+            if (btnOpen && window.curImportTmpData) btnOpen.disabled = false;
+        }
+    });
+
     // External SHP dialog menu
     refreshDialogPaletteMenu('extPalettesMenuDropdown', (node) => {
         if (typeof window.syncExternalPalette === 'function') {
@@ -1451,7 +1478,7 @@ export function setupPaletteMenu() {
     }
 
     // Dialog menus: Click to toggle (floating menu behavior)
-    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemExtPalettes'].forEach(id => {
+    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             const btn = el.querySelector('.menu-btn');
@@ -1525,6 +1552,7 @@ export function applyPaletteById(id) {
     }
     return false;
 }
+window.applyPaletteById = applyPaletteById;
 
 export function getMostRecentPaletteId() {
     const lib = getLib();

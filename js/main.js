@@ -19,6 +19,7 @@
 import { state, activeTool, isDrawing, setIsDrawing, lastPos, setLastPos } from './state.js';
 import { elements } from './constants.js';
 import { initImportShp, syncImporterPalette, resetImportState } from './import_shp.js';
+import { initImportTmp, syncTmpImporterPalette, resetTmpImportState } from './import_tmp.js';
 import { ShpFormat80 } from './shp_format.js';
 import { initHistoryHooks, undo, redo, pushHistory } from './history.js';
 import {
@@ -34,7 +35,7 @@ import {
     showEditorInterface, renderPaletteSimple, initFrameManager,
     showConfirm, updateActiveLayerPreview, setupSubmenusRecursive,
     openActiveLayerProperties, setupTooltips, getLayerDataSnapshot, setupToolbarOverflow,
-    showPasteNotification
+    showPasteNotification, initPasteRangeDialog
 } from './ui.js';
 import { initPreviewWindow, openPreview } from './preview_window.js';
 import {
@@ -46,7 +47,7 @@ import {
 
 import { resampleLayerData, rotateBufferArbitrary, shiftColorIndex } from './image_ops.js';
 import { bresenham, setupAutoRepeat } from './utils.js';
-import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleClipboardPaste, processSystemImagePaste } from './file_io.js';
+import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData } from './file_io.js';
 import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile } from './menu_handlers.js';
 import { setupPaletteMenu } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
@@ -93,6 +94,7 @@ export function updateUIState() {
 
 function init() {
     window.updateUIState = updateUIState;
+    window.state = state;
     try {
 
         console.log("TRACE: init started");
@@ -133,6 +135,7 @@ function init() {
         setupImageMenuHandlers();
         console.log("TRACE: Menu initialized");
         setupMultiFrameOps();
+        initPasteRangeDialog();
         console.log("TRACE: MultiFrameOps setup");
 
         // createNewProject(state.canvasW || 60, state.canvasH || 48); // Removed to allow empty state
@@ -159,6 +162,9 @@ function init() {
 
         initImportShp(handleConfirmImport);
         console.log("TRACE: Import SHP initialized");
+        
+        initImportTmp(handleConfirmImportTmp);
+        console.log("TRACE: Import TMP initialized");
 
         initExternalShpDialog(handleConfirmExternalShp);
         console.log("TRACE: External SHP initialized");
@@ -271,21 +277,25 @@ function setupEventListeners() {
             if (isReplaceActive && state.replaceClipboard && state.replaceClipboard.length > 0) {
                 pasteReplacePairs();
             } else {
-                // Always try system clipboard first for external image paste (like TMP Editor).
-                // If the system clipboard has an image, it takes priority over the internal clipboard.
-                // If the user does not have an image in the system clipboard (or permission is denied),
-                // the interceptor returns false and we fall back to the internal clipboard.
-                const hadExternalPaste = await systemClipboardInterceptor();
-                if (!hadExternalPaste) {
-                    if (state.clipboard) {
-                        if (e.altKey) {
-                            pasteAsNewFrame();
-                        } else if (e.shiftKey) {
-                            pasteClipboard(true); // To New Layer
-                        } else {
-                            pasteClipboard(false); // To Active Layer
-                        }
+                if (state.clipboard) {
+                    // Internal clipboard has data: paste without touching navigator.clipboard.read()
+                    // (reading from system clipboard always triggers the browser permission prompt).
+                    if (e.shiftKey && e.altKey) {
+                        pasteClipboard('bottom');
+                    } else if (e.altKey) {
+                        pasteAsNewFrame();
+                    } else if (e.shiftKey) {
+                        pasteClipboard(true); // To New Layer
+                    } else {
+                        pasteClipboard(false); // To Active Layer
                     }
+                } else {
+                    // No internal clipboard — try to paste from system (external image).
+                    // This may trigger the browser permission prompt, which is expected
+                    // when pasting something copied from outside this editor.
+                    const hadExternalPaste = await systemClipboardInterceptor();
+                    // systemClipboardInterceptor handles paste internally if it finds an image.
+                    void hadExternalPaste;
                 }
             }
         }
@@ -337,7 +347,11 @@ function setupEventListeners() {
         if (ctrl && k === 's') {
             e.preventDefault();
             if (e.shiftKey) {
-                showExportDialog();
+                if (state.isTmpMode) {
+                    saveTmpData(true);
+                } else {
+                    showExportDialog();
+                }
             } else {
                 handleSaveShp();
             }
@@ -353,7 +367,9 @@ function setupEventListeners() {
 
         if (e.altKey && k === 'q') {
             e.preventDefault();
-            openPreview();
+            if (!state.isTmpMode) {
+                openPreview();
+            }
         }
 
         if (e.altKey && k === 'i') {
@@ -447,13 +463,15 @@ function setupEventListeners() {
 
     elements.fileInShp.onchange = async (e) => {
         if (!e.target.files.length) return;
-        const buf = await e.target.files[0].arrayBuffer();
+        const file = e.target.files[0];
+        const buf = await file.arrayBuffer();
         try {
             const shp = ShpFormat80.parse(buf);
             loadShpData(shp);
+            window._lastShpFilename = file.name;
         } catch (err) {
             console.error(err);
-            alert("Error loading SHP: " + err.message);
+            alert("Error loading file: " + err.message);
         } finally {
             if (elements.fileInShp) elements.fileInShp.value = '';
         }
@@ -1865,6 +1883,11 @@ function setupEventListeners() {
             // Reset tool state when panel is opened to prevent drawing while configured
             if (state.showSidePanel) {
                 setTool(null);
+            } else {
+                state.isPickingForReplace = null;
+                if (elements.btnPickReplaceSrc) elements.btnPickReplaceSrc.classList.remove('picker-active');
+                if (elements.btnPickReplaceTgt) elements.btnPickReplaceTgt.classList.remove('picker-active');
+                document.body.classList.remove('picking-mode');
             }
         };
     }
@@ -1926,7 +1949,7 @@ function setupEventListeners() {
         btnToggleBg.classList.toggle('active', state.showBackground);
     }
 
-    // Isometric Grid
+    // Isometric Grid (SHP mode - dropdown)
     const selIsoGrid = document.getElementById('selIsoGrid');
     if (selIsoGrid) {
         selIsoGrid.addEventListener('change', (e) => {
@@ -1935,6 +1958,22 @@ function setupEventListeners() {
             const prevSelGrid = document.getElementById('prevSelIsoGrid');
             if (prevSelGrid) prevSelGrid.value = state.isoGrid;
 
+            renderCanvas();
+            if (typeof window.renderPreview === 'function') window.renderPreview();
+        });
+    }
+
+    // Isometric Grid (TMP mode - checkbox, auto-selects TS vs RA2 by tile width)
+    const cbIsoGrid = document.getElementById('cbIsoGrid');
+    if (cbIsoGrid) {
+        cbIsoGrid.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                // Detect game from tile dimensions: 48px → TS, 60px → RA2
+                const tileW = (state.tmpHeader && state.tmpHeader.cx) || state.canvasW || 48;
+                state.isoGrid = tileW === 60 ? 'ra2' : 'ts';
+            } else {
+                state.isoGrid = 'none';
+            }
             renderCanvas();
             if (typeof window.renderPreview === 'function') window.renderPreview();
         });
@@ -1955,7 +1994,24 @@ function setupEventListeners() {
 
             renderPalette();
             renderCanvas();
+            renderFramesList();
             renderFrameManager(); // Update visual cues
+            if (typeof updateMenuState === 'function') updateMenuState(state.frames.length > 0);
+        };
+    }
+
+    // Relative Index Toggle (Main Toolbar)
+    const cbMainRelIndex = document.getElementById('cbMainRelIndex');
+    if (cbMainRelIndex) {
+        cbMainRelIndex.onchange = (e) => {
+            state.fmRelIndex = e.target.checked;
+            
+            // Sync with the frame manager checkbox if it exists
+            const fmCb = document.getElementById('fmCbRelIndex');
+            if (fmCb) fmCb.checked = state.fmRelIndex;
+
+            renderFramesList();
+            renderFrameManager(); // Sync if open
             if (typeof updateMenuState === 'function') updateMenuState(state.frames.length > 0);
         };
     }
@@ -1987,7 +2043,7 @@ function parseColorRef(str) {
     return null;
 }
 
-function handleConfirmExternalShp({ layerId, shpData, frameIdx, palette }) {
+function handleConfirmExternalShp({ layerId, shpData, frameIdx, palette, index0Transparent }) {
     if (!layerId || !shpData) return;
 
     const frame = state.frames[state.currentFrameIdx];
@@ -2017,6 +2073,7 @@ function handleConfirmExternalShp({ layerId, shpData, frameIdx, palette }) {
     layer.extTotalFrames = shpData.frames.length;
     layer.extShpFrameData = new Uint8Array(f.originalIndices); // Copy it
     layer.extShpPalette = palette.map(c => c ? { ...c } : null);
+    layer.index0Transparent = index0Transparent !== undefined ? index0Transparent : true;
     layer.extWidth = f.width;
     layer.extHeight = f.height;
     layer.extFrameX = f.x;
@@ -2040,6 +2097,9 @@ function handleConfirmImport(impShpData, impShpPalette) {
 
     // 2. Use Native Loader for Index Integrity (Loads all frames)
     loadShpData(impShpData);
+    if (impShpData.filename) {
+        window._lastShpFilename = impShpData.filename;
+    }
 
     // 3. Update UI
     pushHistory("all");
@@ -2047,6 +2107,31 @@ function handleConfirmImport(impShpData, impShpPalette) {
     // 4. Save to Recent Files (if FSAPI handle available)
     if (window._lastShpFileHandle && impShpData.filename) {
         saveRecentFile(impShpData.filename, window._lastShpFileHandle);
+    }
+
+    // Update UI element visibility
+    updateUIState();
+}
+
+function handleConfirmImportTmp(buffer, filename, impTmpPalette) {
+    if (!buffer) return;
+
+    // 1. Sync Palette
+    state.palette = impTmpPalette.map(c => c ? { ...c, locked: false } : null);
+    renderPalette();
+
+    // 2. Load TMP Data
+    loadTmpData(buffer, filename);
+    if (filename) {
+        window._lastTmpFilename = filename;
+    }
+
+    // 3. Update UI
+    pushHistory("all");
+
+    // 4. Save to Recent Files (if FSAPI handle available)
+    if (window._lastTmpFileHandle && filename) {
+        saveRecentFile(filename, window._lastTmpFileHandle);
     }
 
     // Update UI element visibility
@@ -2311,3 +2396,174 @@ window.addEventListener('keydown', (e) => {
         e.preventDefault();
     }
 }, { capture: true, passive: false });
+
+// --- FILE TYPE DETECTION & GLOBAL DRAG AND DROP OVERLAY ---
+function detectFileType(buffer) {
+    if (buffer.byteLength < 16) return 'unknown';
+    const dv = new DataView(buffer);
+    try {
+        const cblocks_x = dv.getInt32(0, true);
+        const cblocks_y = dv.getInt32(4, true);
+        const cx = dv.getInt32(8, true);
+        const cy = dv.getInt32(12, true);
+
+        if ((cx === 48 || cx === 60) && 
+            (cy === 24 || cy === 30) && 
+            cblocks_x > 0 && cblocks_x < 1000 && 
+            cblocks_y > 0 && cblocks_y < 1000 &&
+            buffer.byteLength >= 16 + (cblocks_x * cblocks_y * 4)) {
+            return 'tmp';
+        }
+    } catch (e) {}
+    
+    if (buffer.byteLength >= 8) {
+        try {
+            const type = dv.getUint16(0, true);
+            const width = dv.getUint16(2, true);
+            const height = dv.getUint16(4, true);
+            const numImages = dv.getUint16(6, true);
+            
+            if (width > 0 && height > 0 && numImages > 0 && buffer.byteLength >= 8 + numImages * 24) {
+                return 'shp';
+            }
+        } catch (e) {}
+    }
+    
+    return 'unknown';
+}
+
+let dragCounter = 0;
+
+function showsDrop() {
+    const dz = elements.dropZoneOverlay;
+    if (dz) {
+        dz.style.display = 'flex';
+        requestAnimationFrame(() => {
+            dz.style.opacity = '1';
+            dz.style.visibility = 'visible';
+        });
+    }
+}
+
+function hidesDrop() {
+    const dz = elements.dropZoneOverlay;
+    if (dz) {
+        dz.style.opacity = '0';
+        dz.style.visibility = 'hidden';
+        setTimeout(() => {
+            if (dz.style.opacity === '0') dz.style.display = 'none';
+        }, 300);
+    }
+}
+
+document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+});
+
+document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+        dragCounter++;
+        showsDrop();
+    }
+});
+
+document.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+        dragCounter--;
+        if (dragCounter <= 0) {
+            hidesDrop();
+        }
+    }
+});
+
+export async function processSystemFileOpen(file, handle = null, preloadedBuffer = null) {
+    try {
+        const buffer = preloadedBuffer || await file.arrayBuffer();
+        const type = detectFileType(buffer);
+
+        if (type === 'tmp') {
+            loadTmpData(buffer, file.name);
+            window._lastShpFilename = file.name;
+            window._lastShpFileHandle = handle;
+            state.fileHandle = handle;
+            state.savedHistoryPtr = state.historyPtr;
+            state.hasChanges = false;
+            if (typeof updateUIState === 'function') updateUIState();
+            console.log(`[FileOpen] Loaded TMP via Drag&Drop: ${file.name}`);
+            return true;
+        } else if (type === 'shp') {
+            const shp = ShpFormat80.parse(buffer);
+            loadShpData(shp);
+            window._lastShpFilename = file.name;
+            window._lastShpFileHandle = handle;
+            state.fileHandle = handle;
+            state.savedHistoryPtr = state.historyPtr;
+            state.hasChanges = false;
+            if (typeof updateUIState === 'function') updateUIState();
+            console.log(`[FileOpen] Loaded SHP via Drag&Drop: ${file.name}`);
+            return true;
+        } else {
+            console.warn(`[FileOpen] Unknown signature for: ${file.name}`);
+            alert(`Error: Formato de archivo no soportado o inválido para ${file.name}. Asegúrese de que sea un archivo SHP o TMP válido.`);
+            return false;
+        }
+    } catch (err) {
+        console.error(`[FileOpen] Error loading file ${file.name}:`, err);
+        alert(`Error al abrir ${file.name}: ${err.message}`);
+        return false;
+    }
+}
+
+document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    hidesDrop();
+    
+    const items = Array.from(e.dataTransfer.items || []);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    // Check if the user dropped image files (PNG/PCX)
+    // If they did, handle frame drop (multi-import is supported for images)
+    const isImageCollection = files.every(f => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        return ext === 'png' || ext === 'pcx';
+    });
+    if (isImageCollection) {
+        if (state.frames && state.frames.length > 0) {
+            import('./file_io.js').then(module => {
+                if (typeof module.handleFrameDrop === 'function') {
+                    module.handleFrameDrop(files);
+                }
+            });
+        } else {
+            alert("Debe tener un proyecto abierto para importar imágenes como nuevos fotogramas.");
+        }
+        return;
+    }
+
+    // Scan the files and process the FIRST valid SHP or TMP file
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+            const buffer = await file.arrayBuffer();
+            const type = detectFileType(buffer);
+            if (type === 'shp' || type === 'tmp') {
+                let handle = null;
+                try {
+                    if (items[i] && typeof items[i].getAsFileSystemHandle === 'function') {
+                        handle = await items[i].getAsFileSystemHandle();
+                    }
+                } catch (err) {}
+                await processSystemFileOpen(file, handle, buffer);
+                return; // Stop immediately after processing the first valid project file
+            }
+        } catch (err) {
+            console.error("Error reading file in selection:", file.name, err);
+        }
+    }
+
+    alert(`No se detectó ningún archivo SHP o TMP válido entre los elementos arrastrados. Asegúrese de que sea un archivo SHP o TMP válido, o imágenes PNG/PCX si tiene un proyecto activo.`);
+});

@@ -1,6 +1,8 @@
 import { ShpFormat80 } from './shp_format.js';
 import { state, TRANSPARENT_COLOR } from './state.js';
 import { SVG_PLAY_MODERN as SVG_PLAY, SVG_PAUSE_MODERN as SVG_PAUSE, SVG_STEP_FWD_MODERN as SVG_STEP_FORWARD } from './utils.js';
+import { loadTmpData } from './file_io.js';
+import { saveRecentFile } from './menu_handlers.js';
 
 let impShpPalette = new Array(256).fill(null);
 let impShpData = null; // { width, height, frames: [] }
@@ -9,7 +11,7 @@ let impShpTimer = null;
 
 export function initImportShp(onConfirm) {
     // Initialize Grid
-    initImportGrid();
+    shp_initImportGrid();
 
     // Initialize Icons
     if (elements.btnImpShpPlay) elements.btnImpShpPlay.innerHTML = SVG_PLAY;
@@ -39,10 +41,10 @@ export function initImportShp(onConfirm) {
                     window._lastShpFileHandle = handle;
 
                     impShpFrameIdx = 0;
-                    updateFrameLimits();
+                    shp_updateFrameLimits();
                     elements.impShpSlider.value = 0;
-                    renderImportFrame(0);
-                    updateImportUI();
+                    shp_renderImportFrame(0);
+                    shp_updateImportUI();
                 } catch (err) {
                     alert("Error parsing SHP: " + err.message);
                 }
@@ -58,7 +60,7 @@ export function initImportShp(onConfirm) {
         if (!e.target.files.length) return;
         const file = e.target.files[0];
         const reader = new FileReader();
-        reader.onload = ev => {
+        reader.onload = async ev => {
             try {
                 const buf = ev.target.result;
                 impShpData = ShpFormat80.parse(buf);
@@ -66,13 +68,13 @@ export function initImportShp(onConfirm) {
                 impShpData.filename = file.name;
 
                 impShpFrameIdx = 0;
-                updateFrameLimits();
+                shp_updateFrameLimits();
                 elements.impShpSlider.value = 0;
 
-                renderImportFrame(0);
-                updateImportUI();
+                shp_renderImportFrame(0);
+                shp_updateImportUI();
             } catch (err) {
-                alert("Error parsing SHP: " + err.message);
+                alert("Error parsing file: " + err.message);
             }
             elements.inpImpShpFile.value = '';
         };
@@ -84,7 +86,7 @@ export function initImportShp(onConfirm) {
         const maxIdx = parseInt(elements.impShpSlider.max);
         impShpFrameIdx = (impShpFrameIdx + 1) > maxIdx ? 0 : impShpFrameIdx + 1;
         elements.impShpSlider.value = impShpFrameIdx;
-        renderImportFrame(impShpFrameIdx);
+        shp_renderImportFrame(impShpFrameIdx);
     };
 
     elements.btnImpShpStep.onclick = stepFrame;
@@ -92,7 +94,7 @@ export function initImportShp(onConfirm) {
     elements.impShpSlider.oninput = () => {
         if (!impShpData) return;
         impShpFrameIdx = parseInt(elements.impShpSlider.value);
-        renderImportFrame(impShpFrameIdx);
+        shp_renderImportFrame(impShpFrameIdx);
     };
 
     elements.btnImpShpPlay.onclick = () => {
@@ -107,25 +109,25 @@ export function initImportShp(onConfirm) {
     };
 
     elements.btnCancelImpShp.onclick = () => {
-        stopAnimation();
+        shp_stopAnimation();
         elements.importShpDialog.close();
     };
 
     elements.btnConfirmImpShp.onclick = () => {
         if (onConfirm) onConfirm(impShpData, impShpPalette);
-        stopAnimation();
+        shp_stopAnimation();
         elements.importShpDialog.close();
     };
 
     elements.chkImpShpNoShadow.onchange = () => {
         if (!impShpData) return;
-        updateFrameLimits();
+        shp_updateFrameLimits();
         if (impShpFrameIdx > elements.impShpSlider.max) {
             impShpFrameIdx = 0;
             elements.impShpSlider.value = 0;
-            renderImportFrame(0);
+            shp_renderImportFrame(0);
         }
-        updateImportUI();
+        shp_updateImportUI();
     };
 }
 
@@ -133,9 +135,9 @@ export function syncImporterPalette(palette) {
     if (!palette) return;
     // Clone palette to avoid reference issues
     impShpPalette = palette.map(c => c ? { ...c } : null);
-    renderImportPalette();
-    if (impShpData) renderImportFrame(impShpFrameIdx);
-    updateImportUI();
+    shp_renderImportPalette();
+    if (impShpData) shp_renderImportFrame(impShpFrameIdx);
+    shp_updateImportUI();
 }
 
 export function resetImportState() {
@@ -150,10 +152,10 @@ export function resetImportState() {
     if (elements.impShpCounter) elements.impShpCounter.innerText = "-/-";
     if (elements.impShpInfo) elements.impShpInfo.innerText = state.translations['lbl_no_file_loaded'] || "No file loaded";
 
-    updateImportUI();
+    shp_updateImportUI();
 }
 
-function updateFrameLimits() {
+function shp_updateFrameLimits() {
     if (!impShpData) return;
     const hideShadows = elements.chkImpShpNoShadow.checked;
     const total = impShpData.frames.length;
@@ -164,7 +166,7 @@ function updateFrameLimits() {
     elements.impShpCounter.innerText = `${impShpFrameIdx}/${maxIdx}`;
 }
 
-function initImportGrid() {
+function shp_initImportGrid() {
     const grid = elements.impShpPalGrid;
     grid.innerHTML = '';
     for (let i = 0; i < 256; i++) {
@@ -174,7 +176,7 @@ function initImportGrid() {
     }
 }
 
-function renderImportPalette() {
+function shp_renderImportPalette() {
     const cells = elements.impShpPalGrid.children;
     for (let i = 0; i < 256; i++) {
         const c = impShpPalette[i];
@@ -188,14 +190,14 @@ function renderImportPalette() {
     }
 }
 
-function clearImportPalette() {
+function shp_clearImportPalette() {
     impShpPalette = new Array(256).fill(null);
-    renderImportPalette();
-    if (impShpData) renderImportFrame(impShpFrameIdx);
-    updateImportUI();
+    shp_renderImportPalette();
+    if (impShpData) shp_renderImportFrame(impShpFrameIdx);
+    shp_updateImportUI();
 }
 
-function renderImportFrame(idx) {
+function shp_renderImportFrame(idx) {
     if (!impShpData) return;
     const f = impShpData.frames[idx];
     if (!f) return;
@@ -256,7 +258,7 @@ function renderImportFrame(idx) {
     elements.impShpInfo.innerText = `${impShpData.filename} (${impShpData.width}x${impShpData.height}, ${impShpData.frames.length} frames, ${compressionLbl} ${f.compression})`;
 }
 
-function updateImportUI() {
+function shp_updateImportUI() {
     // A palette is considered loaded if at least ONE color is not null
     const hasPal = impShpPalette && impShpPalette.some(c => c !== null);
     const hasData = !!impShpData;
@@ -281,7 +283,7 @@ function updateImportUI() {
     }
 }
 
-function stopAnimation() {
+function shp_stopAnimation() {
     if (impShpTimer) {
         clearInterval(impShpTimer);
         impShpTimer = null;

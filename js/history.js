@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { elements } from './constants.js';
-import { updateCanvasSize, renderFrameManager } from './ui.js';
+import { updateCanvasSize, renderFrameManager, clearThumbCaches } from './ui.js';
 
 let hook_renderCanvas, hook_renderFramesList, hook_updateLayersList, hook_startAnts, hook_stopAnts, hook_updateUIState;
 
@@ -78,6 +78,9 @@ export function cloneLayerNode(node) {
         if (node.extShpPalette) {
             cloned.extShpPalette = JSON.parse(JSON.stringify(node.extShpPalette));
         }
+        if (node.index0Transparent !== undefined) {
+            cloned.index0Transparent = node.index0Transparent;
+        }
     }
 
     if (node.data) {
@@ -116,11 +119,13 @@ export function ensureCOWDetached(frameIdx) {
         duration: f.duration,
         lastSelectedIdx: f.lastSelectedIdx,
         _v: f._v,
+        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
         layers: f.layers.map(l => cloneLayerNode(l))
     };
 }
 
 export function pushHistory(modifiedFrameIndices = null) {
+    clearThumbCaches();
     if (state.historyPtr < state.history.length - 1) {
         state.history = state.history.slice(0, state.historyPtr + 1);
     }
@@ -209,6 +214,7 @@ export function pushHistory(modifiedFrameIndices = null) {
                         duration: f.duration,
                         lastSelectedIdx: f.lastSelectedIdx,
                         _v: newV,
+                        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
                         layers: f.layers // shared reference for snapshot (immutable)
                     };
 
@@ -220,6 +226,7 @@ export function pushHistory(modifiedFrameIndices = null) {
                         duration: f.duration,
                         lastSelectedIdx: f.lastSelectedIdx,
                         _v: newV,
+                        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
                         layers: f.layers.map(l => cloneLayerNode(l))
                         // no _cowPending — this frame is now fully independent
                     };
@@ -237,6 +244,7 @@ export function pushHistory(modifiedFrameIndices = null) {
                     duration: f.duration,
                     lastSelectedIdx: f.lastSelectedIdx,
                     _v: newV,
+                    tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
                     layers: f.layers.map(l => cloneLayerNode(l))
                 };
             }
@@ -278,6 +286,7 @@ export function pushHistory(modifiedFrameIndices = null) {
         canvasH: state.canvasH,
         activeLayerId: state.activeLayerId, // Save so undo restores the correct active layer
         currentFrameIdx: state.currentFrameIdx, // Save the active frame
+        tmpFullZPreviewActive: !!state.tmpFullZPreviewActive, // Save whether Full Z Preview is active
         palette: state.palette.map(c => c ? { ...c } : null) // Snapshot the current palette
     });
 
@@ -334,6 +343,7 @@ export function redo() {
 export function restoreHistory(snapshot) {
     if (!snapshot) return;
 
+    clearThumbCaches();
     console.log(`[History] Restoring snapshot. Frames: ${snapshot.frames.length}, Canvas: ${snapshot.canvasW}x${snapshot.canvasH}`);
 
     // Handle both old (array of frames) and new formats
@@ -355,6 +365,7 @@ export function restoreHistory(snapshot) {
         duration: f.duration,
         lastSelectedIdx: f.lastSelectedIdx,
         _v: (f._v || 0) + 1, // Bump _v for thumbnail invalidation
+        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
         layers: f.layers,     // SHARE by reference (COW — will be cloned on next push)
         _cowPending: true     // Flag: layers are shared with snapshot, clone before mutating
     }));
@@ -391,6 +402,7 @@ export function restoreHistory(snapshot) {
         if (snapshot.canvasH !== undefined) state.canvasH = snapshot.canvasH;
         if (snapshot.activeLayerId !== undefined) state.activeLayerId = snapshot.activeLayerId;
         if (snapshot.currentFrameIdx !== undefined) state.currentFrameIdx = snapshot.currentFrameIdx;
+        state.tmpFullZPreviewActive = snapshot.tmpFullZPreviewActive !== undefined ? snapshot.tmpFullZPreviewActive : false;
         
         if (snapshot.palette) {
             state.palette = snapshot.palette.map(c => c ? { ...c } : null);

@@ -99,6 +99,13 @@ export const state = {
     fmSplitRatio: 0.5,           // Ratio for split view (0.25 to 0.75)
 
     isAlphaImageMode: false,
+
+    // TMP Mode (TS/RA2 terrain templates)
+    isTmpMode: false,         // true when a TMP file is loaded instead of SHP
+    tmpHeader: null,          // { cblocks_x, cblocks_y, cx, cy } global tile dimensions
+    originalTmpTiles: null,   // raw tiles[] array preserved for lossless re-encoding on save
+    tmpFilename: null,        // original filename used for Save
+    tmpFullZPreviewActive: false, // New: true when viewing composed Z-data full preview
 };
 
 export function generateId() {

@@ -141,7 +141,7 @@ export function compositeFrame(frame, options = {}) {
         backgroundIdx = 65535,
         floatingSelection = null,
         ctx = null,
-        palette = state.palette,
+        palette = null,
         isShadow = false,
         remapBase = null,
         showIndex0 = true,
@@ -152,6 +152,8 @@ export function compositeFrame(frame, options = {}) {
         affectedIndices = null,
         visualData = null // NEW: If provided, renders colors sequentially for correctly blended transparency
     } = options;
+
+    const actualPalette = palette || getActivePalette();
 
     const w = frame.width;
     const h = frame.height;
@@ -246,7 +248,7 @@ export function compositeFrame(frame, options = {}) {
         if (node.id && !node.isMask) {
             const isExt = node.type === 'external_shp';
             const indices = isExt ? node.extShpFrameData : node.data;
-            const nodePal = isExt ? node.extShpPalette : palette;
+            const nodePal = isExt ? node.extShpPalette : actualPalette;
             const isGhosted = !!node.ghosting;
             const gAlpha = isGhosted ? Math.round(255 * (node.ghostOpacity !== undefined ? node.ghostOpacity : 50) / 100) : 255;
             const actualTransparent = state.isAlphaImageMode ? 127 : 0;
@@ -295,76 +297,77 @@ export function compositeFrame(frame, options = {}) {
 
                         const idx = indices[ly * nw + lx];
                         if (idx !== transparentIdx) {
-                            if (idx !== actualTransparent || res[py * w + px] === transparentIdx) {
-                                const gk = py * w + px;
-                                let ok = true;
-                                for (const m of effectiveParentMasks) if (m && !m[gk]) { ok = false; break; }
-                                if (ok) {
-                                    // 1. Update Index Buffer (for tools/saves - top-most takes priority)
-                                    if (options.flattenToPalette) {
-                                        if (!isExt || nodePal === options.flattenToPalette) {
-                                            // Normal layers already use the main palette, and external SHPs with the same palette
-                                            // should also skip remapping to avoid precision loss or accidental transparent index shifts.
-                                            res[gk] = idx;
-                                        } else {
-                                            // Only map external colors to the nearest index in the target palette if palettes differ
-                                            const color = nodePal[idx];
-                                            if (color) {
-                                                res[gk] = findNearestPaletteIndex(color.r, color.g, color.b, options.flattenToPalette);
-                                            } else {
-                                                res[gk] = idx;
-                                            }
-                                        }
-                                    } else if (includeExternalShp && regIdx !== -1) {
-                                        res[gk] = ((regIdx + 1) << 8) | idx;
-                                    } else {
+                            if (isExt && idx === 0 && node.index0Transparent !== false) continue; // ext SHP: treat 0 as transparent
+                            const gk = py * w + px;
+                            let ok = true;
+                            for (const m of effectiveParentMasks) if (m && !m[gk]) { ok = false; break; }
+                            if (ok) {
+                                // 1. Update Index Buffer (for tools/saves - top-most takes priority)
+                                if (options.flattenToPalette) {
+                                    if (!isExt || nodePal === options.flattenToPalette) {
+                                        // Normal layers already use the main palette, and external SHPs with the same palette
+                                        // should also skip remapping to avoid precision loss or accidental transparent index shifts.
                                         res[gk] = idx;
-                                    }
-                                    ghostAlpha[gk] = gAlpha;
-
-                                    // 2. High-Fidelity Visual Blending (IF ACTIVE)
-                                    if (visualData && nodePal && idx !== actualTransparent) {
-                                        let finalIdx = idx;
-                                        if (substitutionMap && substitutionMap.has(idx) && !isExt) finalIdx = substitutionMap.get(idx);
-
-                                        const col = nodePal[finalIdx] || { r: 0, g: 0, b: 0 };
-                                        let r = col.r, g = col.g, b = col.b, a = gAlpha;
-
-                                        if (affectedIndices && affectedIndices.has(idx) && !isExt) {
-                                            r = Math.min(255, r + 60); g = Math.min(255, g + 60); b = Math.min(255, b + 60);
-                                        } else if (affectedIndices && !isExt) {
-                                            r *= 0.2; g *= 0.2; b *= 0.2;
-                                        }
-
-                                        // Faction Remapping
-                                        if (remapBase && finalIdx >= 16 && finalIdx <= 31 && !isExt) {
-                                            let brightness = Math.max(r, Math.max(g, b)) / 255.0;
-                                            brightness *= 1.25;
-                                            r = Math.min(255, Math.round(remapBase.r * brightness));
-                                            g = Math.min(255, Math.round(remapBase.g * brightness));
-                                            b = Math.min(255, Math.round(remapBase.b * brightness));
-                                        }
-
-                                        if (isShadow) { r = 0; g = 0; b = 0; a = Math.round(a * 120 / 255); }
-
-                                        const off = gk * 4;
-                                        if (a === 255) {
-                                            visualData[off] = r; visualData[off + 1] = g; visualData[off + 2] = b; visualData[off + 3] = 255;
+                                    } else {
+                                        // Only map external colors to the nearest index in the target palette if palettes differ
+                                        const color = nodePal[idx];
+                                        if (color) {
+                                            res[gk] = findNearestPaletteIndex(color.r, color.g, color.b, options.flattenToPalette);
                                         } else {
-                                            // Back-to-front alpha blending (Painter's algorithm)
-                                            // Standard formula: outA = srcA + dstA * (1 - srcA)
-                                            // outRGB = (srcRGB * srcA + dstRGB * dstA * (1 - srcA)) / outA
-                                            const fa = a / 255;
-                                            const da = visualData[off + 3] / 255;
-                                            const outA = fa + da * (1 - fa);
-
-                                            if (outA > 0) {
-                                                visualData[off] = Math.round((r * fa + visualData[off] * da * (1 - fa)) / outA);
-                                                visualData[off + 1] = Math.round((g * fa + visualData[off + 1] * da * (1 - fa)) / outA);
-                                                visualData[off + 2] = Math.round((b * fa + visualData[off + 2] * da * (1 - fa)) / outA);
-                                            }
-                                            visualData[off + 3] = Math.round(outA * 255);
+                                            res[gk] = idx;
                                         }
+                                    }
+                                } else if (includeExternalShp && regIdx !== -1) {
+                                    res[gk] = ((regIdx + 1) << 8) | idx;
+                                } else {
+                                    res[gk] = idx;
+                                }
+                                ghostAlpha[gk] = gAlpha;
+
+                                // 2. High-Fidelity Visual Blending (IF ACTIVE)
+                                // Index 0 is a real palette color (opaque) — include it in visualData.
+                                // isShadow handling inside already converts it to semi-transparent black.
+                                if (visualData && nodePal) {
+                                    let finalIdx = idx;
+                                    if (substitutionMap && substitutionMap.has(idx) && !isExt) finalIdx = substitutionMap.get(idx);
+
+                                    const col = nodePal[finalIdx] || { r: 0, g: 0, b: 0 };
+                                    let r = col.r, g = col.g, b = col.b, a = gAlpha;
+
+                                    if (affectedIndices && affectedIndices.has(idx) && !isExt) {
+                                        r = Math.min(255, r + 60); g = Math.min(255, g + 60); b = Math.min(255, b + 60);
+                                    } else if (affectedIndices && !isExt) {
+                                        r *= 0.2; g *= 0.2; b *= 0.2;
+                                    }
+
+                                    // Faction Remapping
+                                    if (remapBase && finalIdx >= 16 && finalIdx <= 31 && !isExt) {
+                                        let brightness = Math.max(r, Math.max(g, b)) / 255.0;
+                                        brightness *= 1.25;
+                                        r = Math.min(255, Math.round(remapBase.r * brightness));
+                                        g = Math.min(255, Math.round(remapBase.g * brightness));
+                                        b = Math.min(255, Math.round(remapBase.b * brightness));
+                                    }
+
+                                    if (isShadow) { r = 0; g = 0; b = 0; a = Math.round(a * 120 / 255); }
+
+                                    const off = gk * 4;
+                                    if (a === 255) {
+                                        visualData[off] = r; visualData[off + 1] = g; visualData[off + 2] = b; visualData[off + 3] = 255;
+                                    } else {
+                                        // Back-to-front alpha blending (Painter's algorithm)
+                                        // Standard formula: outA = srcA + dstA * (1 - srcA)
+                                        // outRGB = (srcRGB * srcA + dstRGB * dstA * (1 - srcA)) / outA
+                                        const fa = a / 255;
+                                        const da = visualData[off + 3] / 255;
+                                        const outA = fa + da * (1 - fa);
+
+                                        if (outA > 0) {
+                                            visualData[off] = Math.round((r * fa + visualData[off] * da * (1 - fa)) / outA);
+                                            visualData[off + 1] = Math.round((g * fa + visualData[off + 1] * da * (1 - fa)) / outA);
+                                            visualData[off + 2] = Math.round((b * fa + visualData[off + 2] * da * (1 - fa)) / outA);
+                                        }
+                                        visualData[off + 3] = Math.round(outA * 255);
                                     }
                                 }
                             }
@@ -453,44 +456,42 @@ export function compositeFrame(frame, options = {}) {
                 if (tx >= 0 && tx < w && ty >= 0 && ty < h) {
                     const idx = fs.data[fy * fsW + fx];
                     if (idx !== transparentIdx) {
-                        const actualTransparent = state.isAlphaImageMode ? 127 : 0;
                         const k = ty * w + tx;
-                        if (idx !== actualTransparent || res[k] === transparentIdx) {
-                            let ok = true;
-                            if (fs.maskData && !fs.maskData[fy * fsW + fx]) ok = false;
-                            if (ok) {
-                                for (const m of masks) if (m && !m[k]) { ok = false; break; }
-                            }
-                            if (ok) {
-                                res[k] = idx;
-                                const alpha = isGhosted ? gAlpha : 255;
-                                ghostAlpha[k] = alpha;
+                        let ok = true;
+                        if (fs.maskData && !fs.maskData[fy * fsW + fx]) ok = false;
+                        if (ok) {
+                            for (const m of masks) if (m && !m[k]) { ok = false; break; }
+                        }
+                        if (ok) {
+                            res[k] = idx;
+                            const alpha = isGhosted ? gAlpha : 255;
+                            ghostAlpha[k] = alpha;
 
-                                if (visualData && palette) {
-                                    let finalIdx = idx;
-                                    if (substitutionMap && substitutionMap.has(idx)) finalIdx = substitutionMap.get(idx);
-                                    const col = palette[finalIdx] || { r: 0, g: 0, b: 0 };
-                                    let r = col.r, g = col.g, b = col.b;
-                                    const off = k * 4;
-                                    if (alpha === 255) {
-                                        visualData[off] = r; visualData[off + 1] = g; visualData[off + 2] = b; visualData[off + 3] = 255;
-                                    } else {
-                                        // Back-to-front alpha blending
-                                        const fa = alpha / 255;
-                                        const da = visualData[off + 3] / 255;
-                                        const outA = fa + da * (1 - fa);
+                            if (visualData && palette) {
+                                let finalIdx = idx;
+                                if (substitutionMap && substitutionMap.has(idx)) finalIdx = substitutionMap.get(idx);
+                                const col = palette[finalIdx] || { r: 0, g: 0, b: 0 };
+                                let r = col.r, g = col.g, b = col.b;
+                                const off = k * 4;
+                                if (alpha === 255) {
+                                    visualData[off] = r; visualData[off + 1] = g; visualData[off + 2] = b; visualData[off + 3] = 255;
+                                } else {
+                                    // Back-to-front alpha blending
+                                    const fa = alpha / 255;
+                                    const da = visualData[off + 3] / 255;
+                                    const outA = fa + da * (1 - fa);
 
-                                        if (outA > 0) {
-                                            visualData[off] = Math.round((r * fa + visualData[off] * da * (1 - fa)) / outA);
-                                            visualData[off + 1] = Math.round((g * fa + visualData[off + 1] * da * (1 - fa)) / outA);
-                                            visualData[off + 2] = Math.round((b * fa + visualData[off + 2] * da * (1 - fa)) / outA);
-                                        }
-                                        visualData[off + 3] = Math.round(outA * 255);
+                                    if (outA > 0) {
+                                        visualData[off] = Math.round((r * fa + visualData[off] * da * (1 - fa)) / outA);
+                                        visualData[off + 1] = Math.round((g * fa + visualData[off + 1] * da * (1 - fa)) / outA);
+                                        visualData[off + 2] = Math.round((b * fa + visualData[off + 2] * da * (1 - fa)) / outA);
                                     }
+                                    visualData[off + 3] = Math.round(outA * 255);
                                 }
                             }
                         }
                     }
+
                 }
             }
         }
@@ -506,7 +507,7 @@ export function compositeFrame(frame, options = {}) {
     if (alphaBuffer) alphaBuffer.set(ghostAlpha);
 
     // If a context is provided, we perform the palette mapping and render.
-    if (ctx && palette) {
+    if (ctx && actualPalette) {
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w;
         tempCanvas.height = h;
@@ -521,7 +522,7 @@ export function compositeFrame(frame, options = {}) {
             if (originalIdx === transparentIdx) continue;
 
             let idx = originalIdx;
-            let pPalette = palette;
+            let pPalette = actualPalette;
 
             // Decode Rich Index if it's an External SHP pixel
             if (originalIdx > 255 && originalIdx !== transparentIdx) {
@@ -566,5 +567,36 @@ export function compositeFrame(frame, options = {}) {
 
     if (frame._extNodes) res.extNodes = [...frame._extNodes];
     return res;
+}
+
+// Special Z-Data palette cache
+let _zDataPalette = null;
+export function getZdataPalette() {
+    if (!_zDataPalette) {
+        _zDataPalette = [];
+        // 32-level grayscale ramp for index 0..31: i * 255 / 31
+        for (let i = 0; i < 32; i++) {
+            const val = Math.round((i * 255) / 31);
+            _zDataPalette.push({ r: val, g: val, b: val });
+        }
+        // Red sentinels for index 32..255 (alert range)
+        for (let i = 32; i < 256; i++) {
+            _zDataPalette.push({ r: 255, g: 0, b: 0 });
+        }
+    }
+    return _zDataPalette;
+}
+
+export function getActivePalette() {
+    if (state.isTmpMode) {
+        // Full Z-Data Preview (currentFrameIdx=-1, no activeFrame)
+        if (state.tmpFullZPreviewActive) return getZdataPalette();
+        // Individual Z-Data / Extra Z-Data component
+        const activeFrame = state.frames[state.currentFrameIdx];
+        if (activeFrame && activeFrame.tmpMeta && (activeFrame.tmpMeta.component === 'zdata' || activeFrame.tmpMeta.component === 'extrazdata')) {
+            return getZdataPalette();
+        }
+    }
+    return state.palette;
 }
 

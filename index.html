@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v1.2';</script>
+    <script>const APP_VERSION = 'v1.5';</script>
     <script>
         let CnCReloadedMode = true;
         document.addEventListener("DOMContentLoaded", () => {
@@ -200,6 +200,9 @@
                             <span class="menu-icon icon-open"></span><span data-i18n="menu_open">Open SHP...</span><span
                                 class="shortcut">Ctrl+O</span>
                         </div>
+                        <div id="menuOpenTmp" class="menu-action" data-i18n-title="tt_menu_open_tmp">
+                            <span class="menu-icon icon-open"></span><span data-i18n="menu_open_tmp">Open TMP...</span>
+                        </div>
                         <div class="menu-item-submenu" id="menuRecentContainer" style="display:none;">
                             <div id="triggerRecent" class="menu-action submenu-trigger">
                                 <span class="menu-icon icon-shp-file"></span><span data-i18n="menu_open_recent">Open
@@ -212,14 +215,14 @@
                         </div>
                         <div class="menu-divider"></div>
                         <div id="menuSave" class="menu-action" data-i18n-title="tt_menu_save">
-                            <span class="menu-icon icon-save"></span><span data-i18n="menu_save">Save SHP</span><span
+                            <span class="menu-icon icon-save"></span><span data-i18n="menu_save">Save</span><span
                                 class="shortcut">Ctrl+S</span>
                         </div>
                         <div id="menuSaveAs" class="menu-action" data-i18n-title="tt_menu_save_as">
-                            <span class="menu-icon icon-save-as"></span><span data-i18n="menu_save_as">Save SHP
+                            <span class="menu-icon icon-save-as"></span><span data-i18n="menu_save_as">Save
                                 as...</span><span class="shortcut">Ctrl+Shift+S</span>
                         </div>
-                        <div class="menu-item-submenu">
+                        <div class="menu-item-submenu" id="menuItemExportShp">
                             <div id="triggerExport" class="menu-action submenu-trigger">
                                 <span class="menu-icon icon-export"></span><span
                                     data-i18n="menu_export">Export</span><span class="arrow">▶</span>
@@ -239,7 +242,36 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="menu-item-submenu">
+                        <div class="menu-item-submenu" id="menuItemExportTmp">
+                            <div id="triggerExportTmp" class="menu-action submenu-trigger" data-i18n-title="tt_menu_save_to">
+                                <span class="menu-icon icon-export"></span><span
+                                    data-i18n="menu_export">Export</span><span class="arrow">▶</span>
+                            </div>
+                            <div class="menu-dropdown submenu" style="min-width: 240px;">
+                                <div class="pal-menu-section-label header-image" data-i18n="lbl_section_image">IMAGE</div>
+                                <div id="menuSaveImgCell" class="menu-action" data-i18n-title="tt_opt_save_img_cell">
+                                    <span data-i18n="opt_save_img_cell">Only Cell</span>
+                                </div>
+                                <div id="menuSaveImgExtra" class="menu-action" data-i18n-title="tt_opt_save_img_extra">
+                                    <span data-i18n="menu_only_extra">Only Extra Data</span>
+                                </div>
+                                <div id="menuSaveImgFullCanvas" class="menu-action" data-i18n-title="tt_opt_save_img_total">
+                                    <span data-i18n="menu_copy_full_canvas">Whole Canvas</span>
+                                </div>
+                                <div class="menu-divider"></div>
+                                <div class="pal-menu-section-label header-zdata" data-i18n="lbl_section_zdata">Z-DATA</div>
+                                <div id="menuSaveZCell" class="menu-action" data-i18n-title="tt_opt_save_z_cell">
+                                    <span data-i18n="opt_save_z_cell">Only Cell</span>
+                                </div>
+                                <div id="menuSaveZExtra" class="menu-action" data-i18n-title="tt_opt_save_z_extra">
+                                    <span data-i18n="menu_only_extra">Only Extra Data</span>
+                                </div>
+                                <div id="menuSaveZFullCanvas" class="menu-action" data-i18n-title="tt_opt_save_z_total">
+                                    <span data-i18n="menu_copy_full_canvas">Whole Canvas</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="menu-item-submenu" id="menuItemImport">
                             <div id="triggerImport" class="menu-action submenu-trigger">
                                 <span class="menu-icon icon-import"></span><span
                                     data-i18n="menu_import">Import</span><span class="arrow">▶</span>
@@ -303,7 +335,16 @@
                                 </div>
                                 <div id="menuPasteNewLayer" class="menu-action"
                                     data-i18n-title="tt_menu_paste_new_layer"><span data-i18n="menu_paste_new_layer">To
-                                        New Layer</span><span class="shortcut">Ctrl+Shift+V</span></div>
+                                        New Layer (Top)</span><span class="shortcut">Ctrl+Shift+V</span></div>
+                                <div id="menuPasteNewLayerRange" class="menu-action"
+                                    data-i18n-title="tt_menu_paste_new_layer_range"><span data-i18n="menu_paste_new_layer_range">To
+                                        New Layer (Top) in range...</span></div>
+                                <div id="menuPasteNewLayerBottom" class="menu-action"
+                                    data-i18n-title="tt_menu_paste_new_layer_bottom"><span data-i18n="menu_paste_new_layer_bottom">To
+                                        New Layer (Bottom)</span><span class="shortcut">Ctrl+Alt+Shift+V</span></div>
+                                <div id="menuPasteNewLayerBottomRange" class="menu-action"
+                                    data-i18n-title="tt_menu_paste_new_layer_bottom_range"><span data-i18n="menu_paste_new_layer_bottom_range">To
+                                        New Layer (Bottom) in range...</span></div>
                                 <div id="menuPasteNewFrame" class="menu-action"
                                     data-i18n-title="tt_menu_paste_new_frame"><span data-i18n="menu_paste_new_frame">As
                                         New Frame</span><span class="shortcut">Ctrl+Alt+V</span></div>
@@ -478,7 +519,8 @@
                             <span class="menu-icon icon-bg"></span><span data-i18n="menu_bg_vis">Background
                                 Visibility</span>
                         </div>
-                        <div class="menu-item-submenu">
+                        <!-- Game Grid: submenu (SHP mode) -->
+                        <div class="menu-item-submenu" id="gameGridSubmenuWrapper">
                             <div id="triggerGameGrid" class="menu-action submenu-trigger"
                                 data-i18n-title="tt_game_grid">
                                 <span class="menu-icon icon-game-grid"></span><span data-i18n="menu_game_grid">Game
@@ -495,6 +537,10 @@
                                         class="menu-icon icon-grid-ra2"></span><span data-i18n="menu_ra2_grid">RA2
                                         Grid</span></div>
                             </div>
+                        </div>
+                        <!-- Game Grid: simple toggle (TMP mode — type auto-detected from tile size) -->
+                        <div id="menuGameGridToggle" class="menu-action" data-i18n-title="tt_game_grid">
+                            <span class="menu-icon icon-game-grid"></span><span data-i18n="menu_game_grid">Game Grid</span>
                         </div>
                         <div id="menuToggleShadows" class="menu-action" data-i18n-title="tt_menu_shadows">
                             <span class="menu-icon icon-shadows"></span><span data-i18n="menu_shadows">Shadows</span>
@@ -655,6 +701,16 @@
                                 data-i18n="menu_remove_shadow_pixels">Remove Useless Shadow
                                 Pixels</span>
                         </div>
+                        <div id="menuRemoveColorZero" class="menu-action"
+                            data-i18n-title="tt_menu_remove_color0">
+                            <span class="menu-icon icon-remove-color0" style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🗑️</span><span
+                                data-i18n="menu_remove_color0">Remove Color 0</span>
+                        </div>
+                        <div id="menuFillColorZero" class="menu-action"
+                            data-i18n-title="tt_menu_fill_color0">
+                            <span class="menu-icon icon-fill-color0" style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🖌️</span><span
+                                data-i18n="menu_fill_color0">Fill with Color 0</span>
+                        </div>
                         <div class="menu-divider"></div>
                         <div id="menuConvertRA2toTS" class="menu-action" data-i18n-title="tt_menu_ra2_to_ts">
                             <span class="menu-icon icon-shadow-ra2-ts"></span><span data-i18n="menu_ra2_to_ts">Convert
@@ -730,7 +786,7 @@
 
                 <div class="toolbar-sep"></div>
 
-                <div style="display:flex; align-items:center; margin-left:5px;" data-i18n-title="tt_game_grid">
+                <div id="wrapperIsoGridSelect" style="display:flex; align-items:center; margin-left:5px;" data-i18n-title="tt_game_grid">
                     <span style="font-size:11px; color:#ccc; margin-right:5px;" data-i18n="menu_game_grid">Game
                         Grid:</span>
                     <select id="selIsoGrid" class="input-dark" style="height:24px; padding:0 5px; width: 100px;">
@@ -740,7 +796,14 @@
                     </select>
                 </div>
 
-                <div class="toolbar-sep"></div>
+                <div id="wrapperIsoGridCheckbox" style="display:none; align-items:center; margin-left:5px;" data-i18n-title="tt_game_grid">
+                    <label style="display:flex; align-items:center; cursor:pointer; font-size:11px; color:#ccc;">
+                        <input type="checkbox" id="cbIsoGrid" style="margin-right:5px;">
+                        <span data-i18n="menu_game_grid">Game Grid</span>
+                    </label>
+                </div>
+
+                <div id="sepBeforeShadows" class="toolbar-sep"></div>
 
                 <div id="wrapperUseShadows" style="display:flex; align-items:center; margin-left:5px;"
                     data-i18n-title="tt_shadows_vis">
@@ -751,7 +814,15 @@
                     </label>
                 </div>
 
-                <div class="toolbar-sep"></div>
+                <div id="wrapperMainRelIndex" style="display:none; align-items:center; margin-left:12px;"
+                    data-i18n-title="tt_main_rel_index">
+                    <label style="display:flex; align-items:center; cursor:pointer; font-size:11px; color:#ccc;">
+                        <input type="checkbox" id="cbMainRelIndex" style="margin-right:5px;">
+                        <span data-i18n="lbl_fm_rel_index">Relative Index</span>
+                    </label>
+                </div>
+
+                <div id="sepBeforeShadowOverlay" class="toolbar-sep"></div>
 
                 <div id="wrapperShowShadowOverlay" style="display:flex; align-items:center; margin-left:5px;"
                     data-i18n-title="tt_shadow_overlay">
@@ -1206,8 +1277,8 @@
                         <!-- Paste Notification Bar -->
                         <div id="pasteNotification" class="notification-bar">
                             <span id="pasteNotificationContent" style="display: flex; align-items: center; gap: 10px;">
-                                <span class="notification-icon" style="font-size: 20px;">⚠️</span>
-                                <span class="notification-text">Aviso: Usa Ctrl+V para forzar el pegado de tu
+                                <span id="pasteNotificationIcon" class="notification-icon" style="font-size: 20px;">⚠️</span>
+                                <span id="pasteNotificationMsg" class="notification-text">Aviso: Usa Ctrl+V para forzar el pegado de tu
                                     imagen.</span>
                             </span>
                             <button class="close-btn" onclick="this.parentElement.classList.remove('active')">×</button>
@@ -1299,7 +1370,7 @@
                 <div id="framesContainer"
                     style="display: flex; flex-direction: column; flex: 1; min-height: 100px; overflow: hidden;">
                     <div class="panel-header">
-                        <span data-i18n="sidebar_frames">Frames</span>
+                        <span id="sidebarFramesTitle" data-i18n="sidebar_frames">Frames</span>
                         <div style="flex:1"></div>
                         <button id="btnFrameMgr" class="frame-btn" title="Frame Manager"
                             data-i18n-title="tooltip_frame_mgr"></button>
@@ -1311,6 +1382,7 @@
                             data-i18n-title="tooltip_del_frame"></button>
                     </div>
                     <div id="framesList" class="list-container" style="flex: 1; margin-bottom: 0;"></div>
+                    <div id="tmpComponentsList" class="list-container" style="flex: 1; margin-bottom: 0; display: none;"></div>
                 </div>
 
                 <div id="panelVerticalResizer" class="panel-resizer-vertical"></div>
@@ -1372,9 +1444,140 @@
             <button id="btnMfProcess" class="btn btn-primary" data-i18n="btn_process">Process</button>
         </div>
     </dialog>
+
+    <dialog id="dialogPasteRange" class="dialog-modal">
+        <h3 id="dialogPasteRangeTitle" data-i18n="dlg_paste_range_title">PASTE LAYER IN FRAME RANGE</h3>
+        <div style="display:grid; grid-template-columns: 120px 1fr; gap:10px; align-items:center;">
+            <label data-i18n="lbl_start_frame">Start Frame:</label>
+            <div class="input-stepper">
+                <button class="step-btn">-</button>
+                <input type="number" id="pasteRangeStart" class="input-dark input-step" min="0" value="0">
+                <button class="step-btn">+</button>
+            </div>
+
+            <label data-i18n="lbl_end_frame">End Frame:</label>
+            <div class="input-stepper">
+                <button class="step-btn">-</button>
+                <input type="number" id="pasteRangeEnd" class="input-dark input-step" min="0" value="0">
+                <button class="step-btn">+</button>
+            </div>
+        </div>
+        <p class="hint" data-i18n="lbl_indices_hint">Indices are 0-based. (0 to N-1)</p>
+        <div class="dialog-footer">
+            <button id="btnPasteRangeCancel" class="btn" data-i18n="btn_cancel">Cancel</button>
+            <button id="btnPasteRangeProcess" class="btn btn-primary" data-i18n="btn_process">Process</button>
+        </div>
+    </dialog>
     <!-- Old resizeDialog removed: replaced by unifiedResizeDialog -->
+    <dialog id="importTmpDialog" class="dialog-modal" style="width: 800px; max-width: 95vw; background: #0f111a;">
+        <h3 style="color: var(--accent); letter-spacing: 1px;"><span data-i18n="dlg_open_tmp_title">OPEN TMP</span>
+            <small style="font-size: 0.8em; font-style: italic; opacity: 0.7; font-weight: normal; margin-left: 10px;"
+                data-i18n="lbl_tmp_format_hint">(Westwood TMP terrain template)</small>
+        </h3>
+        <p data-i18n="msg_open_tmp_warning" id="openTmpWarningMsg"
+            style="color:#ffcc00; font-size:11px; margin-bottom:15px; background: rgba(255, 204, 0, 0.05); padding: 8px; border: 1px solid rgba(255, 204, 0, 0.2);">
+            ⚠ Opening a TMP file will overwrite the current project. Save your work first if needed.
+        </p>
+
+        <div style="display:flex; gap:15px; height:450px;">
+            <!-- Left: Palette Selection -->
+            <div style="flex: 1; display:flex; flex-direction:column;">
+                <div class="analysis-header" data-i18n="dlg_shp_step1">1. Load Reference Palette</div>
+                <div class="menu-item palette-selector-menu height-auto" id="menuItemImpTmpPalettes"
+                    style="margin-bottom: 5px;">
+                    <button class="menu-btn"
+                        style="width:100%; text-align:left; display:flex; justify-content:space-between; padding: 8px 12px; border: 1px solid var(--border); background: var(--bg-input); border-radius: 4px; color: var(--accent); font-weight: bold;">
+                        <span data-i18n="btn_select_palette">🎨 SELECT PALETTE</span>
+                        <span class="arrow" style="opacity: 0.5;">▼</span>
+                    </button>
+                    <div class="menu-dropdown" id="impTmpPalettesMenuDropdown"
+                        style="width: 240px; min-width: 240px; margin-top: 2px;">
+                        <!-- Content populated by JS -->
+                    </div>
+                </div>
+                <div id="impTmpPalGrid" class="palette-grid-wrapper"></div>
+            </div>
+
+            <!-- Right: TMP Preview -->
+            <div style="flex:2; display:flex; flex-direction:column;">
+                <div class="analysis-header" data-i18n="dlg_shp_step2">2. Load TMP File</div>
+                <button id="btnImpTmpLoadFile" class="btn"
+                    style="width:100%; margin-bottom: 5px; background: #2d3748; color: #fff;"
+                    data-i18n="btn_load_tmp">LOAD TMP</button>
+
+                <div style="font-size:12px; color: var(--text-muted); margin-bottom: 5px; font-family: monospace;">
+                    <span data-i18n="lbl_filename">Filename:</span> <span id="impTmpInfo">-</span>
+                </div>
+
+                <div id="impTmpPreviewContainer" class="checkerboard-bg"
+                    style="flex:1; position:relative; display:flex; align-items:center; justify-content:center; border:1px solid var(--border); overflow:hidden; min-height: 250px;">
+                    <canvas id="impTmpCanvas"
+                        style="max-width:100%; max-height:100%; image-rendering:pixelated;"></canvas>
+                </div>
+
+                <!-- Tile Data Table (XCC Style) -->
+                <div id="impTmpTileDataLog"
+                    style="height: 120px; overflow-y: scroll; background: #050505; border: 1px solid #333; margin-top: 5px; font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #00ff00;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                        <thead style="background: #1a202c; position: sticky; top: 0; color: var(--accent);">
+                            <tr>
+                                <th style="padding: 2px 4px; border: 1px solid #222; width: 40px;"
+                                    data-i18n="lbl_tbl_slot">Slot</th>
+                                <th style="padding: 2px 4px; border: 1px solid #222;" data-i18n="lbl_tbl_x">X</th>
+                                <th style="padding: 2px 4px; border: 1px solid #222;" data-i18n="lbl_tbl_y">Y</th>
+                                <th style="padding: 2px 4px; border: 1px solid #222;" data-i18n="lbl_tbl_height">Height
+                                </th>
+                                <th style="padding: 2px 4px; border: 1px solid #222;" data-i18n="lbl_tbl_extra_data">
+                                    Extra Data</th>
+                                <th style="padding: 2px 4px; border: 1px solid #222;" data-i18n="lbl_tbl_land_type">Land
+                                    Type</th>
+                                <th style="padding: 2px 4px; border: 1px solid #222;" data-i18n="lbl_tbl_ramp_type">Ramp
+                                    Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="impTmpTileTableBody">
+                            <tr>
+                                <td colspan="7" style="text-align: center; padding: 10px; color: #666;"
+                                    data-i18n="msg_no_data_loaded">No data loaded
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Preview info -->
+            </div>
+        </div>
+
+        <div class="dialog-footer" style="padding-top: 20px;">
+            <button id="btnCancelImpTmp" class="btn-cancel" style="border: 1px solid #4a5568;"
+                data-i18n="btn_cancel">CANCEL</button>
+            <button id="btnConfirmImpTmp" class="btn-download" disabled data-i18n="btn_open">OPEN</button>
+        </div>
+
+        <!-- Hidden inputs -->
+        <input type="file" id="inpImpTmpPal" accept=".pal" hidden>
+        <input type="file" id="inpImpTmpFile" accept=".tem,.sno,.urb,.des,.ubn,.lun" hidden>
+    </dialog>
+
     <dialog id="exportShpDialog" class="dialog-modal">
         <h3 data-i18n="dlg_export_shp_title">EXPORT SHP</h3>
+
+        <!-- Composite Preview -->
+        <div id="expPreviewSection" style="margin-bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <div style="font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; opacity: 0.8;">
+                ⚠️ Save Preview — Final composite (index 0 = solid)
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button id="btnExpPreviewPrev" style="background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: 4px; cursor: pointer; padding: 4px 10px;">◀</button>
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                    <canvas id="expPreviewCanvas" style="image-rendering: pixelated; border: 1px solid var(--border); background: #111; max-width: 260px; max-height: 200px;"></canvas>
+                    <span id="expPreviewLabel" style="font-size: 11px; color: var(--text-muted);">Frame 0</span>
+                </div>
+                <button id="btnExpPreviewNext" style="background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: 4px; cursor: pointer; padding: 4px 10px;">▶</button>
+            </div>
+        </div>
+
         <div style="margin-bottom: 20px;">
             <label data-i18n="lbl_filename">Filename:</label>
             <input type="text" id="txtExpShpName" class="input-dark" style="width: 100%;" value="output.shp">
@@ -1393,6 +1596,7 @@
             <button id="btnConfirmExpShp" class="btn-download" data-i18n="btn_export_caps">EXPORT</button>
         </div>
     </dialog>
+
 
     <dialog id="newShpDialog" class="dialog-modal" style="width: 800px; max-width: 95vw; background: #0f111a;">
         <h3 style="color: var(--accent); letter-spacing: 1px;" data-i18n="menu_new">CREATE NEW SHP</h3>
@@ -2155,11 +2359,20 @@
             </div>
         </div>
 
-        <div class="dialog-footer" style="padding-top: 20px;">
-            <button id="btnCancelExtShp" class="btn-cancel" style="border: 1px solid #4a5568;"
-                data-i18n="btn_cancel">CANCEL</button>
-            <button id="btnConfirmExtShp" class="btn-download" disabled data-i18n="btn_load_into_layer">LOAD INTO
-                LAYER</button>
+        <div class="dialog-footer" style="padding-top: 20px; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted);">
+                <input type="checkbox" id="cbExtShpIndex0Transparent" checked
+                    style="width:14px; height:14px; accent-color:#00ffaa; cursor:pointer;">
+                <label for="cbExtShpIndex0Transparent" style="cursor:pointer; user-select:none;">
+                    Treat colour 0 as transparent
+                </label>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button id="btnCancelExtShp" class="btn-cancel" style="border: 1px solid #4a5568;"
+                    data-i18n="btn_cancel">CANCEL</button>
+                <button id="btnConfirmExtShp" class="btn-download" disabled data-i18n="btn_load_into_layer">LOAD INTO
+                    LAYER</button>
+            </div>
         </div>
 
         <input type="file" id="inpExtShpPal" accept=".pal" hidden>
@@ -2338,15 +2551,16 @@
                             style="font-family:monospace; color:#00ffaa; min-width:35px; text-align:right; font-size:11px;">/0</span>
                     </div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; margin-top: 6px;">
-                    <label
-                        style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size: 11px; color:#aaa;">
-                        <input type="checkbox" id="lpExtShowOverlay"> Show main SHP under preview
-                    </label>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 8px;">
+                    <div id="layerPropsExternalInfo"
+                        style="font-size: 10px; color: #888; font-family: monospace; word-break: break-all; margin: 0; line-height: 1.2;">
+                        -</div>
+                    <select id="lpExtShowOverlayMode" class="input-dark" style="height: 22px; font-size: 11px; padding: 0 4px; font-family: monospace; background: #1a2332; border: 1px solid var(--border); color: #ccc;">
+                        <option value="none" data-i18n="opt_ext_overlay_none">Hide Main SHP</option>
+                        <option value="above" data-i18n="opt_ext_overlay_above">Main SHP Above</option>
+                        <option value="below" data-i18n="opt_ext_overlay_below">Main SHP Below</option>
+                    </select>
                 </div>
-                <div id="layerPropsExternalInfo"
-                    style="font-size: 10px; color: #888; margin-top: 4px; font-family: monospace; word-break: break-all;">
-                    -</div>
             </div>
         </div>
         <div class="dialog-footer" style="justify-content: center; gap: 15px; margin-top: 25px;">
@@ -3315,6 +3529,33 @@
             </div>
         </div>
     </dialog>
+
+    <div id="dropZoneOverlay"
+        style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,255,170,0.08); border: 4px dashed #00ffaa; z-index:99999; display:none; align-items:center; justify-content:center; pointer-events:none; backdrop-filter:blur(5px); transition: opacity 0.3s ease, visibility 0.3s ease; opacity: 0; visibility: hidden; user-select: none;">
+        <div
+            style="display: flex; flex-direction: column; align-items: center; background: #0b0e14; padding: 50px 80px; border-radius: 24px; border: 3px solid #00ffaa; box-shadow: 0 0 60px rgba(0, 255, 170, 0.4); text-align: center;">
+            <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="#00ffaa" stroke-width="1.2"
+                stroke-linecap="round" stroke-linejoin="round"
+                style="margin-bottom: 30px; filter: drop-shadow(0 0 15px rgba(0, 255, 170, 0.4));">
+                <!-- Background rectangle (high top) -->
+                <rect x="4" y="1" width="16" height="14" rx="2" stroke="#ffffff" stroke-dasharray="3 3"
+                    stroke-opacity="0.6"></rect>
+                <!-- Arrow (shifted down) -->
+                <polyline points="17 11 12 6 7 11"></polyline>
+                <line x1="12" y1="6" x2="12" y2="18"></line>
+                <!-- Tray (shifted down) -->
+                <path d="M21 18v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            </svg>
+            <div style="color: #ffffff; font-size: 32px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; line-height: 1.2;"
+                data-i18n="msg_drop_to_open">
+                DROP HERE TO OPEN SHP/TMP FILES
+            </div>
+            <div style="color: #ffffff; font-size: 32px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; line-height: 1.2; margin-top: 5px;"
+                data-i18n="msg_drop_to_open_sub">
+                IN NEW TABS!
+            </div>
+        </div>
+    </div>
 
 </body>
 

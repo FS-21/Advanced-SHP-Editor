@@ -36,6 +36,7 @@ JS_ORDER = [
     'state.js',
     'translations.js',
     'shp_format.js',
+    'tmp_format.js',
     'history.js',
     'utils.js',
     'preview_window.js',
@@ -43,6 +44,7 @@ JS_ORDER = [
     'ui.js',
     'tools.js',
     'import_shp.js',
+    'import_tmp.js',
     'pcx_loader.js',
     'export_helper.js',
     'file_io.js',
@@ -209,7 +211,7 @@ def bundle():
     with open(tmp_js, 'w', encoding='utf-8') as f:
         f.write(js_bundle)
     try:
-        res = subprocess.run(['node', '-c', '.syntax_check.js'], capture_output=True, text=True, cwd=COMPONENT_DIR)
+        res = subprocess.run(['node', '-c', '.syntax_check.js'], capture_output=True, text=True, cwd=COMPONENT_DIR, timeout=30)
         if res.returncode != 0:
             print("\n[ERROR] JavaScript Syntax Error found during build!")
             print("="*40)

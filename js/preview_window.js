@@ -341,6 +341,7 @@ function updatePixelGrid() {
  * Opens the preview dialog and starts playback.
  */
 export function openPreview() {
+    if (state.isTmpMode) return;
     const dialog = document.getElementById('previewDialog');
     if (!dialog) return;
 
@@ -523,7 +524,8 @@ function renderPreview() {
             palette: state.palette,
             isShadow: true,
             transparentIdx: TRANSPARENT_COLOR,
-            showIndex0: false
+            showIndex0: false,
+            includeExternalShp: true
         });
     }
 
@@ -535,7 +537,8 @@ function renderPreview() {
         floatingSelection: state.floatingSelection,
         remapBase: baseColorRamp,
         transparentIdx: TRANSPARENT_COLOR,
-        showIndex0: false
+        showIndex0: false,
+        includeExternalShp: true
     });
 
     // Update Counter & Slider

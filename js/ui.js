@@ -1,12 +1,14 @@
 import { state, generateId, TRANSPARENT_COLOR } from './state.js';
 import { elements } from './constants.js';
 import { pushHistory, cloneLayerNode } from './history.js';
-import { bresenham, findNearestPaletteIndex, findNearestPaletteIndexInRange, setupAutoRepeat, compositeFrame } from './utils.js';
+import { bresenham, findNearestPaletteIndex, findNearestPaletteIndexInRange, setupAutoRepeat, compositeFrame, getZdataPalette, getActivePalette } from './utils.js';
 import { updateUIState } from './main.js';
 import { updateMenuState } from './menu_handlers.js';
 import { exportFrameList } from './export_helper.js';
 import { openExternalShpDialog } from './external_shp.js';
-import { t } from './translations.js';
+import { t, applyTranslations } from './translations.js';
+import { getCurrentEditedTiles } from './file_io.js';
+import { TmpTsFile } from './tmp_format.js';
 
 /* Animation for Marching Ants */
 export function startAnts() {
@@ -106,10 +108,18 @@ export function updateCanvasSize() {
  * Shared helper to render a layer thumbnail (base + floating selection).
  */
 const _layerThumbCache = new Map();
+const _compThumbCache = new Map();
+
+export function clearThumbCaches() {
+    _layerThumbCache.clear();
+    _compThumbCache.clear();
+}
 
 export function renderLayerThumbnail(layer, ctx, w, h, forceFS = false, skipBG = false) {
     // Optimization: Cache thumbnails to avoid expensive pixel loops
-    const layerKey = `${layer.id}_${layer._v || 0}_${state.paletteVersion}_${forceFS ? 'fs' : 'nofs'}_${skipBG ? 'nobg' : 'bg'}`;
+    const _isZDataPal = state.tmpFullZPreviewActive ||
+        (state.isTmpMode && (() => { const af = state.frames[state.currentFrameIdx]; return af && af.tmpMeta && (af.tmpMeta.component === 'zdata' || af.tmpMeta.component === 'extrazdata'); })());
+    const layerKey = `${layer.id}_${layer._v || 0}_${state.paletteVersion}_${_isZDataPal ? 'zdp' : 'pal'}_${forceFS ? 'fs' : 'nofs'}_${skipBG ? 'nobg' : 'bg'}`;
     const cachedEntry = _layerThumbCache.get(layer.id);
 
     if (cachedEntry && cachedEntry.key === layerKey) {
@@ -134,8 +144,9 @@ export function renderLayerThumbnail(layer, ctx, w, h, forceFS = false, skipBG =
 
 function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipBG = false) {
     const palLUT = new Uint32Array(256);
+    const activePal = getActivePalette();
     for (let i = 0; i < 256; i++) {
-        const c = state.palette[i] || { r: 0, g: 0, b: 0 };
+        const c = activePal[i] || { r: 0, g: 0, b: 0 };
         palLUT[i] = (255 << 24) | (c.b << 16) | (c.g << 8) | c.r;
     }
     const bgDark = (255 << 24) | (102 << 16) | (102 << 8) | 102;
@@ -178,7 +189,8 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
                 const ly = sy - fy;
                 if (lx < 0 || lx >= fw || ly < 0 || ly >= fh) continue;
                 const idx = indices[ly * fw + lx];
-                if (idx === 0 || idx === TRANSPARENT_COLOR) continue;
+                if (idx === TRANSPARENT_COLOR) continue;
+                if (idx === 0 && layer.index0Transparent !== false) continue;
                 const c = extPal[idx];
                 if (c) {
                     const off = (py * w + px) * 4;
@@ -345,7 +357,8 @@ export function setColor(idx) {
     state.primaryColorIdx = idx;
     renderPalette();
 
-    const color = state.palette[idx];
+    const paletteToUse = getActivePalette();
+    const color = paletteToUse[idx];
     const p = elements.primaryColorPreview;
     if (p) {
         if (color) p.style.backgroundColor = `rgb(${color.r},${color.g},${color.b})`;
@@ -433,8 +446,247 @@ export function zoomToSelection() {
     }, 50);
 }
 
+// ---------------------------------------------------------------------------
+// TMP Game Grid Helpers (pixel-perfect Westwood 2:1 isometric diamond)
+// Ported from the TMP Editor reference implementation.
+// ---------------------------------------------------------------------------
+
+/**
+ * Draws the outline of a single Westwood isometric diamond directly into
+ * an ImageData pixel buffer (no canvas context — fast, pixel-perfect).
+ *
+ * @param {Uint8ClampedArray} d - ImageData.data
+ * @param {number} w - canvas width
+ * @param {number} h - canvas height
+ * @param {number} bx - left of the diamond bounding box
+ * @param {number} by - top of the diamond bounding box
+ * @param {number} cx - tile width
+ * @param {number} cy - tile height
+ * @param {number} r,g,b,a - RGBA colour (a 0-255)
+ */
+function _drawWestwoodDiamondEdge(d, w, h, bx, by, cx, cy, r, g, b, a) {
+    const halfW = Math.floor(cx / 2);
+    const halfH = Math.floor(cy / 2);
+
+    function sp(x, y) {
+        if (x < 0 || x >= w || y < 0 || y >= h) return;
+        const off = (y * w + x) * 4;
+        if (a === 255) {
+            d[off] = r; d[off + 1] = g; d[off + 2] = b; d[off + 3] = 255;
+        } else {
+            const aa = a / 255;
+            d[off]     = Math.round(d[off]     * (1 - aa) + r * aa);
+            d[off + 1] = Math.round(d[off + 1] * (1 - aa) + g * aa);
+            d[off + 2] = Math.round(d[off + 2] * (1 - aa) + b * aa);
+            d[off + 3] = 255;
+        }
+    }
+
+    for (let y = 0; y < cy; y++) {
+        let ry;
+        if (y < halfH) { ry = y; }
+        else { ry = cy - 1 - y - 1; }
+        if (ry < 0) continue;
+
+        // Westwood 2:1 isometric step: each row the diamond widens by 4px (2px per side)
+        const xOffset = halfW - (ry + 1) * 2;
+        const cx_line = (ry + 1) * 4;
+        if (cx_line <= 0) continue;
+
+        // Left edge (2 pixels)
+        sp(bx + xOffset,     by + y);
+        sp(bx + xOffset + 1, by + y);
+        // Right edge (2 pixels)
+        sp(bx + xOffset + cx_line - 2, by + y);
+        sp(bx + xOffset + cx_line - 1, by + y);
+    }
+}
+
+/**
+ * Draws the game grid overlay for TMP individual-cell view.
+ * A single diamond outline is drawn at (0,0) matching the full canvas size.
+ */
+function _renderTmpSingleCellGrid(ctx, w, h) {
+    const gridColor = state.showBackground ? 'rgba(255,255,255,0.5)' : 'rgba(0,255,170,0.7)';
+    const m = gridColor.match(/[\d.]+/g);
+    const r = +m[0], g = +m[1], b = +m[2], a = Math.round(+m[3] * 255);
+
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+
+    _drawWestwoodDiamondEdge(d, w, h, 0, 0, w, h, r, g, b, a);
+
+    ctx.putImageData(imgData, 0, 0);
+}
+
+/**
+ * Draws a repeating diamond grid for Extra Data / Extra Z-Data frames.
+ *
+ * The extra-data canvas shows only the extra image at (0,0). The parent tile's
+ * diamond sits at world offset (h.x, h.y) while the extra image sits at
+ * (h.x_extra, h.y_extra). Because both share the same tile height, the elevation
+ * terms cancel, so the diamond's origin in extra-canvas space is simply:
+ *
+ *   bx_ref = h.x - h.x_extra
+ *   by_ref = h.y - h.y_extra
+ *
+ * From that anchor the same \u00b164 gx/gy loop fills the whole canvas with the
+ * repeating isometric grid.
+ */
+function _renderTmpExtraDataGrid(ctx, w, h, frame) {
+    if (!state.tmpHeader || !frame.tmpMeta) return;
+
+    const tiles = getCurrentEditedTiles();
+    if (!tiles) return;
+
+    const header    = state.tmpHeader;
+    const cx        = header.cx;
+    const cy        = header.cy;
+    const halfCx    = cx / 2;
+    const halfCy    = cy / 2;
+    const cblocks_x = header.cblocks_x;
+
+    const tileSlot = frame.tmpMeta.tileSlot;
+    const tile = tiles[tileSlot];
+    if (!tile || !tile.tileHeader) return;
+
+    const th = tile.tileHeader;
+
+    // Offset of the main diamond's top-left corner within the extra-image canvas.
+    // Elevation multiplier cancels (same height used for both positions).
+    const refBx = th.x - th.x_extra;
+    const refBy = th.y - th.y_extra;
+
+    const refSlotGX = tileSlot % cblocks_x;
+    const refSlotGY = Math.floor(tileSlot / cblocks_x);
+
+    const gridColor = state.showBackground ? 'rgba(255,255,255,0.5)' : 'rgba(0,255,170,0.7)';
+    const m = gridColor.match(/[\d.]+/g);
+    const r = +m[0], g = +m[1], b = +m[2], a = Math.round(+m[3] * 255);
+
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+
+    for (let gx = -64; gx <= 64; gx++) {
+        for (let gy = -64; gy <= 64; gy++) {
+            const dgx = gx - refSlotGX;
+            const dgy = gy - refSlotGY;
+            const bx = refBx + Math.round(halfCx * (dgx - dgy));
+            const by = refBy + Math.round(halfCy * (dgx + dgy));
+
+            if (bx + cx < 0 || bx > w || by + cy < 0 || by > h) continue;
+
+            _drawWestwoodDiamondEdge(d, w, h, bx, by, cx, cy, r, g, b, a);
+        }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+}
+
+/**
+ * Mirrors the TMP Editor's _renderGameGrid: anchors to the first real tile's screen
+ * position, then fills the entire canvas with a repeating diamond grid using a
+ * ±range loop — identical to how the TMP Editor covers the whole viewport.
+ */
+function _renderTmpFullPreviewGrid(ctx, canvasW, canvasH) {
+    if (!state.tmpHeader) return;
+
+    const tiles = getCurrentEditedTiles();
+    if (!tiles) return;
+
+    const bounds = TmpTsFile.computeBounds({ header: state.tmpHeader, tiles, numTiles: tiles.length });
+    if (!bounds.hasTiles) return;
+
+    const header = state.tmpHeader;
+    const cx = header.cx;
+    const cy = header.cy;
+    const halfCx = cx / 2;
+    const halfCy = cy / 2;
+    const mult = halfCy; // elevation multiplier (same as composeToCanvas)
+    const cblocks_x = header.cblocks_x;
+
+    const minX = bounds.minX;
+    const minY = bounds.minY;
+
+    // Find first real tile and use its slot index + screen position as anchor
+    let refScreenX = 0, refScreenY = 0;
+    let refSlotGX = 0, refSlotGY = 0;
+    for (let i = 0; i < tiles.length; i++) {
+        const tile = tiles[i];
+        if (!tile || !tile.tileHeader) continue;
+        const h = tile.tileHeader;
+        refSlotGX = i % cblocks_x;
+        refSlotGY = Math.floor(i / cblocks_x);
+        refScreenX = Math.floor(h.x - minX);
+        refScreenY = Math.floor(h.y - (h.height || 0) * mult - minY);
+        break;
+    }
+
+    const gridColor = state.showBackground ? 'rgba(255,255,255,0.4)' : 'rgba(0,255,170,0.6)';
+    const m = gridColor.match(/[\d.]+/g);
+    const r = +m[0], g = +m[1], b = +m[2], a = Math.round(+m[3] * 255);
+
+    const imgData = ctx.getImageData(0, 0, canvasW, canvasH);
+    const d = imgData.data;
+
+    // Iterate over a wide range of grid slots (same as TMP Editor: ±64)
+    for (let gx = -64; gx <= 64; gx++) {
+        for (let gy = -64; gy <= 64; gy++) {
+            const dgx = gx - refSlotGX;
+            const dgy = gy - refSlotGY;
+            const bx = refScreenX + Math.round(halfCx * (dgx - dgy));
+            const by = refScreenY + Math.round(halfCy * (dgx + dgy));
+
+            // Skip entirely out-of-bounds slots
+            if (bx + cx < 0 || bx > canvasW || by + cy < 0 || by > canvasH) continue;
+
+            _drawWestwoodDiamondEdge(d, canvasW, canvasH, bx, by, cx, cy, r, g, b, a);
+        }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+}
 
 export function renderCanvas() {
+    if (state.isTmpMode && state.currentFrameIdx === -1) {
+        const ctx = elements.ctx;
+        const w = state.canvasW;
+        const h = state.canvasH;
+        ctx.clearRect(0, 0, w, h);
+
+        // Fill background
+        if (state.showBackground) {
+            if (state.tmpFullZPreviewActive) {
+                ctx.fillStyle = '#000000';
+            } else {
+                const bgIdx = state.isAlphaImageMode ? 127 : 0;
+                const bg = state.palette[bgIdx] || { r: 0, g: 0, b: 0 };
+                ctx.fillStyle = `rgb(${bg.r},${bg.g},${bg.b})`;
+            }
+            ctx.fillRect(0, 0, w, h);
+        }
+
+        const tiles = getCurrentEditedTiles();
+        if (tiles) {
+            const compositeResult = state.tmpFullZPreviewActive
+                ? TmpTsFile.composeZDataToCanvas({ header: state.tmpHeader, tiles, numTiles: tiles.length })
+                : TmpTsFile.composeToCanvas({ header: state.tmpHeader, tiles, numTiles: tiles.length }, state.palette, state.showBackground);
+            
+            if (compositeResult && compositeResult.canvas) {
+                ctx.drawImage(compositeResult.canvas, 0, 0);
+            }
+        }
+        
+        // Game grid overlay for Full Preview
+        if (state.isoGrid !== 'none') {
+            _renderTmpFullPreviewGrid(ctx, w, h);
+        }
+
+        // Refresh menus (rotation, tools etc. should be disabled/updated)
+        if (typeof updateMenuState === 'function') updateMenuState(state.frames.length > 0);
+        return;
+    }
+
     const frame = state.frames[state.currentFrameIdx];
     if (!frame) return;
 
@@ -450,7 +702,8 @@ export function renderCanvas() {
     if (state.showBackground) {
         // Solid Color (Appropriate index for mode)
         const bgIdx = state.isAlphaImageMode ? 127 : 0;
-        const bg = state.palette[bgIdx] || { r: 0, g: 0, b: 0 };
+        const paletteToUse = getActivePalette();
+        const bg = paletteToUse[bgIdx] || { r: 0, g: 0, b: 0 };
         for (let i = 0; i < d.length; i += 4) {
             d[i] = bg.r; d[i + 1] = bg.g; d[i + 2] = bg.b; d[i + 3] = 255;
         }
@@ -493,7 +746,7 @@ export function renderCanvas() {
         substitutionMap,
         affectedIndices,
         remapBase: state.remapColor || null,
-        palette: state.palette
+        palette: getActivePalette()
     });
     const compositeResult = cached.pixels;
     const alphaBuffer = cached.alpha;
@@ -540,8 +793,23 @@ export function renderCanvas() {
         }
     }
 
-    // --- Game Grid Overlay (TS/RA2) - DRAW AT THE END (Show through transparency/index 0) ---
+    // --- Game Grid Overlay (TS/RA2) ---
     if (state.isoGrid !== 'none') {
+        if (state.isTmpMode) {
+            // Only draw diamond grid for diamond-shaped components.
+            const comp = frame.tmpMeta && frame.tmpMeta.component;
+            if (comp === 'main' || comp === 'zdata' || comp === 'damaged') {
+                ctx.putImageData(imgData, 0, 0);
+                _renderTmpSingleCellGrid(ctx, w, h);
+                return; // exit early – putImageData + grid overlay done
+            } else if (comp === 'extra' || comp === 'extrazdata') {
+                // Rectangular canvas: draw grid anchored to the parent tile position
+                ctx.putImageData(imgData, 0, 0);
+                _renderTmpExtraDataGrid(ctx, w, h, frame);
+                return;
+            }
+        }
+        // Non-TMP SHP: formula-based repeating grid
         const isTS = state.isoGrid === 'ts';
         const tileW = isTS ? 48 : 60;
         const color = { r: 255, g: 255, b: 255, a: 180 };
@@ -673,6 +941,7 @@ function _drawLayerIntoBuffer(node, buffer, canvasW, canvasH, valOverride = null
         for (let j = 0; j < indices.length; j++) {
             const cIdx = indices[j];
             if (cIdx === TRANSPARENT_COLOR) continue;
+            if (cIdx === 0 && node.index0Transparent !== false) continue; // Treat colour 0 as transparent
 
             const lx = j % nw;
             const ly = Math.floor(j / nw);
@@ -1305,8 +1574,41 @@ export function renderOverlay(x, y, tool, startPos) {
 
 export function updateLayersList() {
     elements.layersList.innerHTML = '';
+
+    // In TMP Full Preview mode (no active frame) hide the LAYERS panel entirely
+    const isFullPreview = state.isTmpMode && state.currentFrameIdx === -1;
+    const layersContainer = document.getElementById('layersContainer');
+    const layersResizer   = document.getElementById('panelVerticalResizer');
+    if (layersContainer) layersContainer.style.display = isFullPreview ? 'none' : 'flex';
+    if (layersResizer)   layersResizer.style.display   = isFullPreview ? 'none' : 'block';
+
     const frame = state.frames[state.currentFrameIdx];
     if (!frame) return;
+
+    // Allow dropping a layer in the empty space at the bottom of the list
+    elements.layersList.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+    elements.layersList.ondrop = (e) => {
+        e.preventDefault();
+        if (frame.layers.length === 0) return;
+        
+        // Find the absolute last visible node in the expanded tree
+        const getAbsoluteLastLayer = (nodes) => {
+            if (!nodes || nodes.length === 0) return null;
+            const lastNode = nodes[nodes.length - 1];
+            const children = lastNode.layers || lastNode.children;
+            if (lastNode.expanded !== false && children && children.length > 0) {
+                return getAbsoluteLastLayer(children) || lastNode;
+            }
+            return lastNode;
+        };
+
+        const lastNode = getAbsoluteLastLayer(frame.layers);
+        if (!lastNode || state.dragLayerId === lastNode.id) return;
+        handleLayerDrop(state.dragLayerId, lastNode.id, 'below');
+    };
 
     function renderNode(node, depth = 0, indexInParent, parentArr, guideStack = []) {
         const isGroup = node.type === 'group';
@@ -1391,6 +1693,7 @@ export function updateLayersList() {
         };
         div.ondragover = (e) => {
             e.preventDefault();
+            e.stopPropagation();
             if (state.dragLayerId === node.id) return;
             e.dataTransfer.dropEffect = 'move';
 
@@ -1422,6 +1725,7 @@ export function updateLayersList() {
         };
         div.ondrop = (e) => {
             e.preventDefault();
+            e.stopPropagation();
             div.style.borderTop = "";
             div.style.borderBottom = "";
             div.style.background = "";
@@ -1649,6 +1953,10 @@ export const thumbCache = new WeakMap();
 
 let _framesListRenderPending = false;
 export function renderFramesList() {
+    if (state.isTmpMode) {
+        renderTmpComponentsList();
+        return;
+    }
     if (!elements.framesList) return;
     if (_framesListRenderPending) return;
     _framesListRenderPending = true;
@@ -1659,6 +1967,10 @@ export function renderFramesList() {
 }
 
 function _renderFramesListImmediate() {
+    if (state.isTmpMode) {
+        renderTmpComponentsList();
+        return;
+    }
     if (!elements.framesList) return;
 
     // Ensure scroll listener is attached once
@@ -1771,9 +2083,9 @@ function _renderFramesListImmediate() {
             };
 
             div.onclick = () => {
+                if (state.floatingSelection) commitSelection();
                 if (state.currentFrameIdx === i) return; // No change
                 const idx = parseInt(div.dataset.idx);
-                if (state.floatingSelection) commitSelection();
 
                 // Check if we're crossing a shadow boundary (need palette refresh)
                 const oldIdx = state.currentFrameIdx;
@@ -1801,8 +2113,11 @@ function _renderFramesListImmediate() {
             wrapper.appendChild(div);
         }
 
+        const isShadow = state.useShadows && i >= state.frames.length / 2;
+        const displayIdx = (isShadow && state.fmRelIndex) ? i - Math.ceil(state.frames.length / 2) : i;
+
         // Update active state and content
-        div.className = 'frame-thumb' + (i === state.currentFrameIdx ? ' active' : '');
+        div.className = 'frame-thumb' + (i === state.currentFrameIdx ? ' active' : '') + (isShadow ? ' shadow' : '');
 
         // Use cached thumbnail if available to avoid drawing
         const frame = state.frames[i];
@@ -1810,13 +2125,16 @@ function _renderFramesListImmediate() {
         if (!thumbContainer) {
             thumbContainer = document.createElement('div');
             thumbContainer.className = 'thumb-content';
-            div.innerHTML = `<span class="frame-number">${i}</span>`;
+            div.innerHTML = `<span class="frame-number">${displayIdx}</span>`;
             div.appendChild(thumbContainer);
+        } else {
+            const numEl = div.querySelector('.frame-number');
+            if (numEl) numEl.textContent = displayIdx;
         }
 
         if (thumbContainer._frameId !== i || thumbContainer._frameVersion !== (frame._v || 0) || thumbContainer._palVersion !== state.paletteVersion) {
             thumbContainer.innerHTML = '';
-            const c = createFrameThumbnail(frame, 105, 68); // Adjusted height from 80 to 68
+            const c = createFrameThumbnail(frame, 105, 68, { backgroundIdx: 0 }); // backgroundIdx:0 matches save output
             thumbContainer.appendChild(c);
             thumbContainer._frameId = i;
             thumbContainer._frameVersion = (frame._v || 0);
@@ -1826,7 +2144,21 @@ function _renderFramesListImmediate() {
 }
 
 export function resetFramesList() {
+    const titleEl = document.getElementById('sidebarFramesTitle');
+    if (titleEl) {
+        const t = (key) => {
+            if (typeof window.t === 'function') return window.t(key);
+            if (state.translations && state.translations[key]) return state.translations[key];
+            return key;
+        };
+        titleEl.textContent = t('sidebar_frames') || 'Frames';
+    }
+    if (elements.tmpComponentsList) {
+        elements.tmpComponentsList.style.display = 'none';
+        elements.tmpComponentsList.innerHTML = '';
+    }
     if (elements.framesList) {
+        elements.framesList.style.display = 'block';
         const wrapper = elements.framesList.querySelector('.frames-v-wrapper');
         if (wrapper) wrapper.innerHTML = '';
         elements.framesList.scrollTop = 0;
@@ -1849,13 +2181,14 @@ export function renderPalette() {
     // Create cells (256 normally, only 2 in Shadows mode when on a shadow frame)
     const isShadowFrame = state.useShadows && (state.currentFrameIdx >= state.frames.length / 2);
     const maxCells = isShadowFrame ? 2 : 256;
+    const paletteToUse = getActivePalette();
     for (let i = 0; i < maxCells; i++) {
         const div = document.createElement('div');
         div.className = 'pal-cell';
         div.dataset.idx = i;
         div.draggable = true;
 
-        const color = state.palette[i];
+        const color = paletteToUse[i];
 
         // Hover tooltips formatted professionally
         if (color) {
@@ -2223,13 +2556,17 @@ export async function showLayerPropertiesDialog(node) {
             if (lpBtnPrev) lpBtnPrev.onclick = (e) => { e.stopPropagation(); lpSetFrame(lpCurrentFrameIdx - 1); };
             if (lpBtnNext) lpBtnNext.onclick = (e) => { e.stopPropagation(); lpSetFrame(lpCurrentFrameIdx + 1); };
 
+            const overlaySelect = document.getElementById('lpExtShowOverlayMode');
+            if (overlaySelect) {
+                overlaySelect.value = 'none'; // Default to hide main SHP
+                overlaySelect.onchange = () => renderExternalShpLayerPropsPreview(node, lpCurrentFrameIdx);
+            }
+
             // Initial render
             lpSyncUI();
 
             elements.layerPropsOffX.oninput = () => renderExternalShpLayerPropsPreview(node, lpCurrentFrameIdx);
             elements.layerPropsOffY.oninput = () => renderExternalShpLayerPropsPreview(node, lpCurrentFrameIdx);
-            const overlayCb = document.getElementById('lpExtShowOverlay');
-            if (overlayCb) overlayCb.onchange = () => renderExternalShpLayerPropsPreview(node, lpCurrentFrameIdx);
 
             // Drag to move image (only if overlay is active)
             const previewCanvas = elements.layerPropsExternalPreview;
@@ -2237,7 +2574,8 @@ export async function showLayerPropertiesDialog(node) {
             let lastDragX, lastDragY;
 
             const onPreviewMouseDown = (e) => {
-                const overlayActive = document.getElementById('lpExtShowOverlay')?.checked;
+                const overlaySelectEl = document.getElementById('lpExtShowOverlayMode');
+                const overlayActive = overlaySelectEl && overlaySelectEl.value !== 'none';
                 if (!overlayActive) return;
                 isDraggingPreview = true;
                 lastDragX = e.clientX;
@@ -2283,9 +2621,10 @@ export async function showLayerPropertiesDialog(node) {
                 openExternalShpDialog(node.id, {
                     extFilename: node.extFilename,
                     frameIdx: lpCurrentFrameIdx,
-                    palette: node.extShpPalette
+                    palette: node.extShpPalette,
+                    index0Transparent: node.index0Transparent !== undefined ? node.index0Transparent : true
                 }, (data) => {
-                    const { shpData, frameIdx, palette } = data;
+                    const { shpData, frameIdx, palette, index0Transparent } = data;
                     const f = shpData.frames[frameIdx];
 
                     node.name = `Ext: ${shpData.filename} [#${frameIdx}]`;
@@ -2295,6 +2634,7 @@ export async function showLayerPropertiesDialog(node) {
                     node.extTotalFrames = shpData.frames.length;
                     node.extShpFrameData = new Uint8Array(f.originalIndices);
                     node.extShpPalette = palette.map(c => c ? { ...c } : null);
+                    node.index0Transparent = index0Transparent !== undefined ? index0Transparent : true;
                     node.extWidth = f.width;
                     node.extHeight = f.height;
                     node.extFrameX = f.x;
@@ -2331,6 +2671,8 @@ export async function showLayerPropertiesDialog(node) {
                     if (lpFrameInput) lpFrameInput.oninput = null;
                     if (lpBtnPrev) lpBtnPrev.onclick = null;
                     if (lpBtnNext) lpBtnNext.onclick = null;
+                    const overlaySelectEl = document.getElementById('lpExtShowOverlayMode');
+                    if (overlaySelectEl) overlaySelectEl.onchange = null;
                     if (previewCanvas) {
                         previewCanvas.removeEventListener('mousedown', onPreviewMouseDown);
                         previewCanvas.style.cursor = '';
@@ -2473,8 +2815,9 @@ function renderExternalShpLayerPropsPreview(node, frameIdx) {
     }
     extCtx.putImageData(extD, 0, 0);
 
-    const cbOverlay = document.getElementById('lpExtShowOverlay');
-    const isOverlayOn = cbOverlay && cbOverlay.checked && state.frames[state.currentFrameIdx];
+    const overlaySelect = document.getElementById('lpExtShowOverlayMode');
+    const overlayVal = overlaySelect ? overlaySelect.value : 'none';
+    const isOverlayOn = overlayVal !== 'none' && state.frames[state.currentFrameIdx];
 
     const cxInput = document.getElementById('layerPropsOffX');
     const cyInput = document.getElementById('layerPropsOffY');
@@ -2536,16 +2879,31 @@ function renderExternalShpLayerPropsPreview(node, frameIdx) {
         const drawOffX = maxExpandX + pad;
         const drawOffY = maxExpandY + pad;
 
-        ctx.drawImage(mainCanv, drawOffX, drawOffY);
+        if (overlayVal === 'below') {
+            // Main SHP Below: Draw Main first, then External
+            ctx.drawImage(mainCanv, drawOffX, drawOffY);
 
-        // Draw the frame limits of the main SHP
-        ctx.strokeStyle = "rgba(0, 255, 170, 0.5)";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(drawOffX - 0.5, drawOffY - 0.5, mainW + 1, mainH + 1);
-        ctx.setLineDash([]);
+            // Draw the frame limits of the main SHP
+            ctx.strokeStyle = "rgba(0, 255, 170, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(drawOffX - 0.5, drawOffY - 0.5, mainW + 1, mainH + 1);
+            ctx.setLineDash([]);
 
-        ctx.drawImage(extCanvas, drawOffX + targetX, drawOffY + targetY);
+            ctx.drawImage(extCanvas, drawOffX + targetX, drawOffY + targetY);
+        } else {
+            // Main SHP Above: Draw External first, then Main
+            ctx.drawImage(extCanvas, drawOffX + targetX, drawOffY + targetY);
+
+            ctx.drawImage(mainCanv, drawOffX, drawOffY);
+
+            // Draw the frame limits of the main SHP
+            ctx.strokeStyle = "rgba(0, 255, 170, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(drawOffX - 0.5, drawOffY - 0.5, mainW + 1, mainH + 1);
+            ctx.setLineDash([]);
+        }
 
     } else {
         // Just the external SHP
@@ -2740,42 +3098,59 @@ export function addExternalShpLayer() {
     const frame = state.frames[state.currentFrameIdx];
     if (!frame) return;
 
-    const newLayer = {
-        type: 'external_shp',
-        id: generateId(),
-        name: "External SHP",
-        data: new Uint16Array(frame.width * frame.height).fill(TRANSPARENT_COLOR),
-        visible: true,
-        width: frame.width,
-        height: frame.height,
-        x: 0,
-        y: 0,
-        mask: null,
-        editMask: false
-    };
+    // Open the dialog with a confirm callback that creates the layer only upon success
+    openExternalShpDialog(null, null, (data) => {
+        const { shpData, frameIdx, palette, index0Transparent } = data;
+        if (!shpData) return;
 
-    const findResult = findLayerParent(frame.layers, state.activeLayerId);
-    if (findResult) {
-        const { parent, index } = findResult;
-        const activeNode = parent[index];
-        if (activeNode.type === 'group') {
-            activeNode.expanded = true;
-            activeNode.children.unshift(newLayer);
+        const f = shpData.frames[frameIdx];
+        const newLayer = {
+            type: 'external_shp',
+            id: generateId(),
+            name: `Ext: ${shpData.filename} [#${frameIdx}]`,
+            visible: true,
+            width: frame.width,
+            height: frame.height,
+            x: 0,
+            y: 0,
+            mask: null,
+            editMask: false,
+
+            extFilename: shpData.filename,
+            extFrameIdx: frameIdx,
+            extTotalFrames: shpData.frames.length,
+            extShpFrameData: new Uint8Array(f.originalIndices),
+            extShpPalette: palette.map(c => c ? { ...c } : null),
+            extWidth: f.width,
+            extHeight: f.height,
+            extFrameX: f.x,
+            extFrameY: f.y,
+            extShpWidth: shpData.width,
+            extShpHeight: shpData.height,
+            extAllFrames: shpData.frames,
+            index0Transparent: index0Transparent !== undefined ? index0Transparent : true
+        };
+
+        const findResult = findLayerParent(frame.layers, state.activeLayerId);
+        if (findResult) {
+            const { parent, index } = findResult;
+            const activeNode = parent[index];
+            if (activeNode.type === 'group') {
+                activeNode.expanded = true;
+                activeNode.children.unshift(newLayer);
+            } else {
+                parent.splice(index, 0, newLayer);
+            }
         } else {
-            parent.splice(index, 0, newLayer);
+            frame.layers.unshift(newLayer);
         }
-    } else {
-        frame.layers.unshift(newLayer);
-    }
 
-    state.activeLayerId = newLayer.id;
-    pushHistory();
-    updateLayersList();
-    renderCanvas();
-    renderFramesList();
-
-    // Open selection dialog immediately
-    openExternalShpDialog(newLayer.id);
+        state.activeLayerId = newLayer.id;
+        pushHistory();
+        updateLayersList();
+        renderCanvas();
+        renderFramesList();
+    });
 }
 
 export function addLayer() {
@@ -3184,6 +3559,8 @@ export function mergeLayerDown() {
     const frame = state.frames[state.currentFrameIdx];
     if (!frame) return;
 
+    const isZData = frame.tmpMeta && (frame.tmpMeta.component === 'zdata' || frame.tmpMeta.component === 'extrazdata');
+
     const info = findLayerParent(frame.layers, state.activeLayerId);
     if (!info) return;
 
@@ -3239,7 +3616,7 @@ export function mergeLayerDown() {
         targetNode = parentArr[targetIndex];
         const bottomData = getHighFidelityFlattened(targetNode);
         const maskVisual = flattenNode(topNode, frame.width, frame.height);
-        const actualTransparent = state.isAlphaImageMode ? 127 : 0;
+        const actualTransparent = isZData ? -1 : (state.isAlphaImageMode ? 127 : 0);
 
         for (let i = 0; i < bottomData.length; i++) {
             if (bottomData[i] === TRANSPARENT_COLOR) continue;
@@ -3274,7 +3651,7 @@ export function mergeLayerDown() {
                 targetNode = parentArr[targetIndex];
             const topData = getHighFidelityFlattened(topNode);
             const bottomData = getHighFidelityFlattened(targetNode);
-            const actualTransparent = state.isAlphaImageMode ? 127 : 0;
+            const actualTransparent = isZData ? -1 : (state.isAlphaImageMode ? 127 : 0);
             for (let i = 0; i < topData.length; i++) {
                 if (topData[i] !== TRANSPARENT_COLOR && topData[i] !== actualTransparent) {
                     bottomData[i] = topData[i];
@@ -3883,14 +4260,32 @@ export function triggerSelectionFlash() {
 }
 
 export function copySelection() {
-    const layer = getActiveLayer();
-    if (!layer || !layer.visible) return;
+    let layer = null;
+    let dataSource = null;
+    let isFullPreview = (state.isTmpMode && state.currentFrameIdx === -1);
+    let compositeCanvas = null;
 
-    // Use snapshot helper to handle both regular and external SHP layers
-    let dataSource = getLayerDataSnapshot(layer);
+    if (isFullPreview) {
+        const tiles = getCurrentEditedTiles();
+        if (tiles) {
+            const compositeResult = state.tmpFullZPreviewActive
+                ? TmpTsFile.composeZDataToCanvas({ header: state.tmpHeader, tiles, numTiles: tiles.length })
+                : TmpTsFile.composeToCanvas({ header: state.tmpHeader, tiles, numTiles: tiles.length }, state.palette, state.showBackground);
+            if (compositeResult) {
+                dataSource = compositeResult.indices;
+                compositeCanvas = compositeResult.canvas;
+            }
+        }
+    } else {
+        layer = getActiveLayer();
+        if (!layer || !layer.visible) return;
+        dataSource = getLayerDataSnapshot(layer);
+    }
+
     if (!dataSource) return;
 
     let w = 0, h = 0, data = null, x = 0, y = 0;
+    const transColor = state.tmpFullZPreviewActive ? 255 : TRANSPARENT_COLOR;
 
     if (state.selection) {
         x = state.selection.x;
@@ -3898,16 +4293,14 @@ export function copySelection() {
         w = state.selection.w;
         h = state.selection.h;
         data = new Uint16Array(w * h);
-        data.fill(TRANSPARENT_COLOR);
-
-
+        data.fill(transColor);
 
         // Helper to safely read
         const safeRead = (reqX, reqY) => {
             if (reqX >= 0 && reqX < state.canvasW && reqY >= 0 && reqY < state.canvasH) {
                 return dataSource[reqY * state.canvasW + reqX];
             }
-            return TRANSPARENT_COLOR;
+            return transColor;
         };
 
         if (state.selection.type === 'rect') {
@@ -3933,7 +4326,7 @@ export function copySelection() {
             }
         }
     } else {
-        // Copy whole layer - use snapshot for consistency (esp. for external SHP)
+        // Copy whole layer - use snapshot for consistency (esp. for external SHP/Full Preview)
         x = 0; y = 0;
         w = state.canvasW; h = state.canvasH;
         data = new Uint16Array(dataSource);
@@ -3947,59 +4340,68 @@ export function copySelection() {
     console.log("Copied to clipboard", w, h);
     triggerSelectionFlash();
 
-    // Export to system clipboard as PNG + Sentinel
-    exportToSystemClipboard(data, w, h);
+    // Export to system clipboard as PNG
+    if (isFullPreview && compositeCanvas) {
+        // For composed preview, crop selection directly from composed canvas for exact visual copy
+        const croppedCanvas = document.createElement('canvas');
+        croppedCanvas.width = w;
+        croppedCanvas.height = h;
+        const croppedCtx = croppedCanvas.getContext('2d');
+        croppedCtx.drawImage(compositeCanvas, x, y, w, h, 0, 0, w, h);
+        exportToSystemClipboard(croppedCanvas, w, h);
+    } else {
+        exportToSystemClipboard(data, w, h);
+    }
 }
 
 /**
- * Exports image data to the system clipboard as a PNG
- * Also includes a hidden text/plain sentinel for internal app detection
+ * Exports image data to the system clipboard as a PNG.
+ * navigator.clipboard.write() does NOT require user permission — only read() does.
+ * This allows pasting into external apps without any browser prompt.
  */
-export async function exportToSystemClipboard(indices, width, height) {
+export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
+    if (!navigator.clipboard || !navigator.clipboard.write) {
+        showPasteNotification("El portapapeles está bloqueado por seguridad del navegador (usa HTTPS o localhost).", "warning", 4000);
+        return;
+    }
     try {
-        // Create a temporary canvas to render the image
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        let canvas;
+        if (indicesOrCanvas instanceof HTMLCanvasElement) {
+            canvas = indicesOrCanvas;
+        } else {
+            const indices = indicesOrCanvas;
+            canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
 
-        // Create ImageData from palette indices
-        const imageData = ctx.createImageData(width, height);
-        for (let i = 0; i < indices.length; i++) {
-            const paletteIdx = indices[i];
-            const color = state.palette[paletteIdx] || { r: 0, g: 0, b: 0 };
-            const offset = i * 4;
-            imageData.data[offset] = color.r;
-            imageData.data[offset + 1] = color.g;
-            imageData.data[offset + 2] = color.b;
-            imageData.data[offset + 3] = (paletteIdx === TRANSPARENT_COLOR) ? 0 : 255;
+            const imageData = ctx.createImageData(width, height);
+            for (let i = 0; i < indices.length; i++) {
+                const paletteIdx = indices[i];
+                const color = state.palette[paletteIdx] || { r: 0, g: 0, b: 0 };
+                const offset = i * 4;
+                imageData.data[offset] = color.r;
+                imageData.data[offset + 1] = color.g;
+                imageData.data[offset + 2] = color.b;
+                imageData.data[offset + 3] = (paletteIdx === (state.tmpFullZPreviewActive ? 255 : TRANSPARENT_COLOR)) ? 0 : 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
         }
 
-        ctx.putImageData(imageData, 0, 0);
-
-        // Convert canvas to blob and write to clipboard with sentinel
-        canvas.toBlob(async (blob) => {
-            if (blob && navigator.clipboard && navigator.clipboard.write) {
-                const sentinelBlob = new Blob(["__SHP_DATA__"], { type: "text/plain" });
-                try {
-                    await navigator.clipboard.write([
-                        new ClipboardItem({
-                            'image/png': blob,
-                            'text/plain': sentinelBlob
-                        })
-                    ]);
-                    console.log('Image and sentinel copied to system clipboard');
-                } catch (err) {
-                    console.warn('Failed to write to system clipboard:', err);
-                    // Fallback to just image if text/plain fails for some reason
-                    await navigator.clipboard.write([
-                        new ClipboardItem({ 'image/png': blob })
-                    ]);
-                }
-            }
-        }, 'image/png');
+        try {
+            const blobPromise = new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            await navigator.clipboard.write([
+                new ClipboardItem({ 'image/png': blobPromise })
+            ]);
+            console.log('Image copied to system clipboard for external paste.');
+            showPasteNotification("Selección copiada al portapapeles del sistema.", "success", 2500);
+        } catch (err) {
+            console.warn('Failed to write to system clipboard:', err);
+            showPasteNotification("Error al copiar al portapapeles: " + err.message, "error", 4000);
+        }
     } catch (err) {
         console.warn('Failed to export to system clipboard:', err);
+        showPasteNotification("Error al exportar al portapapeles: " + err.message, "error", 4000);
     }
 }
 
@@ -4031,7 +4433,11 @@ export function pasteClipboard(newLayer = true) {
             mask: null,
             editMask: false
         };
-        frame.layers.unshift(newLayerObj);
+        if (newLayer === 'bottom') {
+            frame.layers.push(newLayerObj);
+        } else {
+            frame.layers.unshift(newLayerObj);
+        }
         state.activeLayerId = newLayerObj.id;
     }
 
@@ -4326,6 +4732,12 @@ export function commitSelection() {
                 }
             }
         }
+    }
+
+    layer._v = (layer._v || 0) + 1;
+    const frame = state.frames[state.currentFrameIdx];
+    if (frame) {
+        frame._v = (frame._v || 0) + 1;
     }
 
     state.floatingSelection = null;
@@ -4824,7 +5236,7 @@ export function fmGetPairs(frames = state.frames) {
  * (shadows + relIndex enabled).
  */
 export function fmIsPairLogic(frames = state.frames) {
-    if (!state.useShadows || frames.length === 0 || frames.length % 2 !== 0) return false;
+    if (!state.useShadows || (frames && frames.length % 2 !== 0)) return false;
     if (state.fmViewMode === 'pair-strip') return true;
     const cbMergeView = document.getElementById('fmCbMergeView');
     return cbMergeView ? cbMergeView.checked : false;
@@ -4862,7 +5274,7 @@ function _getCachedComposite(frame, options = {}) {
         alphaBuffer: alphaBuffer,
         includeExternalShp: options.includeExternalShp || false,
         visualData: options.visualData || null,
-        palette: options.palette || state.palette,
+        palette: options.palette || getActivePalette(),
         substitutionMap: options.substitutionMap || null,
         affectedIndices: options.affectedIndices || null,
         remapBase: options.remapBase || null
@@ -4914,8 +5326,9 @@ export function createFrameThumbnail(frame, w = 120, h = 90, options = {}) {
     // Pre-build palette lookup (RGBA packed as 32-bit) — avoids per-pixel object lookups
     const palLUT = new Uint32Array(256);
     const isLE = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+    const paletteToUse = getActivePalette();
     for (let i = 0; i < 256; i++) {
-        const c = state.palette[i];
+        const c = paletteToUse[i];
         if (c) {
             if (isLE) {
                 palLUT[i] = (255 << 24) | (c.b << 16) | (c.g << 8) | c.r;
@@ -4925,7 +5338,7 @@ export function createFrameThumbnail(frame, w = 120, h = 90, options = {}) {
         }
     }
 
-    const bgPacked = (show0 && state.palette[actualTransparent]) ? palLUT[actualTransparent] : 0;
+    const bgPacked = (show0 && paletteToUse[actualTransparent]) ? palLUT[actualTransparent] : 0;
     const invScale = 1 / scale;
 
     for (let py = 0; py < h; py++) {
@@ -5493,7 +5906,14 @@ export function initFrameManager() {
     // Merge View Toggle
     const cbMergeView = document.getElementById('fmCbMergeView');
     if (cbMergeView) {
-        cbMergeView.onchange = () => {
+        cbMergeView.onchange = (e) => {
+            if (e.target.checked) {
+                const cbRelIndex = document.getElementById('fmCbRelIndex');
+                if (cbRelIndex && !cbRelIndex.checked) {
+                    cbRelIndex.checked = true;
+                    state.fmRelIndex = true;
+                }
+            }
             renderFrameManager();
         };
     }
@@ -5503,6 +5923,12 @@ export function initFrameManager() {
     if (cbRelIndex) {
         cbRelIndex.onchange = (e) => {
             state.fmRelIndex = e.target.checked;
+            if (!e.target.checked) {
+                const cbMergeView = document.getElementById('fmCbMergeView');
+                if (cbMergeView && cbMergeView.checked) {
+                    cbMergeView.checked = false;
+                }
+            }
             renderFrameManager();
         };
     }
@@ -6150,7 +6576,7 @@ export function createFmFrame(f, i, frameList, selectionSet, sectionId) {
     const wrapper = document.createElement('div');
     wrapper.className = 'fm-thumb-wrapper';
     const thumbSize = state.fmViewMode === 'strip' ? 200 : 160;
-    wrapper.appendChild(createFrameThumbnail(f, thumbSize, thumbSize));
+    wrapper.appendChild(createFrameThumbnail(f, thumbSize, thumbSize, { backgroundIdx: 0 }));
     div.appendChild(wrapper);
 
     const lbl = document.createElement('div');
@@ -6284,10 +6710,10 @@ function createFmPair(i, half, frames, selection, sectionId, isMerge) {
         col.className = 'fm-pair-stacked';
         const nWrap = document.createElement('div');
         nWrap.className = 'fm-thumb-wrapper';
-        nWrap.appendChild(createFrameThumbnail(normalFrame, 160, 160, { showIndex0: true }));
+        nWrap.appendChild(createFrameThumbnail(normalFrame, 160, 160, { showIndex0: true, backgroundIdx: 0 }));
         const sWrap = document.createElement('div');
         sWrap.className = 'fm-thumb-wrapper shadow-bg';
-        if (shadowFrame) sWrap.appendChild(createFrameThumbnail(shadowFrame, 160, 160, { showIndex0: true }));
+        if (shadowFrame) sWrap.appendChild(createFrameThumbnail(shadowFrame, 160, 160, { showIndex0: true, backgroundIdx: 0 }));
         col.appendChild(nWrap);
         col.appendChild(sWrap);
         pairDiv.appendChild(col);
@@ -6307,7 +6733,7 @@ function renderGridInside(grid, frames, selection, sectionId) {
     grid.classList.toggle('fm-active-focus', state.fmActiveSection === sectionId);
 
     const cbMergeView = document.getElementById('fmCbMergeView');
-    const isMergeable = state.useShadows && state.fmRelIndex && frames.length > 0 && frames.length % 2 === 0;
+    const isMergeable = state.useShadows && state.fmRelIndex && frames.length % 2 === 0;
     const isMerge = cbMergeView && cbMergeView.checked && isMergeable;
 
     if (isMerge) {
@@ -6365,6 +6791,9 @@ function renderGridInside(grid, frames, selection, sectionId) {
             });
             grid.appendChild(row);
         }
+    }
+    if (state.fmActiveSection === sectionId) {
+        grid.classList.add('fm-active-focus');
     }
 }
 
@@ -6665,6 +7094,7 @@ export function setupSubmenusRecursive(container = document.body) {
         if (item._submenuMl) item.removeEventListener('mouseleave', item._submenuMl);
 
         trig._submenuMe = () => {
+            if (trig.classList.contains('disabled')) return;
             const sub = trig.nextElementSibling;
             if (sub && sub.classList.contains('menu-dropdown')) {
                 const rect = trig.getBoundingClientRect();
@@ -6826,9 +7256,24 @@ export function showPasteNotification(msg, type = 'error', duration = 0) {
     const el = document.getElementById('pasteNotification');
     const msgEl = document.getElementById('pasteNotificationMsg');
     if (el && msgEl) {
-        msgEl.textContent = msg;
+        let cleanMsg = msg;
+        // Strip leading emojis to prevent duplicate icons
+        cleanMsg = cleanMsg.replace(/^[✅🔒⚠️❌]\s*/u, '');
+        msgEl.textContent = cleanMsg;
         el.className = 'notification-bar active';
         if (type === 'warning') el.classList.add('warning');
+        if (type === 'success') el.classList.add('success');
+        
+        const iconEl = document.getElementById('pasteNotificationIcon');
+        if (iconEl) {
+            if (type === 'success') {
+                iconEl.textContent = '✅';
+            } else if (type === 'warning') {
+                iconEl.textContent = '⚠️';
+            } else {
+                iconEl.textContent = '❌';
+            }
+        }
         
         if (duration > 0) {
             setTimeout(() => {
@@ -6837,3 +7282,788 @@ export function showPasteNotification(msg, type = 'error', duration = 0) {
         }
     }
 }
+
+export function pasteClipboardRange(targetType, startFrame, endFrame) {
+    if (!state.clipboard) return;
+    const { w, h, data } = state.clipboard;
+    let px = state.clipboard.x || 0;
+    let py = state.clipboard.y || 0;
+    const cType = state.clipboard.type || 'rect';
+    const cMaskData = state.clipboard.maskData;
+
+    // Commit any in-progress floating selection silently
+    if (state.floatingSelection) commitSelection();
+
+    const layerName = 'Paste Layer';
+    let targetLayerId = null;
+
+    for (let fIdx = startFrame; fIdx <= endFrame; fIdx++) {
+        const frame = state.frames[fIdx];
+        if (!frame) continue;
+
+        const newLayerObj = {
+            type: 'layer',
+            id: generateId(),
+            name: layerName,
+            data: new Uint16Array(frame.width * frame.height).fill(TRANSPARENT_COLOR),
+            visible: true,
+            width: frame.width,
+            height: frame.height,
+            mask: null,
+            editMask: false
+        };
+
+        const targetData = newLayerObj.data;
+        for (let cy = 0; cy < h; cy++) {
+            for (let cx = 0; cx < w; cx++) {
+                const tx = px + cx;
+                const ty = py + cy;
+                if (tx >= 0 && tx < frame.width && ty >= 0 && ty < frame.height) {
+                    const clipboardIndex = cy * w + cx;
+                    const targetIndex = ty * frame.width + tx;
+                    
+                    let shouldCopy = true;
+                    if (cType === 'lasso' && cMaskData) {
+                        shouldCopy = (cMaskData[clipboardIndex] !== 0);
+                    }
+                    
+                    if (shouldCopy) {
+                        targetData[targetIndex] = data[clipboardIndex];
+                    }
+                }
+            }
+        }
+
+        if (targetType === 'bottom') {
+            frame.layers.push(newLayerObj);
+        } else {
+            frame.layers.unshift(newLayerObj);
+        }
+
+        // Invalidate cache for this frame
+        frame._v = (frame._v || 0) + 1;
+
+        if (fIdx === state.currentFrameIdx) {
+            targetLayerId = newLayerObj.id;
+        } else if (fIdx === startFrame && !targetLayerId) {
+            targetLayerId = newLayerObj.id;
+        }
+    }
+
+    if (state.currentFrameIdx < startFrame || state.currentFrameIdx > endFrame) {
+        state.currentFrameIdx = startFrame;
+        const currentFrame = state.frames[state.currentFrameIdx];
+        const matchingLayer = targetType === 'bottom' 
+            ? currentFrame.layers[currentFrame.layers.length - 1] 
+            : currentFrame.layers[0];
+        if (matchingLayer) {
+            targetLayerId = matchingLayer.id;
+        }
+    }
+
+    if (targetLayerId) {
+        state.activeLayerId = targetLayerId;
+    }
+
+    pushHistory();
+
+    renderCanvas();
+    updateLayersList();
+    renderFramesList();
+    renderOverlay();
+    
+    const msg = t('msg_paste_range_success', { start: startFrame, end: endFrame });
+    showPasteNotification(msg, 'success', 3000);
+}
+
+export function initPasteRangeDialog() {
+    const dialog = document.getElementById('dialogPasteRange');
+    if (!dialog) return;
+
+    const btnCancel = document.getElementById('btnPasteRangeCancel');
+    const btnProcess = document.getElementById('btnPasteRangeProcess');
+    const startInput = document.getElementById('pasteRangeStart');
+    const endInput = document.getElementById('pasteRangeEnd');
+
+    const clampInputLive = (input) => {
+        let raw = input.value;
+        if (raw === '') return;
+        
+        // Remove any non-digits
+        raw = raw.replace(/[^0-9]/g, '');
+        if (raw === '') {
+            input.value = '';
+            return;
+        }
+
+        let val = parseInt(raw, 10);
+        const min = parseInt(input.min, 10) || 0;
+        const max = parseInt(input.max, 10) || (state.frames.length - 1);
+
+        if (val > max) {
+            val = max;
+        } else if (val < min) {
+            val = min;
+        }
+        input.value = val;
+    };
+
+    const clampInputFinal = (input) => {
+        let val = parseInt(input.value, 10);
+        const min = parseInt(input.min, 10) || 0;
+        const max = parseInt(input.max, 10) || (state.frames.length - 1);
+        if (isNaN(val)) val = min;
+        
+        const clamped = Math.max(min, Math.min(max, val));
+        input.value = clamped;
+    };
+
+    if (startInput) {
+        startInput.addEventListener('input', () => clampInputLive(startInput));
+        startInput.addEventListener('change', () => clampInputFinal(startInput));
+        startInput.addEventListener('blur', () => clampInputFinal(startInput));
+    }
+
+    if (endInput) {
+        endInput.addEventListener('input', () => clampInputLive(endInput));
+        endInput.addEventListener('change', () => clampInputFinal(endInput));
+        endInput.addEventListener('blur', () => clampInputFinal(endInput));
+    }
+
+    if (btnCancel) {
+        btnCancel.onclick = () => {
+            dialog.close();
+        };
+    }
+
+    if (btnProcess) {
+        btnProcess.onclick = async () => {
+            if (startInput) clampInputFinal(startInput);
+            if (endInput) clampInputFinal(endInput);
+
+            const startVal = startInput ? startInput.value : '0';
+            const endVal = endInput ? endInput.value : '0';
+            
+            const start = parseInt(startVal, 10);
+            const end = parseInt(endVal, 10);
+            const type = dialog.dataset.pasteType || 'top';
+
+            if (isNaN(start) || start < 0) {
+                await showAlert(t('msg_paste_range_invalid_start'));
+                return;
+            }
+
+            if (isNaN(end) || end < 0 || end >= state.frames.length) {
+                await showAlert(t('msg_paste_range_invalid_end', { total: state.frames.length - 1 }));
+                return;
+            }
+
+            if (start > end) {
+                await showAlert(t('msg_paste_range_start_gt_end'));
+                return;
+            }
+
+            dialog.close();
+            pasteClipboardRange(type, start, end);
+        };
+    }
+}
+
+export function openPasteRangeDialog(type) {
+    if (!state.clipboard) {
+        showPasteNotification(t('msg_paste_no_clipboard'), 'error', 3000);
+        return;
+    }
+
+    const dialog = document.getElementById('dialogPasteRange');
+    if (!dialog) return;
+
+    dialog.dataset.pasteType = type;
+
+    const startInput = document.getElementById('pasteRangeStart');
+    const endInput = document.getElementById('pasteRangeEnd');
+
+    if (startInput && endInput) {
+        const total = state.frames.length - 1;
+        startInput.value = state.currentFrameIdx;
+        endInput.value = state.currentFrameIdx;
+        startInput.max = total;
+        endInput.max = total;
+
+        const hintEl = dialog.querySelector('.hint');
+        if (hintEl) {
+            hintEl.textContent = t('lbl_indices_hint').replace('N-1', total);
+        }
+    }
+
+    dialog.showModal();
+}
+
+export function removeColorZeroFromEntireShp() {
+    if (!state.frames || state.frames.length === 0) return;
+
+    if (state.floatingSelection) commitSelection();
+
+    let affectedCount = 0;
+
+    for (let fIdx = 0; fIdx < state.frames.length; fIdx++) {
+        const frame = state.frames[fIdx];
+
+        // In TMP mode: skip Z-Data frames — color 0 there is a valid depth value, not background
+        if (state.isTmpMode && frame.tmpMeta) {
+            const comp = frame.tmpMeta.component;
+            if (comp === 'zdata' || comp === 'extrazdata') continue;
+        }
+
+        let frameAffected = false;
+
+        const processLayers = (layers) => {
+            for (let layer of layers) {
+                if (layer.type === 'group' && layer.children) {
+                    processLayers(layer.children);
+                } else if (layer.type === 'layer' && layer.data) {
+                    const data = layer.data;
+                    let layerAffected = false;
+                    for (let i = 0; i < data.length; i++) {
+                        if (data[i] === 0) {
+                            data[i] = TRANSPARENT_COLOR;
+                            affectedCount++;
+                            frameAffected = true;
+                            layerAffected = true;
+                        }
+                    }
+                    if (layerAffected) {
+                        layer._v = (layer._v || 0) + 1;
+                    }
+                }
+            }
+        };
+
+        processLayers(frame.layers);
+
+        if (frameAffected) {
+            frame._v = (frame._v || 0) + 1;
+        }
+    }
+
+    if (affectedCount > 0) {
+        pushHistory('all');
+        renderCanvas();
+        updateLayersList();
+        renderFramesList();
+        renderOverlay();
+
+        const msg = t('msg_remove_color0_success', { count: affectedCount });
+        showPasteNotification(msg, 'success', 3000);
+    } else {
+        const msg = t('msg_remove_color0_none');
+        showPasteNotification(msg, 'warning', 3000);
+    }
+}
+
+export function fillColorZeroInEntireShp() {
+    if (!state.frames || state.frames.length === 0) return;
+
+    if (state.floatingSelection) commitSelection();
+
+    let affectedCount = 0;
+
+    // In TMP mode: build a map of tileSlot → Z-Data layer array for fast lookup
+    // Z-Data value 0 means "outside the diamond" = background that should be color 0
+    let tmpZDataMap = null;
+    if (state.isTmpMode) {
+        tmpZDataMap = new Map();
+        for (const f of state.frames) {
+            if (f.tmpMeta && f.tmpMeta.component === 'zdata' && f.layers && f.layers[0] && f.layers[0].data) {
+                tmpZDataMap.set(f.tmpMeta.tileSlot, f.layers[0].data);
+            }
+        }
+    }
+
+    for (let fIdx = 0; fIdx < state.frames.length; fIdx++) {
+        const frame = state.frames[fIdx];
+
+        // In TMP mode: skip Z-Data frames
+        if (state.isTmpMode && frame.tmpMeta) {
+            const comp = frame.tmpMeta.component;
+            if (comp === 'zdata' || comp === 'extrazdata') continue;
+        }
+
+        let frameAffected = false;
+
+        // Build Z-Data mask for diamond-shaped tiles (main, damaged) using same tileSlot's Z-Data
+        // For 'extra' frames (rectangular) there is no diamond mask — use standard behavior.
+        let zMask = null;
+        if (state.isTmpMode && frame.tmpMeta && tmpZDataMap) {
+            const comp = frame.tmpMeta.component;
+            if ((comp === 'main' || comp === 'damaged') && tmpZDataMap.has(frame.tmpMeta.tileSlot)) {
+                zMask = tmpZDataMap.get(frame.tmpMeta.tileSlot);
+            }
+        }
+
+        const processLayers = (layers) => {
+            for (let layer of layers) {
+                if (layer.type === 'group' && layer.children) {
+                    processLayers(layer.children);
+                } else if (layer.type === 'layer' && layer.data) {
+                    const data = layer.data;
+                    let layerAffected = false;
+                    for (let i = 0; i < data.length; i++) {
+                        let shouldFill = false;
+                        if (zMask) {
+                            // TMP diamond tile: fill positions where Z-Data is 0 (outside the diamond)
+                            // regardless of whether the image pixel is TRANSPARENT_COLOR or already 0
+                            shouldFill = (zMask[i] === 0 || zMask[i] === TRANSPARENT_COLOR);
+                        } else {
+                            // SHP mode or TMP extra (rectangular): fill transparent pixels
+                            shouldFill = (data[i] === TRANSPARENT_COLOR);
+                        }
+                        if (shouldFill && data[i] !== 0) {
+                            data[i] = 0;
+                            affectedCount++;
+                            frameAffected = true;
+                            layerAffected = true;
+                        }
+                    }
+                    if (layerAffected) {
+                        layer._v = (layer._v || 0) + 1;
+                    }
+                }
+            }
+        };
+
+        processLayers(frame.layers);
+
+        if (frameAffected) {
+            frame._v = (frame._v || 0) + 1;
+        }
+    }
+
+    if (affectedCount > 0) {
+        pushHistory('all');
+        renderCanvas();
+        updateLayersList();
+        renderFramesList();
+        renderOverlay();
+
+        const msg = t('msg_fill_color0_success', { count: affectedCount });
+        showPasteNotification(msg, 'success', 3000);
+    } else {
+        const msg = t('msg_fill_color0_none');
+        showPasteNotification(msg, 'warning', 3000);
+    }
+}
+
+// Cache to speed up thumbnail rendering in TMP mode (declared at top of file)
+
+function getCachedComponentCanvas(frame, paletteToUse) {
+    const key = `${frame.id}_${frame._v || 0}_${state.paletteVersion}`;
+    if (_compThumbCache.has(key)) {
+        return _compThumbCache.get(key);
+    }
+
+    const w = frame.width;
+    const h = frame.height;
+    const offscreen = document.createElement('canvas');
+    offscreen.width = w;
+    offscreen.height = h;
+
+    const ctx = offscreen.getContext('2d');
+    const composite = new Uint16Array(w * h).fill(TRANSPARENT_COLOR);
+
+    function compositeNode(node) {
+        if (!node.visible || node.type === 'external_shp') return;
+        if (node.children) {
+            for (let i = node.children.length - 1; i >= 0; i--) compositeNode(node.children[i]);
+        } else if (node.data) {
+            for (let k = 0; k < composite.length; k++) {
+                if (node.mask && node.mask[k] === 0) continue;
+                const val = node.data[k];
+                if (val !== TRANSPARENT_COLOR) composite[k] = val;
+            }
+        }
+    }
+    for (let i = frame.layers.length - 1; i >= 0; i--) compositeNode(frame.layers[i]);
+
+    const imgData = ctx.createImageData(w, h);
+    const d = imgData.data;
+
+    for (let i = 0; i < composite.length; i++) {
+        const val = composite[i];
+        const idx = i * 4;
+        if (val !== TRANSPARENT_COLOR) {
+            const color = paletteToUse[val] || { r: 255, g: 0, b: 255 };
+            d[idx] = color.r; d[idx + 1] = color.g; d[idx + 2] = color.b; d[idx + 3] = 255;
+        } else {
+            d[idx] = 0; d[idx + 1] = 0; d[idx + 2] = 0; d[idx + 3] = 0;
+        }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    _compThumbCache.set(key, offscreen);
+    return offscreen;
+}
+
+export function renderComponentThumbnail(frame, canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const w = frame.width;
+    const h = frame.height;
+    if (w <= 0 || h <= 0) return;
+
+    const isZData = frame.tmpMeta && (frame.tmpMeta.component === 'zdata' || frame.tmpMeta.component === 'extrazdata');
+    const paletteToUse = isZData ? getZdataPalette() : state.palette;
+
+    const offscreen = getCachedComponentCanvas(frame, paletteToUse);
+
+    // Draw background
+    const imgData = ctx.createImageData(canvas.width, canvas.height);
+    const d = imgData.data;
+    if (isZData) {
+        // Z-Data uses opaque black background
+        for (let idx = 0; idx < d.length; idx += 4) {
+            d[idx] = 0; d[idx + 1] = 0; d[idx + 2] = 0; d[idx + 3] = 255;
+        }
+    } else if (state.isTmpMode) {
+        // TMP mode: Main/Extra/Damaged uses the palette background color (usually index 0)
+        const bgIdx = state.isAlphaImageMode ? 127 : 0;
+        const bg = state.palette[bgIdx] || { r: 0, g: 0, b: 0 };
+        for (let idx = 0; idx < d.length; idx += 4) {
+            d[idx] = bg.r; d[idx + 1] = bg.g; d[idx + 2] = bg.b; d[idx + 3] = 255;
+        }
+    } else {
+        // SHP mode: Main/Extra/Damaged uses checkered background
+        for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width; x++) {
+                const idx = (y * canvas.width + x) * 4;
+                const isDark = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0;
+                const c = isDark ? 20 : 30;
+                d[idx] = c; d[idx + 1] = c; d[idx + 2] = c; d[idx + 3] = 255;
+            }
+        }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    // Draw scaled offscreen image
+    const scale = Math.min(canvas.width / w, canvas.height / h, 1);
+    const dx = (canvas.width - w * scale) / 2;
+    const dy = (canvas.height - h * scale) / 2;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(offscreen, dx, dy, w * scale, h * scale);
+}
+
+export function renderTmpComponentsList() {
+    const list = elements.tmpComponentsList;
+    const fList = elements.framesList;
+    if (!list || !fList) return;
+
+    list.style.display = 'block';
+    fList.style.display = 'none';
+
+    list.innerHTML = '';
+
+    // Swap title attribute/text using applyTranslations-compatible data-i18n
+    const sidebarTitle = document.getElementById('sidebarFramesTitle');
+    if (sidebarTitle) {
+        sidebarTitle.setAttribute('data-i18n', 'sidebar_tiles');
+        if (typeof applyTranslations === 'function') applyTranslations();
+    }
+
+    // 1. Prepend the Composed Full Preview card
+    const fullPreviewCard = document.createElement('div');
+    fullPreviewCard.className = 'full-preview-card';
+    if (state.currentFrameIdx === -1 && !state.tmpFullZPreviewActive) {
+        fullPreviewCard.classList.add('active');
+    }
+
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = 46;
+    fullCanvas.height = 36;
+    fullCanvas.className = 'thumb-canvas';
+    fullPreviewCard.appendChild(fullCanvas);
+
+    // Render composite tiles preview on the canvas
+    const tiles = getCurrentEditedTiles();
+    if (tiles && state.tmpHeader) {
+        const { canvas: compositeCanvas } = TmpTsFile.composeToCanvas({ header: state.tmpHeader, tiles, numTiles: tiles.length }, state.palette);
+        if (compositeCanvas) {
+            const fCtx = fullCanvas.getContext('2d');
+            fCtx.clearRect(0, 0, fullCanvas.width, fullCanvas.height);
+            fCtx.fillStyle = '#111';
+            fCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height);
+
+            const cw = compositeCanvas.width;
+            const ch = compositeCanvas.height;
+            const scale = Math.min(fullCanvas.width / cw, fullCanvas.height / ch, 1);
+            const dx = (fullCanvas.width - cw * scale) / 2;
+            const dy = (fullCanvas.height - ch * scale) / 2;
+            fCtx.imageSmoothingEnabled = false;
+            fCtx.drawImage(compositeCanvas, dx, dy, cw * scale, ch * scale);
+        }
+    }
+
+    const fullDetails = document.createElement('div');
+    fullDetails.className = 'frame-details';
+    fullDetails.style.display = 'flex';
+    fullDetails.style.flexDirection = 'column';
+    fullDetails.style.justifyContent = 'center';
+    fullDetails.style.marginLeft = '8px';
+
+    const fullTitleSpan = document.createElement('span');
+    fullTitleSpan.style.fontWeight = 'bold';
+    fullTitleSpan.textContent = t('tmp_full_preview') || 'Full Preview';
+    fullDetails.appendChild(fullTitleSpan);
+
+    const fullSubSpan = document.createElement('span');
+    fullSubSpan.style.fontSize = '11px';
+    fullSubSpan.style.color = '#a0aec0';
+    fullSubSpan.textContent = t('tmp_composed_view') || 'Composed View';
+    fullDetails.appendChild(fullSubSpan);
+
+    fullPreviewCard.appendChild(fullDetails);
+
+    fullPreviewCard.onclick = () => {
+        if (state.currentFrameIdx === -1 && !state.tmpFullZPreviewActive) return;
+        if (state.floatingSelection) commitSelection();
+
+        state.currentFrameIdx = -1;
+        state.tmpFullZPreviewActive = false;
+        const currentTiles = getCurrentEditedTiles();
+        if (currentTiles) {
+            const bounds = TmpTsFile.computeBounds({ header: state.tmpHeader, tiles: currentTiles, numTiles: currentTiles.length });
+            if (bounds.hasTiles) {
+                state.canvasW = Math.ceil(bounds.width);
+                state.canvasH = Math.ceil(bounds.height);
+            }
+        }
+
+        syncLayerSelection();
+        pushHistory([]);
+
+        renderTmpComponentsList();
+        updateCanvasSize();
+        updateLayersList();
+        renderCanvas();
+        renderPalette();
+    };
+
+    list.appendChild(fullPreviewCard);
+
+    // 1b. Prepend the Composed Full Z-Data Preview card
+    const fullZPreviewCard = document.createElement('div');
+    fullZPreviewCard.className = 'full-preview-card';
+    if (state.currentFrameIdx === -1 && state.tmpFullZPreviewActive) {
+        fullZPreviewCard.classList.add('active');
+    }
+
+    const fullZCanvas = document.createElement('canvas');
+    fullZCanvas.width = 46;
+    fullZCanvas.height = 36;
+    fullZCanvas.className = 'thumb-canvas';
+    fullZPreviewCard.appendChild(fullZCanvas);
+
+    // Render composite Z-Data tiles preview on the canvas
+    if (tiles && state.tmpHeader) {
+        const { canvas: compositeCanvas } = TmpTsFile.composeZDataToCanvas({ header: state.tmpHeader, tiles, numTiles: tiles.length });
+        if (compositeCanvas) {
+            const fCtx = fullZCanvas.getContext('2d');
+            fCtx.clearRect(0, 0, fullZCanvas.width, fullZCanvas.height);
+            fCtx.fillStyle = '#000';
+            fCtx.fillRect(0, 0, fullZCanvas.width, fullZCanvas.height);
+
+            const cw = compositeCanvas.width;
+            const ch = compositeCanvas.height;
+            const scale = Math.min(fullZCanvas.width / cw, fullZCanvas.height / ch, 1);
+            const dx = (fullZCanvas.width - cw * scale) / 2;
+            const dy = (fullZCanvas.height - ch * scale) / 2;
+            fCtx.imageSmoothingEnabled = false;
+            fCtx.drawImage(compositeCanvas, dx, dy, cw * scale, ch * scale);
+        }
+    }
+
+    const fullZDetails = document.createElement('div');
+    fullZDetails.className = 'frame-details';
+    fullZDetails.style.display = 'flex';
+    fullZDetails.style.flexDirection = 'column';
+    fullZDetails.style.justifyContent = 'center';
+    fullZDetails.style.marginLeft = '8px';
+
+    const fullZTitleSpan = document.createElement('span');
+    fullZTitleSpan.style.fontWeight = 'bold';
+    fullZTitleSpan.textContent = t('tmp_full_z_preview') || 'Full Z-Data Preview';
+    fullZDetails.appendChild(fullZTitleSpan);
+
+    const fullZSubSpan = document.createElement('span');
+    fullZSubSpan.style.fontSize = '11px';
+    fullZSubSpan.style.color = '#a0aec0';
+    fullZSubSpan.textContent = t('tmp_composed_z_view') || 'Composed Z-Data';
+    fullZDetails.appendChild(fullZSubSpan);
+
+    fullZPreviewCard.appendChild(fullZDetails);
+
+    fullZPreviewCard.onclick = () => {
+        if (state.currentFrameIdx === -1 && state.tmpFullZPreviewActive) return;
+        if (state.floatingSelection) commitSelection();
+
+        state.currentFrameIdx = -1;
+        state.tmpFullZPreviewActive = true;
+        const currentTiles = getCurrentEditedTiles();
+        if (currentTiles) {
+            const bounds = TmpTsFile.computeBounds({ header: state.tmpHeader, tiles: currentTiles, numTiles: currentTiles.length });
+            if (bounds.hasTiles) {
+                state.canvasW = Math.ceil(bounds.width);
+                state.canvasH = Math.ceil(bounds.height);
+            }
+        }
+
+        syncLayerSelection();
+        pushHistory([]);
+
+        renderTmpComponentsList();
+        updateCanvasSize();
+        updateLayersList();
+        renderCanvas();
+        renderPalette();
+    };
+
+    list.appendChild(fullZPreviewCard);
+
+    // 2. Group frames by tile slot
+    const tilesMap = new Map();
+    state.frames.forEach((frame, idx) => {
+        if (!frame.tmpMeta) return;
+        const { tileSlot } = frame.tmpMeta;
+        if (!tilesMap.has(tileSlot)) {
+            tilesMap.set(tileSlot, {});
+        }
+        tilesMap.get(tileSlot)[frame.tmpMeta.component] = { frame, idx };
+    });
+
+    const sortedSlots = Array.from(tilesMap.keys()).sort((a, b) => a - b);
+
+    // Function to create a component box
+    const createComponentBox = (compInfo, badgeText, isZData = false) => {
+        if (!compInfo) return null;
+        const { frame, idx } = compInfo;
+
+        const box = document.createElement('div');
+        box.className = 'tile-component-box';
+        if (isZData) box.classList.add('zdata-box');
+        if (state.currentFrameIdx === idx) box.classList.add('active');
+
+        // Canvases
+        const canvas = document.createElement('canvas');
+        canvas.width = 46;
+        canvas.height = 36;
+        box.appendChild(canvas);
+        renderComponentThumbnail(frame, canvas);
+
+        // Tooltip description
+        let compLabel = frame.tmpMeta.component;
+        if (compLabel === 'main') compLabel = t('tmp_comp_main') || 'Main';
+        else if (compLabel === 'zdata') compLabel = t('tmp_comp_zdata') || 'Z-data';
+        else if (compLabel === 'damaged') compLabel = t('tmp_comp_damaged') || 'Damaged';
+        else if (compLabel === 'extra') compLabel = t('tmp_comp_extra') || 'Extra';
+        else if (compLabel === 'extrazdata') compLabel = t('tmp_comp_extrazdata') || 'Extra Z';
+
+        box.title = `${t('tmp_tile_label').replace('{n}', frame.tmpMeta.tileSlot)}: ${compLabel} (${frame.width}×${frame.height})`;
+
+        box.onclick = (e) => {
+            e.stopPropagation();
+            if (state.floatingSelection) commitSelection();
+            if (state.currentFrameIdx === idx) return;
+
+            state.currentFrameIdx = idx;
+            state.tmpFullZPreviewActive = false;
+            state.canvasW = frame.width;
+            state.canvasH = frame.height;
+
+            syncLayerSelection();
+            pushHistory([]);
+
+            renderTmpComponentsList();
+            updateCanvasSize();
+            updateLayersList();
+            renderCanvas();
+            renderPalette();
+        };
+
+        return box;
+    };
+
+    sortedSlots.forEach(slotNum => {
+        const comps = tilesMap.get(slotNum);
+
+        const group = document.createElement('div');
+        group.className = 'tile-slot-group';
+
+        // Main Row (Main + Z-Data)
+        const mainRow = document.createElement('div');
+        mainRow.className = 'tile-slot-row base-row';
+
+        const indexBadge = document.createElement('div');
+        indexBadge.className = 'tile-slot-index';
+        indexBadge.textContent = slotNum;
+        mainRow.appendChild(indexBadge);
+
+        // Main Graphic Col
+        const mainCol = document.createElement('div');
+        mainCol.className = 'tile-slot-col';
+        const mainBox = createComponentBox(comps.main, 'Main', false);
+        if (mainBox) mainCol.appendChild(mainBox);
+        mainRow.appendChild(mainCol);
+
+        // Z-Data Col
+        const zCol = document.createElement('div');
+        zCol.className = 'tile-slot-col';
+        const zBox = createComponentBox(comps.zdata, 'Z-Data', true);
+        if (zBox) zCol.appendChild(zBox);
+        mainRow.appendChild(zCol);
+
+        group.appendChild(mainRow);
+
+        // Damaged Row (if present)
+        if (comps.damaged) {
+            const damagedRow = document.createElement('div');
+            damagedRow.className = 'tile-slot-row hooked-row damaged-row';
+
+            const dCol = document.createElement('div');
+            dCol.className = 'tile-slot-col';
+            const dBox = createComponentBox(comps.damaged, 'Dmg', false);
+            if (dBox) dCol.appendChild(dBox);
+            damagedRow.appendChild(dCol);
+
+            // Empty column on the right for symmetry
+            const dEmptyCol = document.createElement('div');
+            dEmptyCol.className = 'tile-slot-col empty-col';
+            damagedRow.appendChild(dEmptyCol);
+
+            group.appendChild(damagedRow);
+        }
+
+        // Extra Row (if present)
+        if (comps.extra || comps.extrazdata) {
+            const extraRow = document.createElement('div');
+            extraRow.className = 'tile-slot-row hooked-row extra-row';
+
+            const exCol = document.createElement('div');
+            exCol.className = 'tile-slot-col';
+            const exBox = createComponentBox(comps.extra, 'Ext', false);
+            if (exBox) exCol.appendChild(exBox);
+            extraRow.appendChild(exCol);
+
+            const exZCol = document.createElement('div');
+            exZCol.className = 'tile-slot-col';
+            const exZBox = createComponentBox(comps.extrazdata, 'Ext Z', true);
+            if (exZBox) exZCol.appendChild(exZBox);
+            extraRow.appendChild(exZCol);
+
+            group.appendChild(extraRow);
+        }
+
+        list.appendChild(group);
+    });
+}
+
+

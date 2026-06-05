@@ -1132,6 +1132,10 @@ canvas {
     overflow: hidden;
 }
 
+.panel-external .panel-header {
+    padding: 4px 10px;
+}
+
 /* Split View Resizer inside Frame Manager - Fixed for Flex Layout */
 #fmSplitResizer {
     position: relative !important;
@@ -2725,6 +2729,31 @@ input[type="number"]:focus,
     z-index: 10;
 }
 
+.frame-thumb.shadow {
+    border-color: #4a2c4a;
+    background-color: #1e111e;
+}
+
+.frame-thumb.zdata-thumb {
+    border-color: #4a2c4a;
+    background-color: #1e111e;
+}
+
+.frame-thumb.zdata-thumb.active {
+    border-color: var(--accent);
+    background-color: rgba(0, 255, 170, 0.15);
+}
+
+.frame-thumb.shadow .frame-number {
+    color: #e2bce2;
+    text-shadow: 1px 1px 0 #2d1a2d, -1px -1px 0 #2d1a2d, 1px -1px 0 #2d1a2d, -1px 1px 0 #2d1a2d;
+}
+
+.frame-thumb.shadow.active {
+    border-color: var(--accent);
+    background-color: rgba(0, 255, 170, 0.15);
+}
+
 .thumb-content {
     width: 100%;
     height: 100%;
@@ -3480,6 +3509,11 @@ input[type="number"]:focus,
     filter: none !important;
 }
 
+.icon-tmp-file {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' /%3E%3Cpolyline points='14 2 14 8 20 8' /%3E%3Ctext x='5' y='18' font-family='Arial' font-size='7' font-weight='900' fill='%23ffffff' style='font-size:7px; font-weight:900;'%3ETMP%3C/text%3E%3C/svg%3E") !important;
+    filter: none !important;
+}
+
 .icon-sprite-sheet {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='3' y1='9' x2='21' y2='9'%3E%3C/line%3E%3Cline x1='3' y1='15' x2='21' y2='15'%3E%3C/line%3E%3Cline x1='9' y1='3' x2='9' y2='21'%3E%3C/line%3E%3Cline x1='15' y1='3' x2='15' y2='21'%3E%3C/line%3E%3C/svg%3E");
 }
@@ -3633,8 +3667,8 @@ input[type=number] {
 }
 
 /* Submenu trigger hover */
-.menu-item-submenu:hover>.menu-dropdown.submenu,
-.menu-item-submenu.active>.menu-dropdown.submenu,
+.menu-item-submenu:not(.disabled):hover>.menu-dropdown.submenu,
+.menu-item-submenu:not(.disabled).active>.menu-dropdown.submenu,
 .menu-dropdown.submenu.active {
     display: block;
 }
@@ -5320,6 +5354,12 @@ dialog.dialog-dark.dialog-preview-window::backdrop {
     color: #fff9da;
 }
 
+.notification-bar.success {
+    background: linear-gradient(to right, #054a2a, #006a3a);
+    border-bottom: 2px solid #00a860;
+    color: #dafff0;
+}
+
 .notification-bar.active {
     display: flex;
 }
@@ -5343,4 +5383,194 @@ dialog.dialog-dark.dialog-preview-window::backdrop {
 @keyframes slideDown {
     from { transform: translateY(-100%); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
+}
+
+/* TMP Mode styles */
+.tmp-mode #btnAddFrame,
+.tmp-mode #btnDelFrame,
+.tmp-mode #btnFrameMgr,
+.tmp-mode #btnExternalShp,
+.tmp-mode #btnToolCrop {
+    display: none !important;
+}
+
+/* Game Grid: dropdown for SHP, checkbox for TMP */
+body:not(.tmp-mode) #wrapperIsoGridCheckbox { display: none !important; }
+body.tmp-mode #wrapperIsoGridSelect         { display: none !important; }
+body.tmp-mode #wrapperIsoGridCheckbox       { display: flex !important; }
+
+/* Game Grid menu: submenu for SHP, single toggle for TMP */
+body:not(.tmp-mode) #menuGameGridToggle     { display: none !important; }
+body.tmp-mode #gameGridSubmenuWrapper       { display: none !important; }
+body.tmp-mode #menuGameGridToggle           { display: flex !important; }
+
+/* Shadows & Shadow Overlay toolbar: hidden in TMP mode (not just disabled — irrelevant to terrain tiles) */
+body.tmp-mode #wrapperUseShadows        { display: none !important; }
+body.tmp-mode #wrapperShowShadowOverlay { display: none !important; }
+body.tmp-mode #sepBeforeShadows         { display: none !important; }
+body.tmp-mode #sepBeforeShadowOverlay   { display: none !important; }
+
+/* Show/hide Import and Export submenus based on TMP mode */
+body.tmp-mode #menuItemExportShp { display: none !important; }
+body:not(.tmp-mode) #menuItemExportTmp { display: none !important; }
+
+
+.tmp-mode .frame-thumb {
+    cursor: pointer;
+}
+
+/* Modern Cells List Layout for TMP Mode */
+.tmp-mode #tmpComponentsList {
+    background: #0d0e12;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+/* Full Preview Card */
+.full-preview-card {
+    display: flex !important;
+    align-items: center;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    margin-bottom: 8px;
+    box-sizing: border-box;
+}
+.full-preview-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+.full-preview-card.active {
+    background: rgba(0, 255, 170, 0.1) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 10px rgba(0, 255, 170, 0.2);
+}
+
+/* Tile Card Group */
+.tile-slot-group {
+    background: #15171e;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-sizing: border-box;
+}
+
+.tile-slot-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    box-sizing: border-box;
+}
+
+/* The index badge on the left */
+.tile-slot-index {
+    width: 28px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #8a8d9a;
+    text-align: center;
+    flex-shrink: 0;
+    font-family: monospace;
+}
+
+/* Columns for graphics and depth */
+.tile-slot-col {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    box-sizing: border-box;
+}
+
+/* Component thumbnail wrapper */
+.tile-component-box {
+    width: 100%;
+    max-width: 80px;
+    height: 48px;
+    border: 1.5px solid #2d313f;
+    background: #090a0f;
+    border-radius: 4px;
+    position: relative;
+    cursor: pointer;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+}
+
+.tile-component-box:hover {
+    border-color: #4f566f;
+    background: #11131a;
+}
+
+.tile-component-box.active {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 8px rgba(0, 255, 170, 0.3);
+}
+
+/* Specific styling for depth/Z-Data component box (Purple style) */
+.tile-component-box.zdata-box {
+    border-color: #4a2c4a;
+    background: #1b101b;
+}
+.tile-component-box.zdata-box:hover {
+    border-color: #6d426d;
+    background: #251625;
+}
+.tile-component-box.zdata-box.active {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 8px rgba(0, 255, 170, 0.3);
+}
+
+/* Hooked sub-rows (Extra Data, Damaged) */
+.tile-slot-row.hooked-row {
+    margin-left: 28px;
+    width: calc(100% - 28px);
+    background: #11131a;
+    border-left: 3px solid #00a2ff;
+    border-right: 3px solid #00a2ff;
+    border-radius: 4px;
+    padding: 4px 6px;
+    box-sizing: border-box;
+}
+
+/* Text badge indicator inside thumbnail box */
+.tile-component-badge {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #a0aec0;
+    font-size: 8px;
+    padding: 1px 3px;
+    border-radius: 2px;
+    font-family: sans-serif;
+    pointer-events: none;
+    text-transform: uppercase;
+}
+
+.tile-component-box.active .tile-component-badge {
+    color: #fff;
+    background: rgba(0, 255, 170, 0.3);
+}
+
+.tile-component-box canvas {
+    max-width: 90%;
+    max-height: 90%;
+    image-rendering: pixelated;
+    pointer-events: none;
 }

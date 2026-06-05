@@ -16,6 +16,7 @@ export const elements = {
     get paletteGrid() { return document.getElementById('paletteGrid'); },
     get layersList() { return document.getElementById('layersList'); },
     get framesList() { return document.getElementById('framesList'); },
+    get tmpComponentsList() { return document.getElementById('tmpComponentsList'); },
     get historyList() { return document.getElementById('historyList'); },
     get panelRight() { return document.querySelector('.panel-right'); },
     get panelRightResizer() { return document.getElementById('panelRightResizer'); },
@@ -409,12 +410,80 @@ export const elements = {
     get btnConfirmExtShp() { return document.getElementById('btnConfirmExtShp'); },
     get inpExtShpPal() { return document.getElementById('inpExtShpPal'); },
     get inpExtShpFile() { return document.getElementById('inpExtShpFile'); },
+    get cbExtShpIndex0Transparent() { return document.getElementById('cbExtShpIndex0Transparent'); },
     get menuItemExtPalettes() { return document.getElementById('menuItemExtPalettes'); },
     get extPalettesMenuDropdown() { return document.getElementById('extPalettesMenuDropdown'); },
     get layerPropsPreviewCol() { return document.getElementById('layerPropsPreviewCol'); },
     get layerPropsExternalPreview() { return document.getElementById('layerPropsExternalPreview'); },
-    get layerPropsExternalInfo() { return document.getElementById('layerPropsExternalInfo'); }
+    get layerPropsExternalInfo() { return document.getElementById('layerPropsExternalInfo'); },
 
+    // Import TMP Dialog
+    get importTmpDialog() { return document.getElementById('importTmpDialog'); },
+    get impTmpPalGrid() { return document.getElementById('impTmpPalGrid'); },
+    get btnImpTmpLoadFile() { return document.getElementById('btnImpTmpLoadFile'); },
+    get impTmpCanvas() { return document.getElementById('impTmpCanvas'); },
+    get impTmpInfo() { return document.getElementById('impTmpInfo'); },
+    get btnImpTmpPlay() { return document.getElementById('btnImpTmpPlay'); },
+    get btnImpTmpStep() { return document.getElementById('btnImpTmpStep'); },
+    get impTmpSlider() { return document.getElementById('impTmpSlider'); },
+    get impTmpCounter() { return document.getElementById('impTmpCounter'); },
+    get btnCancelImpTmp() { return document.getElementById('btnCancelImpTmp'); },
+    get btnConfirmImpTmp() { return document.getElementById('btnConfirmImpTmp'); },
+    get inpImpTmpFile() { return document.getElementById('inpImpTmpFile'); },
+    get dropZoneOverlay() { return document.getElementById('dropZoneOverlay'); }
 };
 
 window.elements = elements;
+
+export const LAND_TYPE_NAMES = {
+    0: "Clear",
+    1: "Clear",
+    2: "Ice",
+    3: "Ice",
+    4: "Ice",
+    5: "Tunnel",
+    6: "Railroad",
+    7: "Rock",
+    8: "Rock",
+    9: "Water",
+    10: "Beach",
+    11: "Road",
+    12: "Road",
+    13: "Clear",
+    14: "Rough",
+    15: "Cliff"
+};
+
+export const RAMP_TYPE_NAMES = {
+    0: "None",
+    1: "West",
+    2: "North",
+    3: "East",
+    4: "South",
+    5: "NW",
+    6: "NE",
+    7: "SE",
+    8: "SW",
+    9: "INW",
+    10: "INE",
+    11: "ISE",
+    12: "ISW",
+    13: "Steep SE",
+    14: "Steep SW",
+    15: "Steep NW",
+    16: "Steep NE",
+    17: "Double Up SWNE",
+    18: "Double Down SWNE",
+    19: "Double Up NWSE",
+    20: "Double Down NWSE"
+};
+
+export function getLandTypeName(type) {
+    const key = LAND_TYPE_NAMES[type];
+    return key ? " (" + key + ")" : "";
+}
+
+export function getRampTypeName(type) {
+    const key = RAMP_TYPE_NAMES[type];
+    return key ? " (" + key + ")" : "";
+}

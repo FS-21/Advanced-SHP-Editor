@@ -99,6 +99,12 @@ export function initExternalShpDialog(onConfirm) {
         syncFrameUI();
     };
 
+    if (elements.cbExtShpIndex0Transparent) {
+        elements.cbExtShpIndex0Transparent.onchange = () => {
+            if (extShpData) renderExternalFrame(extShpFrameIdx);
+        };
+    }
+
     // Confirm / Cancel
     elements.btnCancelExtShp.onclick = () => {
         tempOnConfirm = null;
@@ -108,12 +114,14 @@ export function initExternalShpDialog(onConfirm) {
     elements.btnConfirmExtShp.onclick = () => {
         if (!extShpData || !extShpPalette) return;
         const cb = tempOnConfirm || globalOnConfirm;
+        const index0Transparent = elements.cbExtShpIndex0Transparent ? elements.cbExtShpIndex0Transparent.checked : true;
         if (cb) {
             cb({
                 layerId: currentLayerId,
                 shpData: extShpData,
                 frameIdx: extShpFrameIdx,
-                palette: extShpPalette
+                palette: extShpPalette,
+                index0Transparent
             });
         }
         tempOnConfirm = null;
@@ -149,6 +157,12 @@ export function openExternalShpDialog(layerId, existingData = null, onConfirmOve
         extShpData = existingData.shpData || null;
         extShpFrameIdx = existingData.frameIdx || 0;
         extShpPalette = existingData.palette || new Array(256).fill(null);
+
+        // Restore the index0Transparent preference (default: true if not stored)
+        if (elements.cbExtShpIndex0Transparent) {
+            elements.cbExtShpIndex0Transparent.checked =
+                existingData.index0Transparent !== undefined ? existingData.index0Transparent : true;
+        }
     } else {
         // Load project palette as default for new external layers
         if (state.palette) {
@@ -156,6 +170,8 @@ export function openExternalShpDialog(layerId, existingData = null, onConfirmOve
         } else {
             extShpPalette = new Array(256).fill(null);
         }
+        // New layer: default checkbox to checked (treat 0 as transparent)
+        if (elements.cbExtShpIndex0Transparent) elements.cbExtShpIndex0Transparent.checked = true;
     }
 
     renderExternalPalette();
@@ -238,6 +254,8 @@ function renderExternalFrame(idx) {
     const fw = f.width, fh = f.height, fx = f.x, fy = f.y;
     const gw = extShpData.width, gh = extShpData.height;
 
+    const treatIndex0AsTransparent = elements.cbExtShpIndex0Transparent ? elements.cbExtShpIndex0Transparent.checked : true;
+
     for (let y = 0; y < fh; y++) {
         if (fy + y < 0 || fy + y >= gh) continue;
         const lineOffset = y * fw;
@@ -249,8 +267,8 @@ function renderExternalFrame(idx) {
             if (i >= indices.length) break;
 
             const colorIdx = indices[i];
-            // Color 0 is transparent for External SHP
-            if (colorIdx === 0 || colorIdx === TRANSPARENT_COLOR) continue;
+            // Color 0 is transparent for External SHP if treatIndex0AsTransparent is true
+            if (colorIdx === TRANSPARENT_COLOR || (colorIdx === 0 && treatIndex0AsTransparent)) continue;
 
             const canvasIdx = (canvasLineOffset + fx + x) * 4;
 

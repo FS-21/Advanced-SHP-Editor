@@ -4,16 +4,17 @@ import {
     showConfirm, renderCanvas,
     renderFramesList, updateLayersList, showEditorInterface,
     updateCanvasSize, addFrame, createNewProject, openFrameManager,
-    selectAll, invertSelection, copySelection, cutSelection, pasteClipboard, pasteAsNewFrame, zoomToSelection,
+    selectAll, invertSelection, copySelection, cutSelection, pasteClipboard, pasteAsNewFrame, zoomToSelection, openPasteRangeDialog, removeColorZeroFromEntireShp, fillColorZeroInEntireShp,
     updatePixelGrid, renderLayerThumbnail, setupTooltips
 } from './ui.js';
 import { openNewShpDialog, updateUIState } from './main.js';
-import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp } from './file_io.js';
+import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, loadTmpData, saveTmpData } from './file_io.js';
 import { resetImportState, syncImporterPalette } from './import_shp.js';
+import { resetTmpImportState, syncTmpImporterPalette } from './import_tmp.js';
 import { ShpFormat80 } from './shp_format.js';
 import { PcxLoader } from './pcx_loader.js';
 import { findNearestPaletteIndex, setupAutoRepeat, compositeFrame } from './utils.js';
-import { t } from './translations.js';
+import { t, applyTranslations } from './translations.js';
 import { closeAllPaletteMenus, getActivePaletteId, applyPaletteById, getMostRecentPaletteId, getPaletteName, findNodeById, applyPaletteFromEntry } from './palette_menu.js';
 import { undo, redo, pushHistory } from './history.js';
 import { deselect, deleteSelection, fillSelection } from './tools.js';
@@ -24,6 +25,8 @@ import {
 } from './image_ops.js';
 import { openSequenceEditor, initSequenceEditor } from './infantry_sequence.js';
 import { openVehicleSequenceEditor, initVehicleSequenceEditor } from './vehicle_sequence.js';
+import { saveTmpSelectedTilesToFile } from './export_helper.js';
+
 
 
 let spriteSheetFile = null;
@@ -31,7 +34,13 @@ let otherShpFile = null;
 let savedAlphaSettings = null;
 
 export function updateMenuState(hasProject) {
+    // Reset all parent menu-item-submenu containers' disabled state first
+    document.querySelectorAll('.menu-item-submenu').forEach(parent => {
+        parent.classList.remove('disabled');
+    });
+
     const actions = [
+
         'menuSave', 'menuSaveAs', 'menuExpSpriteSheet', 'menuExpRange', 'menuExpCurrent',
         'menuFrameMgr', 'menuCloseShp'
     ];
@@ -51,6 +60,9 @@ export function updateMenuState(hasProject) {
         'menuCopy': !!state.selection,
         'menuPasteActive': !!state.clipboard,
         'menuPasteNewLayer': !!state.clipboard,
+        'menuPasteNewLayerRange': !!state.clipboard,
+        'menuPasteNewLayerBottom': !!state.clipboard,
+        'menuPasteNewLayerBottomRange': !!state.clipboard,
         'menuPasteNewFrame': !!state.clipboard,
         'triggerPaste': !!state.clipboard,
         'menuFill': !!state.selection,
@@ -69,8 +81,33 @@ export function updateMenuState(hasProject) {
     imageActions.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
+            el.classList.remove('disabled-ui');
+            if ('disabled' in el) el.disabled = false;
+
+            // Clean up parent menu-item-submenu container disabled class if applicable
+            if (id === 'triggerRot90CW' || id === 'triggerRot90CCW') {
+                const parent = el.parentElement;
+                if (parent && parent.classList.contains('menu-item-submenu')) {
+                    parent.classList.remove('disabled');
+                }
+            }
+
             if (hasProject) el.classList.remove('disabled');
             else el.classList.add('disabled');
+        }
+    });
+
+    // Reset rotation submenu items to clean disabled states before selection-gated checks
+    const rotSubActions = [
+        'menuRot90CWSel', 'menuRot90CWFrame', 'menuRot90CWLayer', 'menuRot90CWAll',
+        'menuRot90CCWSel', 'menuRot90CCWFrame', 'menuRot90CCWLayer', 'menuRot90CCWAll'
+    ];
+    rotSubActions.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.classList.remove('disabled');
+            el.classList.remove('disabled-ui');
+            if ('disabled' in el) el.disabled = false;
         }
     });
 
@@ -112,15 +149,36 @@ export function updateMenuState(hasProject) {
             if (id === 'menuToggleShadowOverlay') enabled = hasProject && state.useShadows;
             if (id === 'menuToggleShadows' && state.isAlphaImageMode) enabled = false;
 
+            if (state.isTmpMode && (id === 'menuShowCenter' || id === 'menuPreview' || id === 'menuAlphaImageMode')) {
+                enabled = false;
+            }
+
             if (enabled) el.classList.remove('disabled');
             else el.classList.add('disabled');
         }
     });
 
-    // Palette Menu item - disable if in Alpha Image Mode
+    // Toolbar Preview Button state in TMP mode
+    const btnOpenPreview = document.getElementById('btnOpenPreview');
+    if (btnOpenPreview) {
+        if (state.isTmpMode) {
+            btnOpenPreview.classList.add('disabled-ui');
+            btnOpenPreview.disabled = true;
+        } else {
+            btnOpenPreview.classList.remove('disabled-ui');
+            btnOpenPreview.disabled = !hasProject;
+        }
+    }
+
+    // Palette Menu item - disable if in Alpha Image Mode, Z-Data component active, or Full Z-Data Preview active
+    const activeFrame = state.frames[state.currentFrameIdx];
+    const isZDataActive = state.tmpFullZPreviewActive ||
+        (activeFrame && activeFrame.tmpMeta && (activeFrame.tmpMeta.component === 'zdata' || activeFrame.tmpMeta.component === 'extrazdata'));
+    const disablePaletteMenu = state.isAlphaImageMode || (state.isTmpMode && isZDataActive);
+
     const palMenuItem = document.getElementById('menuItemPalettes');
     if (palMenuItem) {
-        if (state.isAlphaImageMode) {
+        if (disablePaletteMenu) {
             palMenuItem.classList.add('disabled-ui');
             palMenuItem.style.pointerEvents = 'none';
             palMenuItem.style.opacity = '0.5';
@@ -142,7 +200,7 @@ export function updateMenuState(hasProject) {
     });
 
     // Tools enabled just with a project
-    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence'];
+    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuRemoveColorZero', 'menuFillColorZero'];
     projectToolActions.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -210,11 +268,115 @@ export function updateMenuState(hasProject) {
         else trigExp.classList.add('disabled');
     }
 
+    const trigExpTmp = document.getElementById('triggerExportTmp');
+    if (trigExpTmp) {
+        if (hasProject) trigExpTmp.classList.remove('disabled');
+        else trigExpTmp.classList.add('disabled');
+    }
+
+    const tmpExportActions = [
+        'menuSaveImgMerged', 'menuSaveImgCell', 'menuSaveImgExtra', 'menuSaveImgFullCanvas',
+        'menuSaveZMerged', 'menuSaveZCell', 'menuSaveZExtra', 'menuSaveZFullCanvas'
+    ];
+    tmpExportActions.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            if (hasProject) el.classList.remove('disabled');
+            else el.classList.add('disabled');
+        }
+    });
+
     // Import trigger depends on Palette
     const trigImp = document.getElementById('triggerImport');
     if (trigImp) {
         if (hasPalette) trigImp.classList.remove('disabled');
         else trigImp.classList.add('disabled');
+    }
+
+    if (state.isTmpMode) {
+        const tmpDisabled = [
+            'menuFrameMgr', 'menuToggleShadows', 'menuFixShadows', 'menuRemoveUselessShadowPixels',
+            'menuConvertTStoRA2', 'menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence',
+            'menuResizeImage', 'menuResizeCanvasUnified', 'menuCropSelection',
+            // Export: frame-based exports don't apply to TMP structure
+            'triggerExport', 'menuExpSpriteSheet', 'menuExpRange', 'menuExpCurrent',
+            // Import: importing images would break the TMP tile structure
+            'triggerImport', 'menuImpFromImage', 'menuImpSpriteSheet', 'menuImpOtherShp',
+            'cbUseShadows', 'cbShowShadowOverlay'
+        ];
+        
+        // Disable rotation if NOT square in TMP mode
+        if (state.canvasW !== state.canvasH) {
+            tmpDisabled.push(
+                'triggerRot90CW', 'triggerRot90CCW',
+                'menuRot90CWSel', 'menuRot90CWFrame', 'menuRot90CWLayer', 'menuRot90CWAll',
+                'menuRot90CCWSel', 'menuRot90CCWFrame', 'menuRot90CCWLayer', 'menuRot90CCWAll'
+            );
+        }
+
+        tmpDisabled.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.classList.add('disabled');
+                el.classList.add('disabled-ui');
+                if ('disabled' in el) el.disabled = true;
+
+                // Disable parent menu-item-submenu container if it exists
+                const parent = el.parentElement;
+                if (parent && parent.classList.contains('menu-item-submenu')) {
+                    parent.classList.add('disabled');
+                }
+            }
+        });
+
+        // Note: wrapperUseShadows and wrapperShowShadowOverlay are hidden in TMP mode via CSS (body.tmp-mode rules)
+    }
+
+    // Swap data-i18n attributes for TMP mode
+    const suffix = state.isTmpMode ? '_tmp' : '';
+    const sidebarTitleKey = state.isTmpMode ? 'sidebar_tiles' : 'sidebar_frames';
+    
+    let needsReTranslate = false;
+    const mappings = {
+        'menuSave': 'menu_save' + suffix,
+        'menuSaveAs': 'menu_save_as' + suffix,
+        'menuCloseShp': 'menu_close' + suffix,
+        'sidebarFramesTitle': sidebarTitleKey
+    };
+    
+    Object.entries(mappings).forEach(([id, targetKey]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            const targetEl = el.querySelector('span[data-i18n]') || el;
+            if (targetEl.getAttribute('data-i18n') !== targetKey) {
+                targetEl.setAttribute('data-i18n', targetKey);
+                needsReTranslate = true;
+            }
+        }
+    });
+
+    const titleMappings = {
+        'menuSave': 'tt_menu_save' + suffix,
+        'menuSaveAs': 'tt_menu_save_as' + suffix,
+        'menuCloseShp': 'tt_menu_close' + suffix
+    };
+
+    Object.entries(titleMappings).forEach(([id, targetKey]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            const attr = el.hasAttribute('data-i18n-title') ? 'data-i18n-title' : 'data-i18n-tooltip';
+            if (el.getAttribute(attr) !== targetKey) {
+                el.setAttribute(attr, targetKey);
+                needsReTranslate = true;
+            }
+        }
+    });
+    
+    if (needsReTranslate && typeof applyTranslations === 'function') {
+        applyTranslations();
+        if (typeof setupTooltips === 'function') {
+            setupTooltips();
+        }
     }
 
     syncMenuToggles();
@@ -230,6 +392,7 @@ export function syncMenuToggles() {
         'menuGridNone': state.isoGrid === 'none',
         'menuGridTS': state.isoGrid === 'ts',
         'menuGridRA2': state.isoGrid === 'ra2',
+        'menuGameGridToggle': state.isoGrid !== 'none',
         'menuShowCenter': !!state.showCenter,
         'menuToggleShadowOverlay': !!state.showShadowOverlay,
         'menuAlphaImageMode': !!state.isAlphaImageMode
@@ -253,6 +416,35 @@ export function syncMenuToggles() {
 
     const cbOverlay = document.getElementById('cbShowShadowOverlay');
     if (cbOverlay) cbOverlay.checked = !!state.showShadowOverlay;
+
+    const cbMainRelIndex = document.getElementById('cbMainRelIndex');
+    if (cbMainRelIndex) cbMainRelIndex.checked = !!state.fmRelIndex;
+
+    const wrapperMainRelIndex = document.getElementById('wrapperMainRelIndex');
+    if (wrapperMainRelIndex) {
+        wrapperMainRelIndex.style.display = state.useShadows ? 'flex' : 'none';
+    }
+
+    // In TMP mode the game type is auto-detected; disable the View → Grid sub-entries
+    const tmpGridIds = ['menuGridNone', 'menuGridTS', 'menuGridRA2'];
+    tmpGridIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            if (state.isTmpMode) {
+                el.classList.add('menu-disabled');
+                el.style.opacity = '0.4';
+                el.style.pointerEvents = 'none';
+            } else {
+                el.classList.remove('menu-disabled');
+                el.style.opacity = '';
+                el.style.pointerEvents = '';
+            }
+        }
+    });
+
+    // Keep cbIsoGrid checkbox in sync with state.isoGrid
+    const cbIsoGrid = document.getElementById('cbIsoGrid');
+    if (cbIsoGrid) cbIsoGrid.checked = state.isoGrid !== 'none';
 }
 
 
@@ -325,10 +517,22 @@ function setupFileMenu() {
             if (elements.importShpDialog) elements.importShpDialog.showModal();
         };
     }
+
+    // Open TMP
+    const menuOpenTmp = document.getElementById('menuOpenTmp');
+    if (menuOpenTmp) {
+        menuOpenTmp.onclick = () => {
+            closeAllMenus();
+            resetTmpImportState();
+            syncTmpImporterPalette(state.palette);
+            if (elements.importTmpDialog) elements.importTmpDialog.showModal();
+        };
+    }
     // Save
     const menuSave = document.getElementById('menuSave');
     if (menuSave) {
         menuSave.onclick = () => {
+            if (menuSave.classList.contains('disabled')) return;
             closeAllMenus();
             handleSaveShp();
         };
@@ -338,8 +542,13 @@ function setupFileMenu() {
     const menuSaveAs = document.getElementById('menuSaveAs');
     if (menuSaveAs) {
         menuSaveAs.onclick = () => {
+            if (menuSaveAs.classList.contains('disabled')) return;
             closeAllMenus();
-            showExportDialog();
+            if (state.isTmpMode) {
+                saveTmpData(true);
+            } else {
+                showExportDialog();
+            }
         };
     }
 
@@ -366,6 +575,15 @@ function setupFileMenu() {
                 state.currentFrameIdx = 0;
                 state.selection = null;
                 state.floatingSelection = null;
+
+                state.isTmpMode = false;
+                state.tmpHeader = null;
+                state.originalTmpTiles = null;
+                state.tmpFilename = null;
+                document.body.classList.remove('tmp-mode');
+                document.body.classList.remove('picking-mode');
+                if (elements.btnPickReplaceSrc) elements.btnPickReplaceSrc.classList.remove('picker-active');
+                if (elements.btnPickReplaceTgt) elements.btnPickReplaceTgt.classList.remove('picker-active');
 
                 showEditorInterface();
                 updateCanvasSize();
@@ -404,6 +622,28 @@ function setupExportHandlers() {
             if (typeof showExportRangeDialog === 'function') showExportRangeDialog(true);
         };
     }
+
+    const tmpExportHandlers = {
+        'menuSaveImgMerged': () => saveTmpSelectedTilesToFile('img_merged'),
+        'menuSaveImgCell': () => saveTmpSelectedTilesToFile('img_cell'),
+        'menuSaveImgExtra': () => saveTmpSelectedTilesToFile('img_extra'),
+        'menuSaveImgFullCanvas': () => saveTmpSelectedTilesToFile('img_total'),
+        'menuSaveZMerged': () => saveTmpSelectedTilesToFile('z_merged'),
+        'menuSaveZCell': () => saveTmpSelectedTilesToFile('z_cell'),
+        'menuSaveZExtra': () => saveTmpSelectedTilesToFile('z_extra'),
+        'menuSaveZFullCanvas': () => saveTmpSelectedTilesToFile('z_total')
+    };
+
+    Object.entries(tmpExportHandlers).forEach(([id, fn]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.onclick = (e) => {
+                e.stopPropagation();
+                closeAllMenus();
+                fn();
+            };
+        }
+    });
 }
 
 function setupImportHandlers() {
@@ -691,6 +931,7 @@ function downloadBlob(blob, filename) {
 
 
 async function toggleAlphaImageMode() {
+    if (state.isTmpMode) return;
     state.isAlphaImageMode = !state.isAlphaImageMode;
 
     if (state.isAlphaImageMode) {
@@ -1187,6 +1428,9 @@ function setupEditMenu() {
         'menuCopy': () => copySelection(),
         'menuPasteActive': () => pasteClipboard(false),
         'menuPasteNewLayer': () => pasteClipboard(true),
+        'menuPasteNewLayerRange': () => openPasteRangeDialog('top'),
+        'menuPasteNewLayerBottom': () => pasteClipboard('bottom'),
+        'menuPasteNewLayerBottomRange': () => openPasteRangeDialog('bottom'),
         'menuPasteNewFrame': () => pasteAsNewFrame(),
         'menuFill': () => fillSelection(),
         'menuDelete': () => deleteSelection(),
@@ -1199,6 +1443,7 @@ function setupEditMenu() {
         const el = document.getElementById(id);
         if (el) {
             el.onclick = (e) => {
+                if (el.classList.contains('disabled')) return;
                 e.stopPropagation();
                 closeAllMenus();
                 fn();
@@ -1286,6 +1531,20 @@ function setupViewMenu() {
             syncMenuToggles();
             if (typeof window.renderPreview === 'function') window.renderPreview();
         },
+        'menuGameGridToggle': () => {
+            // TMP mode toggle: if grid is on, turn off; if off, auto-detect TS vs RA2 from tile width
+            if (state.isoGrid !== 'none') {
+                state.isoGrid = 'none';
+            } else {
+                const tileW = (state.tmpHeader && state.tmpHeader.cx) || state.canvasW || 48;
+                state.isoGrid = tileW === 60 ? 'ra2' : 'ts';
+            }
+            const cbIsoGrid = document.getElementById('cbIsoGrid');
+            if (cbIsoGrid) cbIsoGrid.checked = state.isoGrid !== 'none';
+            renderCanvas();
+            syncMenuToggles();
+            if (typeof window.renderPreview === 'function') window.renderPreview();
+        },
         'menuPreview': () => {
             closeAllMenus();
             openPreview();
@@ -1322,6 +1581,7 @@ function setupViewMenu() {
         const el = document.getElementById(id);
         if (el) {
             el.onclick = (e) => {
+                if (el.classList.contains('disabled')) return;
                 e.stopPropagation();
                 closeAllMenus();
                 fn();
@@ -2214,7 +2474,10 @@ export function setupImageMenuHandlers() {
     ops.forEach(op => {
         ['Sel', 'Frame', 'Layer', 'All'].forEach(scope => {
             const el = document.getElementById(`${op.prefix}${scope}`);
-            if (el) el.onclick = () => op.func(op.arg1, scope.toLowerCase());
+            if (el) el.onclick = () => {
+                if (el.classList.contains('disabled')) return;
+                op.func(op.arg1, scope.toLowerCase());
+            };
         });
     });
     const flats = [{ id: 'menuMergeDown', mode: 'down' }, { id: 'menuMergeAll', mode: 'all' }, { id: 'menuMergeNewLayer', mode: 'new' }];
@@ -2916,6 +3179,24 @@ export function setupToolsMenu() {
         };
     }
 
+    const removeColorZeroEl = document.getElementById('menuRemoveColorZero');
+    if (removeColorZeroEl) {
+        removeColorZeroEl.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            removeColorZeroFromEntireShp();
+        };
+    }
+
+    const fillColorZeroEl = document.getElementById('menuFillColorZero');
+    if (fillColorZeroEl) {
+        fillColorZeroEl.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            fillColorZeroInEntireShp();
+        };
+    }
+
     const ra2tsEl = document.getElementById('menuConvertRA2toTS');
     if (ra2tsEl) {
         ra2tsEl.onclick = (e) => {
@@ -3072,7 +3353,9 @@ async function openRecentFile(handle, paletteId) {
         const buf = await file.arrayBuffer();
 
         const ext = file.name.split('.').pop().toLowerCase();
-        if (ext === 'shp' || ext === 'sha') {
+        const isShp = ext === 'shp' || ext === 'sha';
+        const isTmp = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'].includes(ext);
+        if (isShp || isTmp) {
             // Restore palette: try saved palette first, fallback to most recent
             let paletteRestored = false;
             if (paletteId) {
@@ -3085,11 +3368,16 @@ async function openRecentFile(handle, paletteId) {
                 }
             }
 
-            const shp = ShpFormat80.parse(buf);
-            loadShpData(shp);
+            if (isTmp) {
+                loadTmpData(buf, file.name);
+            } else {
+                const shp = ShpFormat80.parse(buf);
+                loadShpData(shp);
+            }
 
             // Store handle for Save functionality
             window._lastShpFileHandle = handle;
+            window._lastShpFilename = file.name;
 
             // Save updated timestamp
             saveRecentFile(file.name, handle);
@@ -3129,8 +3417,12 @@ async function renderRecentFilesMenu() {
 
         div.title = `${t('lbl_file')}: ${item.name}\n${t('lbl_date')}: ${dateStr}\n${t('lbl_palette')}: ${palName}`;
 
+        const ext = item.name.split('.').pop().toLowerCase();
+        const isTmp = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'].includes(ext);
+        const iconClass = isTmp ? 'icon-tmp-file' : 'icon-shp-file';
+
         div.innerHTML = `
-            <span class="menu-icon icon-shp-file" style="align-self: flex-start; margin-top: 4px;"></span>
+            <span class="menu-icon ${iconClass}" style="align-self: flex-start; margin-top: 4px;"></span>
             <div style="display:flex; flex-direction:column; line-height:1.2; overflow:hidden;">
                 <span style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.name}</span>
                 <span style="font-size: 10px; color: #718096; font-style: italic;">${dateStr} \u00b7 ${palName}</span>

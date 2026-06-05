@@ -671,6 +671,7 @@ export function resampleLayerData(oldData, ow, oh, newW, newH, method, postProce
 }
 
 export async function resizeImage(newW, newH, method = 'nearest', postProcess = false) {
+    if (state.isTmpMode) return;
     if (!state.frames.length) return;
 
     // Recursive helper to count layers (excluding external_shp from resampling)
@@ -764,6 +765,7 @@ export async function resizeImage(newW, newH, method = 'nearest', postProcess = 
 // --- CANVAS SIZE ---
 
 export function resizeCanvas(newW, newH, anchor = 'c') {
+    if (state.isTmpMode) return;
     if (!state.frames.length) return;
 
     const oldW = state.canvasW;
@@ -839,6 +841,7 @@ export function resizeCanvasOffsets(top, bottom, left, right) {
     // top, bottom, left, right are integers (can be negative)
     // Positive = Expand, Negative = Crop
 
+    if (state.isTmpMode) return;
     if (!state.frames.length) return;
 
     const oldW = state.canvasW;
@@ -924,14 +927,16 @@ export function flipImage(axis = 'h', scope = 'frame') {
     // ── Helper: transform a single layer's full data in-place ─────────────────
     const flipLayerFull = (layer) => {
         if (!layer || !layer.data || layer.type === 'external_shp') return;
+        const lw = layer.width;
+        const lh = layer.height;
         const old = layer.data;
-        const next = new Uint16Array(w * h);
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const src = y * w + x;
+        const next = new Uint16Array(lw * lh);
+        for (let y = 0; y < lh; y++) {
+            for (let x = 0; x < lw; x++) {
+                const src = y * lw + x;
                 const dst = axis === 'h'
-                    ? y * w + (w - 1 - x)
-                    : (h - 1 - y) * w + x;
+                    ? y * lw + (lw - 1 - x)
+                    : (lh - 1 - y) * lw + x;
                 next[dst] = old[src];
             }
         }
@@ -1092,11 +1097,13 @@ export function flipImage(axis = 'h', scope = 'frame') {
     } else if (scope === 'all') {
         // Deep clone frames before mutating them to protect previous history snapshots
         state.frames = state.frames.map(f => ({
+            id: f.id,
             width: f.width,
             height: f.height,
             duration: f.duration,
             lastSelectedIdx: f.lastSelectedIdx,
             _v: f._v,
+            tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
             layers: f.layers.map(l => cloneLayerNode(l))
         }));
 
@@ -1200,19 +1207,21 @@ export function rotateImage(angle = 90, scope = 'frame') {
     // ── Helper: rotate a full layer in-place (in existing canvas bounds) ──────
     const rotateLayerFull = (layer) => {
         if (!layer || !layer.data || layer.type === 'external_shp') return;
+        const lw = layer.width;
+        const lh = layer.height;
         const old = layer.data;
         // 90° / -90° in-canvas (center-pivot, clips at canvas edges for non-square)
-        const cx = w / 2, cy = h / 2;
-        const next = new Uint16Array(w * h).fill(TRANSPARENT_COLOR);
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
+        const cx = lw / 2, cy = lh / 2;
+        const next = new Uint16Array(lw * lh).fill(TRANSPARENT_COLOR);
+        for (let y = 0; y < lh; y++) {
+            for (let x = 0; x < lw; x++) {
                 const rx = x - cx, ry = y - cy;
                 const nrx = angle === 90 ? -ry : ry;
                 const nry = angle === 90 ? rx : -rx;
                 const nx = Math.round(nrx + cx);
                 const ny = Math.round(nry + cy);
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h)
-                    next[ny * w + nx] = old[y * w + x];
+                if (nx >= 0 && nx < lw && ny >= 0 && ny < lh)
+                    next[ny * lw + nx] = old[y * lw + x];
             }
         }
         layer.data = next;
@@ -1446,33 +1455,43 @@ export function rotateImage(angle = 90, scope = 'frame') {
         // FIX: Deep clone frames before mutating them to protect previous history snapshots
         // which may contain shallow references to these live objects.
         state.frames = state.frames.map(f => ({
+            id: f.id,
             width: f.width,
             height: f.height,
             duration: f.duration,
             lastSelectedIdx: f.lastSelectedIdx,
             _v: f._v,
+            tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
             layers: f.layers.map(l => cloneLayerNode(l))
         }));
 
         state.frames.forEach(frame => {
             if (!frame) return;
-            frame.width = newW;
-            frame.height = newH;
+            const oldFW = frame.width;
+            const oldFH = frame.height;
+            const newFW = oldFH;
+            const newFH = oldFW;
+            frame.width = newFW;
+            frame.height = newFH;
             walkLayers(frame.layers, layer => {
                 if (!layer || !layer.data) return;
                 const old = layer.data;
-                const next = new Uint16Array(newW * newH).fill(TRANSPARENT_COLOR);
-                for (let y = 0; y < h; y++) {
-                    for (let x = 0; x < w; x++) {
+                const lw = layer.width;
+                const lh = layer.height;
+                const nlw = lh;
+                const nlh = lw;
+                const next = new Uint16Array(nlw * nlh).fill(TRANSPARENT_COLOR);
+                for (let y = 0; y < lh; y++) {
+                    for (let x = 0; x < lw; x++) {
                         let nx, ny;
-                        if (angle === 90) { nx = h - 1 - y; ny = x; }
-                        else { nx = y; ny = w - 1 - x; }
-                        next[ny * newW + nx] = old[y * w + x];
+                        if (angle === 90) { nx = lh - 1 - y; ny = x; }
+                        else { nx = y; ny = lw - 1 - x; }
+                        next[ny * nlw + nx] = old[y * lw + x];
                     }
                 }
                 layer.data = next;
-                layer.width = newW;
-                layer.height = newH;
+                layer.width = nlw;
+                layer.height = nlh;
             });
             frame._v = (frame._v || 0) + 1;
         });

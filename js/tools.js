@@ -911,6 +911,7 @@ export function deselect() {
 }
 
 export function cropToSelection() {
+    if (state.isTmpMode) return;
     if (!state.selection && !state.floatingSelection) return;
 
     const fs = state.floatingSelection;
