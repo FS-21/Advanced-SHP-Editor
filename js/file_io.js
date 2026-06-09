@@ -874,7 +874,7 @@ export const TMP_EXTENSIONS = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'];
  * @param {ArrayBuffer} buffer - raw file bytes
  * @param {string} filename - original filename (for Save)
  */
-export function loadTmpData(buffer, filename) {
+export function loadTmpData(buffer, filename, skipPaletteAutoselect = false) {
     console.time('TMP Initialization');
     resetFramesList();
 
@@ -889,6 +889,42 @@ export function loadTmpData(buffer, filename) {
 
     const { header, tiles } = parsed;
     const { cx, cy } = header;
+
+    // Autoselect palette if not manually selected by the user
+    if (!state.paletteSelectedManually && !skipPaletteAutoselect) {
+        const ext = filename.split('.').pop().toLowerCase();
+        let autoPaletteId = null;
+
+        if (cx === 48) {
+            if (ext === 'sno') {
+                autoPaletteId = 'game_ts_isosno';
+            } else {
+                autoPaletteId = 'game_ts_isotem';
+            }
+        } else if (cx === 60) {
+            if (ext === 'sno') {
+                autoPaletteId = 'game_ra2_isosno';
+            } else if (ext === 'urb') {
+                autoPaletteId = 'game_ra2_isourb';
+            } else if (ext === 'des') {
+                autoPaletteId = 'game_yr_isodes';
+            } else if (ext === 'ubn') {
+                autoPaletteId = 'game_yr_isoubn';
+            } else if (ext === 'lun') {
+                autoPaletteId = 'game_yr_isolun';
+            } else {
+                autoPaletteId = 'game_ra2_isotem';
+            }
+        }
+
+        if (autoPaletteId) {
+            if (typeof applyPaletteById === 'function') {
+                applyPaletteById(autoPaletteId, false);
+            } else if (window.applyPaletteById) {
+                window.applyPaletteById(autoPaletteId, false);
+            }
+        }
+    }
 
     // Activate TMP mode
     state.isTmpMode = true;

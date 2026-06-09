@@ -106,6 +106,7 @@ export const state = {
     originalTmpTiles: null,   // raw tiles[] array preserved for lossless re-encoding on save
     tmpFilename: null,        // original filename used for Save
     tmpFullZPreviewActive: false, // New: true when viewing composed Z-data full preview
+    paletteSelectedManually: false, // Tracks if user clicked/applied a palette manually in this session
 };
 
 export function generateId() {

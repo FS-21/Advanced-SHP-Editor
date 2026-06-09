@@ -3,11 +3,17 @@ import { state, TRANSPARENT_COLOR } from './state.js';
 import { SVG_PLAY_MODERN as SVG_PLAY, SVG_PAUSE_MODERN as SVG_PAUSE, SVG_STEP_FWD_MODERN as SVG_STEP_FORWARD } from './utils.js';
 import { loadTmpData } from './file_io.js';
 import { saveRecentFile } from './menu_handlers.js';
+import { getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 
 let impShpPalette = new Array(256).fill(null);
 let impShpData = null; // { width, height, frames: [] }
 let impShpFrameIdx = 0;
 let impShpTimer = null;
+let _lastImpShpPaletteNodeId = null;
+
+export function setLastImpShpPaletteNodeId(id) {
+    _lastImpShpPaletteNodeId = id;
+}
 
 export function initImportShp(onConfirm) {
     // Initialize Grid
@@ -114,7 +120,7 @@ export function initImportShp(onConfirm) {
     };
 
     elements.btnConfirmImpShp.onclick = () => {
-        if (onConfirm) onConfirm(impShpData, impShpPalette);
+        if (onConfirm) onConfirm(impShpData, impShpPalette, _lastImpShpPaletteNodeId);
         shp_stopAnimation();
         elements.importShpDialog.close();
     };
@@ -143,6 +149,31 @@ export function syncImporterPalette(palette) {
 export function resetImportState() {
     impShpData = null;
     impShpFrameIdx = 0;
+    _lastImpShpPaletteNodeId = null;
+
+    // Update button text/icon: restore active palette if one is loaded
+    const el = document.getElementById('menuItemImpPalettes');
+    if (el) {
+        const activeId = getActivePaletteId();
+        if (activeId) {
+            const lib = getLib();
+            const node = findNodeById(lib.custom, activeId);
+            if (node) {
+                updatePaletteSelectorUI('menuItemImpPalettes', node);
+            }
+        } else {
+            const btn = el.querySelector('.menu-btn');
+            if (btn) {
+                let iconContainer = btn.querySelector('.menu-icon');
+                if (iconContainer) iconContainer.innerText = '🎨';
+                const nameSpan = btn.querySelector('span:not(.menu-icon):not(.arrow)');
+                if (nameSpan) {
+                    nameSpan.innerText = 'SELECT PALETTE';
+                    nameSpan.setAttribute('data-i18n', 'btn_select_palette');
+                }
+            }
+        }
+    }
 
     // Clear Canvas
     if (elements.impShpCanvas) {

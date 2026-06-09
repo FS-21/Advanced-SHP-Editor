@@ -49,7 +49,7 @@ import { resampleLayerData, rotateBufferArbitrary, shiftColorIndex } from './ima
 import { bresenham, setupAutoRepeat } from './utils.js';
 import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData } from './file_io.js';
 import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile } from './menu_handlers.js';
-import { setupPaletteMenu } from './palette_menu.js';
+import { setupPaletteMenu, setActivePaletteId, getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
 import { initLanguageSelector } from './translations.js';
 
@@ -783,8 +783,32 @@ function setupEventListeners() {
                             for (let i = 0; i < layer.data.length; i++) {
                                 if (map.has(layer.data[i])) {
                                     layer.data[i] = map.get(layer.data[i]);
-                                }
-                            }
+    }
+
+    // Update palette button UI
+    const el = document.getElementById('menuItemNewPalettes');
+    if (el) {
+        const activeId = getActivePaletteId();
+        if (activeId) {
+            const lib = getLib();
+            const node = findNodeById(lib.custom, activeId);
+            if (node) {
+                updatePaletteSelectorUI('menuItemNewPalettes', node);
+            }
+        } else {
+            const btn = el.querySelector('.menu-btn');
+            if (btn) {
+                let iconContainer = btn.querySelector('.menu-icon');
+                if (iconContainer) iconContainer.innerText = '🎨';
+                const nameSpan = btn.querySelector('span:not(.menu-icon):not(.arrow)');
+                if (nameSpan) {
+                    nameSpan.innerText = 'SELECT PALETTE';
+                    nameSpan.setAttribute('data-i18n', 'btn_select_palette');
+                }
+            }
+        }
+    }
+}
                         }
                         if (layer.children) {
                             processLayers(layer.children);
@@ -2088,12 +2112,17 @@ function handleConfirmExternalShp({ layerId, shpData, frameIdx, palette, index0T
     renderFramesList();
 }
 
-function handleConfirmImport(impShpData, impShpPalette) {
+function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     if (!impShpData) return;
 
     // 1. Sync Palette
     state.palette = impShpPalette.map(c => c ? { ...c, locked: false } : null);
     renderPalette();
+
+    // Track palette ID so it survives dialog reopens
+    if (paletteNodeId) {
+        setActivePaletteId(paletteNodeId);
+    }
 
     // 2. Use Native Loader for Index Integrity (Loads all frames)
     loadShpData(impShpData);
@@ -2113,15 +2142,24 @@ function handleConfirmImport(impShpData, impShpPalette) {
     updateUIState();
 }
 
-function handleConfirmImportTmp(buffer, filename, impTmpPalette) {
+function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelectedManually, paletteNodeId) {
     if (!buffer) return;
 
     // 1. Sync Palette
     state.palette = impTmpPalette.map(c => c ? { ...c, locked: false } : null);
     renderPalette();
 
+    if (paletteSelectedManually) {
+        state.paletteSelectedManually = true;
+    }
+
+    // Track palette ID so it survives dialog reopens
+    if (paletteNodeId) {
+        setActivePaletteId(paletteNodeId);
+    }
+
     // 2. Load TMP Data
-    loadTmpData(buffer, filename);
+    loadTmpData(buffer, filename, true);
     if (filename) {
         window._lastTmpFilename = filename;
     }
@@ -2168,6 +2206,7 @@ export function openNewShpDialog() {
     if (hasValidPalette) {
         // Clone safely: Handle nulls to avoid { ...null } which results in {}
         tempNewShpPalette = state.palette.map(c => c ? { ...c } : null);
+        window._tempNewShpPaletteId = getActivePaletteId();
         renderPaletteSimple(tempNewShpPalette, palPreview);
         if (palInfo) palInfo.innerText = "Current Project Palette";
 
@@ -2181,6 +2220,7 @@ export function openNewShpDialog() {
         }
     } else {
         tempNewShpPalette = null;
+        window._tempNewShpPaletteId = null;
         renderPaletteSimple([], palPreview); // Clear preview
         if (palInfo) palInfo.innerText = "No palette loaded";
 
@@ -2191,6 +2231,30 @@ export function openNewShpDialog() {
             btnCreate.style.opacity = '0.5';
             btnCreate.style.cursor = 'not-allowed';
             btnCreate.style.pointerEvents = 'none'; // Prevent any clicks
+        }
+    }
+
+    // Update palette button UI
+    const el = document.getElementById('menuItemNewPalettes');
+    if (el) {
+        const activeId = getActivePaletteId();
+        if (activeId) {
+            const lib = getLib();
+            const node = findNodeById(lib.custom, activeId);
+            if (node) {
+                updatePaletteSelectorUI('menuItemNewPalettes', node);
+            }
+        } else {
+            const btn = el.querySelector('.menu-btn');
+            if (btn) {
+                let iconContainer = btn.querySelector('.menu-icon');
+                if (iconContainer) iconContainer.innerText = '🎨';
+                const nameSpan = btn.querySelector('span:not(.menu-icon):not(.arrow)');
+                if (nameSpan) {
+                    nameSpan.innerText = 'SELECT PALETTE';
+                    nameSpan.setAttribute('data-i18n', 'btn_select_palette');
+                }
+            }
         }
     }
 }
@@ -2252,6 +2316,11 @@ function initNewShpDialog() {
             if (confirmed) {
                 const finalPal = window.tempNewShpPalette || tempNewShpPalette;
                 createNewProject(w, h, f, useShadows, finalPal, comp, solidStart);
+
+                if (window._tempNewShpPaletteId) {
+                    setActivePaletteId(window._tempNewShpPaletteId);
+                    window._tempNewShpPaletteId = null;
+                }
 
                 // Sync toolbar checkbox
                 const cbShadows = document.getElementById('cbUseShadows');
