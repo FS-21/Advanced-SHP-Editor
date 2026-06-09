@@ -21,7 +21,7 @@ import { elements } from './constants.js';
 import { initImportShp, syncImporterPalette, resetImportState } from './import_shp.js';
 import { initImportTmp, syncTmpImporterPalette, resetTmpImportState } from './import_tmp.js';
 import { ShpFormat80 } from './shp_format.js';
-import { initHistoryHooks, undo, redo, pushHistory } from './history.js';
+import { initHistoryHooks, undo, redo, pushHistory, resetHistoryForFreshOpen } from './history.js';
 import {
     updateCanvasSize, renderCanvas, renderOverlay,
     updateLayersList, renderFramesList, renderPalette,
@@ -2110,12 +2110,9 @@ function handleConfirmExternalShp({ layerId, shpData, frameIdx, palette, index0T
 function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     if (!impShpData) return;
 
-    // Only create new tab if current tab already has data
-    const currentTab = state.tabs[state.activeTabIndex];
-    const hasCurrentData = currentTab.isTmpMode ? !!currentTab.originalTmpTiles : currentTab.frames.length > 0;
-    if ((hasCurrentData || currentTab.isNewProject) && typeof createNewTab === 'function') {
-        createNewTab();
-    }
+    // SHP Editor: always load into the current tab (no auto-new-tab).
+    // The tab system already provides explicit "+" / File > New / context
+    // menu options for the user to manage tabs as they see fit.
 
     // 1. Sync Palette
     state.palette = impShpPalette.map(c => c ? { ...c, locked: false } : null);
@@ -2134,9 +2131,7 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     }
 
     // 3. Update UI
-    pushHistory("all");
-    state.savedHistoryPtr = state.historyPtr;
-    state.hasChanges = false;
+    resetHistoryForFreshOpen();
 
     // 4. Save to Recent Files (if FSAPI handle available)
     if (window._lastShpFileHandle && impShpData.filename) {
@@ -2150,12 +2145,9 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
 function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelectedManually, paletteNodeId) {
     if (!buffer) return;
 
-    // Only create new tab if current tab already has data
-    const currentTab = state.tabs[state.activeTabIndex];
-    const hasCurrentData = currentTab.isTmpMode ? !!currentTab.originalTmpTiles : currentTab.frames.length > 0;
-    if ((hasCurrentData || currentTab.isNewProject) && typeof createNewTab === 'function') {
-        createNewTab();
-    }
+    // SHP Editor: always load into the current tab (no auto-new-tab).
+    // The tab system already provides explicit "+" / File > New / context
+    // menu options for the user to manage tabs as they see fit.
 
     // 1. Sync Palette
     state.palette = impTmpPalette.map(c => c ? { ...c, locked: false } : null);
@@ -2178,9 +2170,7 @@ function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelected
     }
 
     // 3. Update UI
-    pushHistory("all");
-    state.savedHistoryPtr = state.historyPtr;
-    state.hasChanges = false;
+    resetHistoryForFreshOpen();
 
     // 4. Save to Recent Files (if FSAPI handle available)
     if (window._lastTmpFileHandle && filename) {
@@ -2573,14 +2563,11 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
         const buffer = preloadedBuffer || await file.arrayBuffer();
         const type = detectFileType(buffer);
 
-        // Only create new tab if current tab already has data
-        const currentTab = state.tabs[state.activeTabIndex];
-        const hasCurrentData = currentTab.isTmpMode ? !!currentTab.originalTmpTiles : currentTab.frames.length > 0;
-        if ((hasCurrentData || currentTab.isNewProject) && typeof createNewTab === 'function') {
-            const newTab = createNewTab();
-            if (newTab && handle) {
-                newTab.fileHandle = handle;
-            }
+        // SHP Editor: always load into the current tab (no auto-new-tab).
+        // The tab system already provides explicit "+" / File > New / context
+        // menu options for the user to manage tabs as they see fit.
+        if (handle && state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].fileHandle = handle;
         }
 
         if (type === 'tmp') {
@@ -2589,9 +2576,7 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
             window._lastShpFilename = file.name;
             window._lastShpFileHandle = handle;
             state.fileHandle = handle;
-            pushHistory("all");
-            state.savedHistoryPtr = state.historyPtr;
-            state.hasChanges = false;
+            resetHistoryForFreshOpen();
             if (typeof updateUIState === 'function') updateUIState();
             console.log(`[FileOpen] Loaded TMP via Drag&Drop: ${file.name}`);
             return true;
@@ -2602,9 +2587,7 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
             window._lastShpFilename = file.name;
             window._lastShpFileHandle = handle;
             state.fileHandle = handle;
-            pushHistory("all");
-            state.savedHistoryPtr = state.historyPtr;
-            state.hasChanges = false;
+            resetHistoryForFreshOpen();
             if (typeof updateUIState === 'function') updateUIState();
             console.log(`[FileOpen] Loaded SHP via Drag&Drop: ${file.name}`);
             return true;

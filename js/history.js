@@ -104,6 +104,83 @@ export function cloneLayerNode(node) {
     return cloned;
 }
 
+/**
+ * Resets the undo/redo history to a single "fresh open" entry. Use this
+ * after loading a new file (Open, Open Recent, drag&drop, Import). It
+ * prevents the user from Ctrl+Z-ing the file away — the newly opened
+ * document is the only history entry, and it is marked as the saved state.
+ */
+export function resetHistoryForFreshOpen() {
+    clearThumbCaches();
+    // Truncate any pending redo entries, then push the current state as the
+    // only history entry.
+    if (state.historyPtr < state.history.length - 1) {
+        state.history = state.history.slice(0, state.historyPtr + 1);
+    }
+
+    // Build a fresh snapshot of the current state.
+    state.frames.forEach(f => {
+        if (!f.id) f.id = Math.random().toString(36).substr(2, 9);
+    });
+    const framesSnapshot = state.frames.map((f) => {
+        const newV = (f._v || 0) + 1;
+        f._v = newV;
+        return {
+            id: f.id,
+            width: f.width,
+            height: f.height,
+            duration: f.duration,
+            lastSelectedIdx: f.lastSelectedIdx,
+            _v: newV,
+            tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
+            layers: f.layers.map(l => cloneLayerNode(l))
+        };
+    });
+
+    let selectionSnapshot = null;
+    if (state.selection) {
+        selectionSnapshot = { ...state.selection };
+        if (state.selection.maskData) {
+            selectionSnapshot.maskData = new Uint8Array(state.selection.maskData);
+        }
+    }
+
+    let floatingSnapshot = null;
+    if (state.floatingSelection) {
+        floatingSnapshot = { ...state.floatingSelection };
+        if (state.floatingSelection.data) {
+            floatingSnapshot.data = state.floatingSelection.data.slice();
+        }
+        if (state.floatingSelection.maskData) {
+            floatingSnapshot.maskData = new Uint8Array(state.floatingSelection.maskData);
+        }
+        if (state.floatingSelection.originalData) {
+            floatingSnapshot.originalData = state.floatingSelection.originalData.slice();
+        }
+        if (state.floatingSelection.originalMaskData) {
+            floatingSnapshot.originalMaskData = new Uint8Array(state.floatingSelection.originalMaskData);
+        }
+    }
+
+    state.history = [{
+        frames: framesSnapshot,
+        selection: selectionSnapshot,
+        floatingSelection: floatingSnapshot,
+        canvasW: state.canvasW,
+        canvasH: state.canvasH,
+        activeLayerId: state.activeLayerId,
+        currentFrameIdx: state.currentFrameIdx,
+        tmpFullZPreviewActive: !!state.tmpFullZPreviewActive,
+        palette: state.palette.map(c => c ? { ...c } : null)
+    }];
+    state.historyPtr = 0;
+    state.savedHistoryPtr = 0;
+    state.hasChanges = false;
+
+    if (window.renderTabs) window.renderTabs();
+    renderHistory();
+    if (hook_updateUIState) hook_updateUIState(state.frames.length > 0);
+}
 
 
 export function pushHistory(modifiedFrameIndices = null) {

@@ -16,7 +16,7 @@ import { PcxLoader } from './pcx_loader.js';
 import { findNearestPaletteIndex, setupAutoRepeat, compositeFrame } from './utils.js';
 import { t, applyTranslations } from './translations.js';
 import { closeAllPaletteMenus, getActivePaletteId, applyPaletteById, getMostRecentPaletteId, getPaletteName, findNodeById, applyPaletteFromEntry } from './palette_menu.js';
-import { undo, redo, pushHistory } from './history.js';
+import { undo, redo, pushHistory, resetHistoryForFreshOpen } from './history.js';
 import { deselect, deleteSelection, fillSelection } from './tools.js';
 import { renderPaletteSimple } from './ui.js';
 import {
@@ -3402,10 +3402,15 @@ async function openRecentFile(handle, paletteId, openInNewTab = false) {
             // Update tab name
             if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
 
-            // Mark as saved
-            if (typeof pushHistory === 'function') pushHistory("all");
-            state.savedHistoryPtr = state.historyPtr;
-            state.hasChanges = false;
+            // Reset history so the freshly opened file is the only entry
+            // (Ctrl+Z will not erase the file).
+            if (typeof resetHistoryForFreshOpen === 'function') {
+                resetHistoryForFreshOpen();
+            } else if (typeof pushHistory === 'function') {
+                pushHistory("all");
+                state.savedHistoryPtr = state.historyPtr;
+                state.hasChanges = false;
+            }
 
             // Store handle for Save functionality
             window._lastShpFileHandle = handle;
