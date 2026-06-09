@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v1.5.2';</script>
+    <script>const APP_VERSION = 'v2.0';</script>
     <script>
         let CnCReloadedMode = true;
         document.addEventListener("DOMContentLoaded", () => {
@@ -26,6 +26,7 @@
         href="data:image/svg+xml,%3Csvg width='64' height='64' viewBox='0 0 64 64' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='64' height='64' rx='14' fill='%230d0e12'/%3E%3Cg stroke='%2300ff9d' stroke-width='0.3' opacity='0.3'%3E%3Crect x='10' y='28' width='44' height='32' rx='1' stroke-width='1' opacity='0.6'/%3E%3Cpath d='M14 28V60 M18 28V60 M22 28V60 M26 28V60 M30 28V60 M34 28V60 M38 28V60 M42 28V60 M46 28V60 M50 28V60' /%3E%3Cpath d='M10 32H54 M10 36H54 M10 40H54 M10 44H54 M10 48H54 M10 52H54 M10 56H54' /%3E%3C/g%3E%3Cg transform='translate(26, 32)'%3E%3Crect x='2' y='0' width='4' height='2' fill='%23ff0000' /%3E%3Crect x='2' y='2' width='2' height='2' fill='%23ffcc99' /%3E%3Crect x='0' y='4' width='2' height='4' fill='%23111' /%3E%3Crect x='2' y='4' width='4' height='6' fill='%234d5d30'/%3E%3Crect x='6' y='4' width='2' height='4' fill='%23ffcc99'/%3E%3Crect x='2' y='10' width='2' height='6' fill='%234d5d30'/%3E%3Crect x='4' y='10' width='2' height='6' fill='%23333'/%3E%3Crect x='2' y='16' width='4' height='2' fill='%23000'/%3E%3C/g%3E%3Ctext x='32' y='22' text-anchor='middle' fill='%23ffffff' font-family='Verdana, sans-serif' font-weight='950' font-size='22' letter-spacing='-1'%3EASE%3C/text%3E%3C/svg%3E">
     <script>document.title = `Advanced SHP Editor ${APP_VERSION}`;</script>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="refinements.css">
     <script>
         class MiniZip {
             constructor() { this.files = []; }
@@ -186,6 +187,48 @@
         <div class="splash-credits"><span data-i18n="lbl_by">By</span> FS-21</div>
     </div>
     <div id="app">
+        <!-- TAB BAR (Chrome style) -->
+        <div id="tabBar">
+            <div class="tab-nav-btn" id="btnPrevTab" data-i18n-title="tt_prev_tab">◀</div>
+            <div class="tab-scroll-btn" id="tabScrollLeft">‹</div>
+            <div id="tabsContainer">
+                <!-- Tabs will be rendered here via JS -->
+            </div>
+            <button class="new-tab-btn" id="btnNewTab" data-i18n-title="tt_new_tab">+</button>
+            <div class="tab-scroll-btn" id="tabScrollRight">›</div>
+            <div class="tab-nav-btn" id="btnNextTab" data-i18n-title="tt_next_tab">▶</div>
+
+            <div class="tabs-dropdown-btn" id="tabsDropdownBtn" data-i18n-title="tt_tab_list">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="5" r="2.5" />
+                    <circle cx="12" cy="12" r="2.5" />
+                    <circle cx="12" cy="19" r="2.5" />
+                </svg>
+            </div>
+
+            <!-- Tab List Dropdown -->
+            <div id="tabsDropdown">
+                <div class="tabs-search-container">
+                    <input type="text" id="tabsSearchInput" data-i18n-placeholder="lbl_search_tabs"
+                        placeholder="Search tabs..." autocomplete="off">
+                    <span class="tabs-search-clear" id="tabsSearchClear">&times;</span>
+                </div>
+                <div class="tabs-list-container" id="tabsListContainer">
+                    <!-- Tab list items go here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Context Menu -->
+        <div id="tabContextMenu" class="context-menu">
+            <div class="context-menu-item" id="ctxNewTab" data-i18n="ctx_new_tab">Create New Tab</div>
+            <div class="context-menu-item" id="ctxDuplicateTab" data-i18n="ctx_duplicate_tab">Duplicate Tab</div>
+            <div class="context-menu-item" id="ctxReopenTab" data-i18n="ctx_reopen_tab">Reopen last closed tab</div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" id="ctxCloseOthers" data-i18n="ctx_close_others">Close other tabs</div>
+            <div class="context-menu-item" id="ctxCloseTab" data-i18n="ctx_close_tab">Close tab</div>
+        </div>
+
         <!-- TOP TOOLBAR -->
         <div id="topBar">
             <div id="mainMenu" class="menu-bar">

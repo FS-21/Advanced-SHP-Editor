@@ -174,6 +174,11 @@ export function applyPaletteFromEntry(entry, isManual = true) {
 
         state.paletteVersion++; // Signal UI to refresh thumbnails
         _appliedPaletteId = entry.id;
+        // Track applied palette id per tab so the selector UI matches the
+        // current tab when switching between tabs.
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].appliedPaletteId = entry.id;
+        }
         recordUsage(entry);
         refreshPalettesMenuDynamic();
     } catch (e) {
@@ -289,7 +294,7 @@ export function updatePaletteSelectorUI(menuItemSelectorId, node) {
     if (!el) return;
     const btn = el.querySelector('.menu-btn');
     if (!btn) return;
-    
+
     // Find or create the icon container
     let iconContainer = btn.querySelector('.menu-icon');
     if (!iconContainer) {
@@ -297,11 +302,11 @@ export function updatePaletteSelectorUI(menuItemSelectorId, node) {
         iconContainer.className = 'menu-icon';
         btn.insertBefore(iconContainer, btn.firstChild);
     }
-    
+
     // Clear current icon and category class
     iconContainer.innerHTML = '';
     iconContainer.className = 'menu-icon';
-    
+
     // Determine category
     let category = null;
     if (node) {
@@ -313,7 +318,7 @@ export function updatePaletteSelectorUI(menuItemSelectorId, node) {
             else if (node.id.startsWith('game_cncreloaded_')) category = 'cncreloaded';
         }
     }
-    
+
     if (category) {
         const svg = _createGameIconSvg(category, 14);
         if (svg) {
@@ -323,15 +328,34 @@ export function updatePaletteSelectorUI(menuItemSelectorId, node) {
             iconContainer.innerText = '🎨';
         }
     } else {
+        // No palette applied: show default palette emoji
         iconContainer.innerText = '🎨';
     }
 
     // Also update name span if present
     const nameSpan = btn.querySelector('span[data-i18n="menu_palette"]') || btn.querySelector('span[data-i18n="btn_select_palette"]') || btn.querySelector('span:not(.menu-icon):not(.arrow)');
-    if (nameSpan && node) {
-        nameSpan.innerText = node.name;
-        // Remove translation attribute to prevent translation system from overwriting
-        nameSpan.removeAttribute('data-i18n');
+    if (nameSpan) {
+        if (node && node.name) {
+            // Remember the original i18n key the first time we override
+            if (!nameSpan.hasAttribute('data-original-i18n') && nameSpan.hasAttribute('data-i18n')) {
+                nameSpan.setAttribute('data-original-i18n', nameSpan.getAttribute('data-i18n'));
+            }
+            nameSpan.innerText = node.name;
+            // Remove translation attribute to prevent translation system from overwriting
+            nameSpan.removeAttribute('data-i18n');
+        } else {
+            // No palette applied: restore the original i18n key and the
+            // translated default label (e.g. "Select Palette").
+            const originalKey = nameSpan.getAttribute('data-original-i18n') || 'menu_palette';
+            nameSpan.setAttribute('data-i18n', originalKey);
+            // Translate synchronously using the t() helper to avoid waiting for
+            // a language-change event.
+            if (typeof t === 'function') {
+                nameSpan.innerText = t(originalKey);
+            } else {
+                nameSpan.innerText = '';
+            }
+        }
     }
 }
 
@@ -1682,7 +1706,6 @@ export function setupPaletteMenu() {
                     e.stopPropagation();
 
                     const wasActive = el.classList.contains('active');
-                    console.log(`TRACE: Toggle menu ${id}, wasActive: ${wasActive}`);
 
                     closeAllPaletteMenus();
 
@@ -1702,7 +1725,7 @@ export function setupPaletteMenu() {
                         dropdown.style.width = Math.max(rect.width, 320) + 'px';
                         dropdown.style.pointerEvents = 'auto';
 
-                        console.log(`TRACE: Menu ${id} OPENED`);
+
                     }
                 };
             }
@@ -1737,6 +1760,25 @@ export function getActivePaletteId() {
 export function setActivePaletteId(id) {
     _appliedPaletteId = id;
 }
+
+/**
+ * Sync the SELECT PALETTE selector UI and the global _appliedPaletteId with
+ * the active tab. Called from switchTab so that the displayed palette name
+ * matches the palette of the tab the user is now viewing.
+ */
+export function syncPaletteSelector() {
+    const activeTab = state.activeTabIndex >= 0 ? state.tabs[state.activeTabIndex] : null;
+    const paletteId = activeTab ? activeTab.appliedPaletteId : null;
+    _appliedPaletteId = paletteId || null;
+
+    const lib = getLib();
+    const node = paletteId ? findNodeById(lib.custom, paletteId) : null;
+
+    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes'].forEach(id => {
+        updatePaletteSelectorUI(id, node);
+    });
+}
+window.syncPaletteSelector = syncPaletteSelector;
 
 export function getActivePaletteName() {
     if (!_appliedPaletteId) return null;

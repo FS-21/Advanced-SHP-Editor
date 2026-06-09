@@ -562,37 +562,43 @@ function setupFileMenu() {
     }
 
 
-    // Close SHP
+    // Close SHP / Close TMP — closes the active tab (delegates to closeTab so
+    // the unsaved-changes prompt only fires when state.hasChanges is true).
     const menuCloseShp = document.getElementById('menuCloseShp');
     if (menuCloseShp) {
         menuCloseShp.onclick = async () => {
             closeAllMenus();
-            if (!state.frames || state.frames.length === 0) return;
+            const hasData = state.isTmpMode ? !!state.originalTmpTiles : (state.frames && state.frames.length > 0);
+            if (!hasData) return;
 
-            const confirmed = await showConfirm(t('dlg_confirm_title'), t('msg_confirm_close_shp') || "Are you sure? Any unsaved changes will be lost.");
-            if (confirmed) {
-                state.frames = [];
-                state.currentFrameIdx = 0;
-                state.selection = null;
-                state.floatingSelection = null;
+            if (typeof window.closeTab === 'function') {
+                await window.closeTab(state.activeTabIndex);
+            } else {
+                // Fallback: legacy behavior with a forced confirm
+                const confirmed = await showConfirm(t('dlg_confirm_title'), t('msg_confirm_close_shp') || "Are you sure? Any unsaved changes will be lost.");
+                if (confirmed) {
+                    state.frames = [];
+                    state.currentFrameIdx = 0;
+                    state.selection = null;
+                    state.floatingSelection = null;
 
-                state.isTmpMode = false;
-                state.tmpHeader = null;
-                state.originalTmpTiles = null;
-                state.tmpFilename = null;
-                document.body.classList.remove('tmp-mode');
-                document.body.classList.remove('picking-mode');
-                if (elements.btnPickReplaceSrc) elements.btnPickReplaceSrc.classList.remove('picker-active');
-                if (elements.btnPickReplaceTgt) elements.btnPickReplaceTgt.classList.remove('picker-active');
+                    state.isTmpMode = false;
+                    state.tmpHeader = null;
+                    state.originalTmpTiles = null;
+                    state.tmpFilename = null;
+                    document.body.classList.remove('tmp-mode');
+                    document.body.classList.remove('picking-mode');
+                    if (elements.btnPickReplaceSrc) elements.btnPickReplaceSrc.classList.remove('picker-active');
+                    if (elements.btnPickReplaceTgt) elements.btnPickReplaceTgt.classList.remove('picker-active');
 
-                showEditorInterface();
-                updateCanvasSize();
-                renderCanvas();
-                renderFramesList();
-                updateLayersList();
-                updateUIState();
+                    showEditorInterface();
+                    updateCanvasSize();
+                    renderCanvas();
+                    renderFramesList();
+                    updateLayersList();
+                    updateUIState();
+                }
             }
-
         };
     }
 }
@@ -3340,7 +3346,7 @@ async function clearRecentFiles() {
     }
 }
 
-async function openRecentFile(handle, paletteId) {
+async function openRecentFile(handle, paletteId, openInNewTab = false) {
     try {
         // Request permission
         const perm = await handle.requestPermission({ mode: 'read' });
@@ -3356,7 +3362,25 @@ async function openRecentFile(handle, paletteId) {
         const isShp = ext === 'shp' || ext === 'sha';
         const isTmp = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'].includes(ext);
         if (isShp || isTmp) {
-            // Restore palette: try saved palette first, fallback to most recent
+            // SHP Editor: by default load into the current tab. The user can
+            // request a new tab explicitly (middle-click on a recent-files entry).
+            // Exception: if there is a single empty tab, ignore the new-tab
+            // request and reuse it, so we don't leave an orphan empty tab.
+            if (openInNewTab && typeof createNewTab === 'function') {
+                const isSingleEmptyTab = state.tabs.length === 1 &&
+                    state.tabs[0] &&
+                    !state.tabs[0].isTmpMode &&
+                    state.tabs[0].frames.length === 0 &&
+                    !state.tabs[0].isNewProject;
+                if (!isSingleEmptyTab) {
+                    createNewTab(null, true);
+                }
+            }
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].fileHandle = handle;
+            }
+
+            // Apply palette AFTER tab creation, so it targets the new active tab
             let paletteRestored = false;
             if (paletteId) {
                 paletteRestored = applyPaletteById(paletteId);
@@ -3374,6 +3398,14 @@ async function openRecentFile(handle, paletteId) {
                 const shp = ShpFormat80.parse(buf);
                 loadShpData(shp);
             }
+
+            // Update tab name
+            if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
+
+            // Mark as saved
+            if (typeof pushHistory === 'function') pushHistory("all");
+            state.savedHistoryPtr = state.historyPtr;
+            state.hasChanges = false;
 
             // Store handle for Save functionality
             window._lastShpFileHandle = handle;
@@ -3415,7 +3447,7 @@ async function renderRecentFilesMenu() {
         const palName = getPaletteName(item.paletteId) || t('lbl_default');
         const dateStr = new Date(item.timestamp).toLocaleString();
 
-        div.title = `${t('lbl_file')}: ${item.name}\n${t('lbl_date')}: ${dateStr}\n${t('lbl_palette')}: ${palName}`;
+        div.title = `${t('lbl_file')}: ${item.name}\n${t('lbl_date')}: ${dateStr}\n${t('lbl_palette')}: ${palName}\n\n${t('lbl_middle_click_hint') || 'Middle-click: open in new tab'}`;
 
         const ext = item.name.split('.').pop().toLowerCase();
         const isTmp = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'].includes(ext);
@@ -3430,7 +3462,16 @@ async function renderRecentFilesMenu() {
         `;
         div.onclick = (e) => {
             e.stopPropagation();
-            openRecentFile(item.handle, item.paletteId);
+            openRecentFile(item.handle, item.paletteId, false);
+        };
+        // Middle mouse button -> open the file in a new tab instead of the
+        // current tab. Mirrors the behavior of browsers' "open in new tab".
+        div.onauxclick = (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                e.stopPropagation();
+                openRecentFile(item.handle, item.paletteId, true);
+            }
         };
         submenu.appendChild(div);
     }

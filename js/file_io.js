@@ -110,9 +110,9 @@ export function loadShpData(shp) {
         state.activeLayerId = state.frames[0].layers[0].id;
     }
 
-    state.history = [];
-    state.historyPtr = -1;
-    // pushHistory(); // Deferred: Don't snapshot immediately to save 57MB*N RAM
+    // Note: state.history and state.historyPtr are managed by the caller
+    // (e.g. openRecentFile, import dialog handlers) so that per-tab history
+    // is preserved when loading into a new tab.
 
     // Reset UI and Frame Manager State completely
     state.selection = null;
@@ -145,15 +145,12 @@ export function loadShpData(shp) {
 }
 
 export function parsePaletteBuffer(buffer) {
-    console.log("TRACE: parsePaletteBuffer called with buffer size:", buffer.byteLength);
-
     const palette = Array.from({ length: 256 }, () => ({r:0, g:0, b:0}));
 
     // Try to decode as text first to check for JASC
     const txt = new TextDecoder().decode(buffer);
 
     if (txt.startsWith("JASC-PAL")) {
-        console.log("TRACE: Format detected -> JASC-PAL");
         // JASC-PAL Format
         const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
         let pIdx = 0;
@@ -170,9 +167,7 @@ export function parsePaletteBuffer(buffer) {
                 }
             }
         }
-        console.log("TRACE: JASC-PAL parsed colors count:", pIdx);
     } else if (buffer.byteLength === 768) {
-        console.log("TRACE: Format detected -> BINARY GAME (768 bytes)");
         // Binary GAME Format (768 bytes = 256 * 3)
         // Values are 0-63 (VGA), need to shift left by 2 to get 0-255
         const view = new Uint8Array(buffer);
@@ -188,9 +183,7 @@ export function parsePaletteBuffer(buffer) {
                 b: (b6 << 2) | (b6 >> 4)
             };
         }
-        console.log("TRACE: Binary parsing complete.");
     } else {
-        console.error("TRACE: Unknown format. Buffer size:", buffer.byteLength);
         throw new Error("Unknown palette format. Expected JASC-PAL or 768-byte binary.");
     }
     return palette;
@@ -331,6 +324,9 @@ export async function handleSaveShp() {
         const newHandle = await exportFrameList(filename, state.frames, compression, window._lastShpFileHandle);
         if (newHandle) {
             window._lastShpFileHandle = newHandle;
+            state.savedHistoryPtr = state.historyPtr;
+            state.hasChanges = false;
+            if (window.renderTabs) window.renderTabs();
             showPasteNotification(`✅ Saved: ${filename}`, 'success', 2500);
         }
     } else {
@@ -355,10 +351,12 @@ export async function handleExportShp() {
     const newHandle = await exportFrameList(filename, state.frames, compression);
     if (newHandle) {
         window._lastShpFileHandle = newHandle;
+        state.savedHistoryPtr = state.historyPtr;
+        state.hasChanges = false;
+        if (window.renderTabs) window.renderTabs();
         showPasteNotification(`✅ Saved as: ${newHandle.name}`, 'success', 2500);
     }
 }
-
 
 export async function handleFrameDrop(files) {
     if (!files || files.length === 0) return;
@@ -1016,9 +1014,9 @@ export function loadTmpData(buffer, filename, skipPaletteAutoselect = false) {
         state.canvasH = cy;
     }
 
-    // Reset editor history and selection
-    state.history = [];
-    state.historyPtr = -1;
+    // Note: state.history and state.historyPtr are managed by the caller
+    // (e.g. openRecentFile, import dialog handlers) so that per-tab history
+    // is preserved when loading into a new tab.
     state.selection = null;
     state.floatingSelection = null;
     state.useShadows = false;
@@ -1154,6 +1152,10 @@ export async function saveTmpData(forceSaveAs = false) {
             const writable = await window._lastShpFileHandle.createWritable();
             await writable.write(blob);
             await writable.close();
+
+            state.savedHistoryPtr = state.historyPtr;
+            state.hasChanges = false;
+            if (window.renderTabs) window.renderTabs();
             
             const t = state.translations;
             const msg = (t && t.msg_tmp_saved)
@@ -1178,6 +1180,10 @@ export async function saveTmpData(forceSaveAs = false) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
+        state.savedHistoryPtr = state.historyPtr;
+        state.hasChanges = false;
+        if (window.renderTabs) window.renderTabs();
+
         const t = state.translations;
         const msg = (t && t.msg_tmp_saved)
             ? t.msg_tmp_saved.replace('{filename}', filename)
@@ -1199,6 +1205,9 @@ export async function saveTmpData(forceSaveAs = false) {
                 await writable.close();
                 window._lastShpFileHandle = handle;
                 state.tmpFilename = handle.name;
+                state.savedHistoryPtr = state.historyPtr;
+                state.hasChanges = false;
+                if (window.renderTabs) window.renderTabs();
                 
                 showPasteNotification(`✅ Saved as: ${handle.name}`, 'success', 2500);
             } catch (err) {

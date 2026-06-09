@@ -52,6 +52,7 @@ import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, sav
 import { setupPaletteMenu, setActivePaletteId, getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
 import { initLanguageSelector } from './translations.js';
+import { initTabs, updateCurrentTabName, createNewTab, closeTab } from './tabs.js';
 
 
 // Toggle UI visibility based on whether project is loaded
@@ -89,6 +90,10 @@ export function updateUIState() {
 
     // Update menu state (enabled/disabled actions)
     updateMenuState(hasProject);
+
+    // Update tabs visual state
+    if (window.renderTabs) window.renderTabs();
+    if (window.renderTabList) window.renderTabList();
 }
 
 
@@ -97,9 +102,9 @@ function init() {
     window.state = state;
     try {
 
-        console.log("TRACE: init started");
-        
         initLanguageSelector(); // Init translations
+
+        initTabs(); // Initialize Chrome-like tabs
 
         // Refresh UI when language changes (for dynamically rendered components)
         window.addEventListener('languagechange', () => {
@@ -124,36 +129,24 @@ function init() {
             renderFramesList, updateLayersList, startAnts, stopAnts, updateUIState
         );
 
-        console.log("TRACE: Hooks initialized");
         renderPalette();
-        console.log("TRACE: Palette rendered");
         setupZoomOptions();
-        console.log("TRACE: Zoom options setup");
         setupEventListeners();
-        console.log("TRACE: Event listeners setup");
         initMenu();
         setupImageMenuHandlers();
-        console.log("TRACE: Menu initialized");
         setupMultiFrameOps();
         initPasteRangeDialog();
-        console.log("TRACE: MultiFrameOps setup");
 
         // createNewProject(state.canvasW || 60, state.canvasH || 48); // Removed to allow empty state
-        console.log("TRACE: project created");
 
         updateCanvasSize(); // Ensure wrapper is hidden initially
-        console.log("TRACE: Canvas size updated");
 
         // Initial render
         renderReplaceGrid();
-        console.log("TRACE: replaceGrid rendered");
         setupReplacePreviewListeners();
-        console.log("TRACE: Replace preview listeners setup");
         initPanelResizing();
-        console.log("TRACE: Panel resizing initialized");
 
         initNewShpDialog();
-        console.log("TRACE: New SHP Dialog initialized");
 
         initFrameManager(); // Initialize Frame Manager
         setupSubmenusRecursive(); // Initialize universal submenu hover logic
@@ -161,27 +154,20 @@ function init() {
         setupToolbarOverflow(); // Initialize dynamic toolbar overflow logic
 
         initImportShp(handleConfirmImport);
-        console.log("TRACE: Import SHP initialized");
-        
+
         initImportTmp(handleConfirmImportTmp);
-        console.log("TRACE: Import TMP initialized");
 
         initExternalShpDialog(handleConfirmExternalShp);
-        console.log("TRACE: External SHP initialized");
 
         initPreviewWindow();
-        console.log("TRACE: Preview Window initialized");
 
         setupPaletteMenu();
-        console.log("TRACE: Palette Menu initialized");
 
         initRecentFiles();
-        console.log("TRACE: Recent Files initialized");
 
         renderOverlay(); // Initialize selection button states
         updateUIState(); // Set initial state (disabled menus if no project)
         setupColorShiftUIListeners();
-        console.log("TRACE: init finished");
 
 
         // Splash Screen Logic
@@ -1665,8 +1651,13 @@ function setupEventListeners() {
             state.dragStart = null;
             state.dragStartFloating = null;
             setIsDrawing(false);
-            if (hasChanged) {
-                pushHistory(); // Capture the new position, scale, or rotation
+
+            // Commit the floating selection (merges pixels at new position)
+            // This is needed so undo properly restores the original pixel positions
+            if (state.floatingSelection && typeof commitSelection === 'function') {
+                commitSelection();
+            } else if (hasChanged) {
+                pushHistory();
             }
             updateLayersList();
             renderFramesList();
@@ -1824,7 +1815,6 @@ function setupEventListeners() {
                 });
                 state.frames[state.currentFrameIdx]._v = (state.frames[state.currentFrameIdx]._v || 0) + 1;
                 renderCanvas();
-                pushHistory();
             }
         }
 
@@ -1838,12 +1828,17 @@ function setupEventListeners() {
                 fillRectangle(layer, lastPos.x, lastPos.y, x, y, colorIdx, state.toolSettings.squareFill, state.toolSettings.squareFillColor, state.toolSettings.brushSize);
                 state.frames[state.currentFrameIdx]._v = (state.frames[state.currentFrameIdx]._v || 0) + 1;
                 renderCanvas();
-                pushHistory();
             }
         }
 
         // Push history for continuous drawing tools and fill after stroke is complete
         if (activeTool === 'pencil' || activeTool === 'eraser' || activeTool === 'spray' || activeTool === 'fill') {
+            if (isDrawing) {
+                pushHistory();
+            }
+        }
+        // Finalize rect/line with a single history entry
+        if (activeTool === 'rect' || activeTool === 'line') {
             if (isDrawing) {
                 pushHistory();
             }
@@ -2115,6 +2110,13 @@ function handleConfirmExternalShp({ layerId, shpData, frameIdx, palette, index0T
 function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     if (!impShpData) return;
 
+    // Only create new tab if current tab already has data
+    const currentTab = state.tabs[state.activeTabIndex];
+    const hasCurrentData = currentTab.isTmpMode ? !!currentTab.originalTmpTiles : currentTab.frames.length > 0;
+    if ((hasCurrentData || currentTab.isNewProject) && typeof createNewTab === 'function') {
+        createNewTab();
+    }
+
     // 1. Sync Palette
     state.palette = impShpPalette.map(c => c ? { ...c, locked: false } : null);
     renderPalette();
@@ -2127,11 +2129,14 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     // 2. Use Native Loader for Index Integrity (Loads all frames)
     loadShpData(impShpData);
     if (impShpData.filename) {
+        if (typeof updateCurrentTabName === 'function') updateCurrentTabName(impShpData.filename);
         window._lastShpFilename = impShpData.filename;
     }
 
     // 3. Update UI
     pushHistory("all");
+    state.savedHistoryPtr = state.historyPtr;
+    state.hasChanges = false;
 
     // 4. Save to Recent Files (if FSAPI handle available)
     if (window._lastShpFileHandle && impShpData.filename) {
@@ -2144,6 +2149,13 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
 
 function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelectedManually, paletteNodeId) {
     if (!buffer) return;
+
+    // Only create new tab if current tab already has data
+    const currentTab = state.tabs[state.activeTabIndex];
+    const hasCurrentData = currentTab.isTmpMode ? !!currentTab.originalTmpTiles : currentTab.frames.length > 0;
+    if ((hasCurrentData || currentTab.isNewProject) && typeof createNewTab === 'function') {
+        createNewTab();
+    }
 
     // 1. Sync Palette
     state.palette = impTmpPalette.map(c => c ? { ...c, locked: false } : null);
@@ -2161,11 +2173,14 @@ function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelected
     // 2. Load TMP Data
     loadTmpData(buffer, filename, true);
     if (filename) {
+        if (typeof updateCurrentTabName === 'function') updateCurrentTabName(filename);
         window._lastTmpFilename = filename;
     }
 
     // 3. Update UI
     pushHistory("all");
+    state.savedHistoryPtr = state.historyPtr;
+    state.hasChanges = false;
 
     // 4. Save to Recent Files (if FSAPI handle available)
     if (window._lastTmpFileHandle && filename) {
@@ -2320,6 +2335,12 @@ function initNewShpDialog() {
                 if (window._tempNewShpPaletteId) {
                     setActivePaletteId(window._tempNewShpPaletteId);
                     window._tempNewShpPaletteId = null;
+                }
+
+                // Update tab name
+                state.newFileCounter++;
+                if (typeof updateCurrentTabName === 'function') {
+                    updateCurrentTabName(`New File ${state.newFileCounter}`, true);
                 }
 
                 // Sync toolbar checkbox
@@ -2552,11 +2573,23 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
         const buffer = preloadedBuffer || await file.arrayBuffer();
         const type = detectFileType(buffer);
 
+        // Only create new tab if current tab already has data
+        const currentTab = state.tabs[state.activeTabIndex];
+        const hasCurrentData = currentTab.isTmpMode ? !!currentTab.originalTmpTiles : currentTab.frames.length > 0;
+        if ((hasCurrentData || currentTab.isNewProject) && typeof createNewTab === 'function') {
+            const newTab = createNewTab();
+            if (newTab && handle) {
+                newTab.fileHandle = handle;
+            }
+        }
+
         if (type === 'tmp') {
             loadTmpData(buffer, file.name);
+            if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
             window._lastShpFilename = file.name;
             window._lastShpFileHandle = handle;
             state.fileHandle = handle;
+            pushHistory("all");
             state.savedHistoryPtr = state.historyPtr;
             state.hasChanges = false;
             if (typeof updateUIState === 'function') updateUIState();
@@ -2565,9 +2598,11 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
         } else if (type === 'shp') {
             const shp = ShpFormat80.parse(buffer);
             loadShpData(shp);
+            if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
             window._lastShpFilename = file.name;
             window._lastShpFileHandle = handle;
             state.fileHandle = handle;
+            pushHistory("all");
             state.savedHistoryPtr = state.historyPtr;
             state.hasChanges = false;
             if (typeof updateUIState === 'function') updateUIState();
@@ -2613,7 +2648,9 @@ document.addEventListener('drop', async (e) => {
         return;
     }
 
-    // Scan the files and process the FIRST valid SHP or TMP file
+    // Scan the files and process ALL valid SHP or TMP files
+    const initialTab = (state.tabs && state.tabs.length === 1) ? state.tabs[0] : null;
+    let anyLoaded = false;
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         try {
@@ -2626,13 +2663,15 @@ document.addEventListener('drop', async (e) => {
                         handle = await items[i].getAsFileSystemHandle();
                     }
                 } catch (err) {}
-                await processSystemFileOpen(file, handle, buffer);
-                return; // Stop immediately after processing the first valid project file
+                const success = await processSystemFileOpen(file, handle, buffer);
+                if (success) anyLoaded = true;
             }
         } catch (err) {
             console.error("Error reading file in selection:", file.name, err);
         }
     }
+
+    if (anyLoaded) return;
 
     alert(`No se detectó ningún archivo SHP o TMP válido entre los elementos arrastrados. Asegúrese de que sea un archivo SHP o TMP válido, o imágenes PNG/PCX si tiene un proyecto activo.`);
 });

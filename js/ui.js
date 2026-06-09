@@ -2167,16 +2167,10 @@ export function resetFramesList() {
 
 // --- PALETTE RENDERING ---
 export function renderPalette() {
-    console.log("TRACE: renderPalette called. elements.paletteGrid:", elements.paletteGrid);
     if (!elements.paletteGrid) {
-        console.error("TRACE: elements.paletteGrid is MISSING from DOM!");
-        // Force check
-        const pGrid = document.getElementById('paletteGrid');
-        console.log("TRACE: Manual getElementById('paletteGrid') returns:", pGrid);
         return;
     }
     elements.paletteGrid.innerHTML = '';
-    console.log("TRACE: paletteGrid cleared. state.palette.length:", state.palette.length);
 
     // Create cells (256 normally, only 2 in Shadows mode when on a shadow frame)
     const isShadowFrame = state.useShadows && (state.currentFrameIdx >= state.frames.length / 2);
@@ -3001,6 +2995,14 @@ export async function showChoice(title, message, label1, label2) {
 }
 
 export function createNewProject(w, h, frames = 1, useShadows = false, palette = null, compression = 3, solidStart = true) {
+    // Reset TMP mode if active
+    state.isTmpMode = false;
+    state.tmpHeader = null;
+    state.originalTmpTiles = null;
+    state.tmpFilename = null;
+    state.tmpFullZPreviewActive = false;
+    state.gameType = 'ra2';
+
     state.canvasW = w;
     state.canvasH = h;
     state.useShadows = useShadows;

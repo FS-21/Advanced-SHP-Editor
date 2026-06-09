@@ -104,48 +104,12 @@ export function cloneLayerNode(node) {
     return cloned;
 }
 
-/**
- * Safety net: ensures a frame's layers are fully independent (not shared with any snapshot).
- * Call this before directly mutating layer data on a frame, if pushHistory was NOT called first.
- * If _cowPending is false, this is a no-op.
- */
-export function ensureCOWDetached(frameIdx) {
-    const f = state.frames[frameIdx];
-    if (!f || !f._cowPending) return;
-    state.frames[frameIdx] = {
-        id: f.id,
-        width: f.width,
-        height: f.height,
-        duration: f.duration,
-        lastSelectedIdx: f.lastSelectedIdx,
-        _v: f._v,
-        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
-        layers: f.layers.map(l => cloneLayerNode(l))
-    };
-}
+
 
 export function pushHistory(modifiedFrameIndices = null) {
     clearThumbCaches();
     if (state.historyPtr < state.history.length - 1) {
         state.history = state.history.slice(0, state.historyPtr + 1);
-    }
-
-    // Determine which frames to clone
-    let framesToClone = new Set();
-    if (modifiedFrameIndices === 'all') {
-        state.frames.forEach((_, i) => framesToClone.add(i));
-    } else if (modifiedFrameIndices === 'reorder') {
-        // Do not add any frames to clone - just structural reorder
-    } else if (modifiedFrameIndices !== null) {
-        if (Array.isArray(modifiedFrameIndices)) {
-            modifiedFrameIndices.forEach(idx => framesToClone.add(idx));
-        } else if (typeof modifiedFrameIndices === 'number') {
-            framesToClone.add(modifiedFrameIndices);
-        }
-    } else {
-        if (state.currentFrameIdx >= 0 && state.currentFrameIdx < state.frames.length) {
-            framesToClone.add(state.currentFrameIdx);
-        }
     }
 
     // Special case for selection-only history points
@@ -174,8 +138,6 @@ export function pushHistory(modifiedFrameIndices = null) {
     }
 
     let framesSnapshot;
-    // For selection-only history points, reuse the entire frames array from the previous snapshot
-    // since no pixel data has changed — just the active frame/layer changed
     if (isSelectionOnly && prevSnapshot && prevSnapshot.frames.length === state.frames.length) {
         // FAST PATH: selection only, we trust the frames are the same (no deletions or additions happened)
         framesSnapshot = prevSnapshot.frames;
@@ -185,71 +147,23 @@ export function pushHistory(modifiedFrameIndices = null) {
             if (!f.id) f.id = Math.random().toString(36).substr(2, 9);
         });
 
-        // Build a lookup map from previous snapshot for O(1) access by frame ID
-        let prevFrameMap = null;
-        if (prevSnapshot) {
-            prevFrameMap = new Map();
-            prevSnapshot.frames.forEach((pf, idx) => {
-                if (pf.id) prevFrameMap.set(pf.id, pf);
-            });
-        }
-
+        // ALWAYS deep-clone every frame. This is slower but guarantees
+        // that undo correctly restores previous states — the COW path
+        // could leak the previous snapshot's layers into the live frame
+        // after a draw → undo → draw cycle, breaking the oldest undo entry.
         framesSnapshot = state.frames.map((f, i) => {
-            let prevFrame = null;
-            if (prevFrameMap) {
-                prevFrame = prevFrameMap.get(f.id) || null;
-            }
-
-            if (framesToClone.has(i) || !prevFrame) {
-                const newV = (f._v || 0) + 1;
-
-                if (f._cowPending) {
-                    // COW path: layers are shared with a snapshot from restoreHistory.
-                    // Save the shared layers reference to this new snapshot (immutable, safe to share).
-                    // Deep-clone layers only for the LIVE frame (which will be mutated).
-                    const snapshotFrame = {
-                        id: f.id,
-                        width: f.width,
-                        height: f.height,
-                        duration: f.duration,
-                        lastSelectedIdx: f.lastSelectedIdx,
-                        _v: newV,
-                        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
-                        layers: f.layers // shared reference for snapshot (immutable)
-                    };
-
-                    // COW-detach: replace live frame with deep-cloned layers
-                    state.frames[i] = {
-                        id: f.id,
-                        width: f.width,
-                        height: f.height,
-                        duration: f.duration,
-                        lastSelectedIdx: f.lastSelectedIdx,
-                        _v: newV,
-                        tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
-                        layers: f.layers.map(l => cloneLayerNode(l))
-                        // no _cowPending — this frame is now fully independent
-                    };
-
-                    return snapshotFrame;
-                }
-
-                // Normal path: frame is already independent, deep clone for snapshot
-                // (live frame keeps its layers and will be mutated by the caller)
-                f._v = newV; // bump version on live frame
-                return {
-                    id: f.id,
-                    width: f.width,
-                    height: f.height,
-                    duration: f.duration,
-                    lastSelectedIdx: f.lastSelectedIdx,
-                    _v: newV,
-                    tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
-                    layers: f.layers.map(l => cloneLayerNode(l))
-                };
-            }
-            // Inherit the STABLE reference from the previous history entry by ID
-            return prevFrame;
+            const newV = (f._v || 0) + 1;
+            f._v = newV; // bump version on live frame
+            return {
+                id: f.id,
+                width: f.width,
+                height: f.height,
+                duration: f.duration,
+                lastSelectedIdx: f.lastSelectedIdx,
+                _v: newV,
+                tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
+                layers: f.layers.map(l => cloneLayerNode(l))
+            };
         });
     }
 
@@ -294,7 +208,9 @@ export function pushHistory(modifiedFrameIndices = null) {
     const projectSize = state.frames.length * state.canvasW * state.canvasH;
     let historyLimit;
 
-    // COW architecture uses VERY little memory per snapshot, so we can afford much larger limits.
+    // Each snapshot deep-clones every frame's layers, so memory grows linearly
+    // with the limit × frames × pixels. The limit is kept conservative for
+    // large projects and generous for small ones.
     if (projectSize > 500000000) {
         historyLimit = 100;
     } else if (projectSize > 200000000) {
@@ -302,7 +218,7 @@ export function pushHistory(modifiedFrameIndices = null) {
     } else if (projectSize > 50000000) {
         historyLimit = 300;
     } else {
-        historyLimit = 500;
+        historyLimit = 1500;
     }
 
     // Log warning if history limit was reduced
@@ -318,25 +234,46 @@ export function pushHistory(modifiedFrameIndices = null) {
         state.historyPtr++;
     }
 
+    // Update "hasChanges" and Tab visual state
+    // Don't mark as dirty for non-modifying operations (selection/navigation/reorder)
+    const isNonModifying = (modifiedFrameIndices === 'reorder') ||
+        (Array.isArray(modifiedFrameIndices) && modifiedFrameIndices.length === 0);
+    if (!isNonModifying) {
+        const wasChanged = state.hasChanges;
+        state.hasChanges = (state.historyPtr !== state.savedHistoryPtr);
+
+        if (wasChanged !== state.hasChanges) {
+            if (window.renderTabs) window.renderTabs();
+        }
+    }
+
     renderHistory();
     if (hook_updateUIState) hook_updateUIState(state.frames.length > 0);
 }
 
 export function undo() {
-    console.log("DEBUG: Undo triggered, ptr:", state.historyPtr);
-    if (state.historyPtr > 0) {
+    if (state.historyPtr > 0 && state.historyPtr < state.history.length) {
         state.historyPtr--;
         restoreHistory(state.history[state.historyPtr]);
-        // updateUIState is already called inside restoreHistory
+
+        // Update dirty flag
+        state.hasChanges = (state.historyPtr !== state.savedHistoryPtr);
+        if (window.renderTabs) window.renderTabs();
+
+        if (hook_updateUIState) hook_updateUIState();
     }
 }
 
 export function redo() {
-    console.log("DEBUG: Redo triggered, ptr:", state.historyPtr, "of", state.history.length);
-    if (state.historyPtr < state.history.length - 1) {
+    if (state.historyPtr >= 0 && state.historyPtr < state.history.length - 1) {
         state.historyPtr++;
         restoreHistory(state.history[state.historyPtr]);
-        // updateUIState is already called inside restoreHistory
+        
+        // Update dirty flag
+        state.hasChanges = (state.historyPtr !== state.savedHistoryPtr);
+        if (window.renderTabs) window.renderTabs();
+        
+        if (hook_updateUIState) hook_updateUIState();
     }
 }
 
@@ -350,14 +287,10 @@ export function restoreHistory(snapshot) {
     const isNewFormat = snapshot && !Array.isArray(snapshot) && snapshot.frames;
     const frames = isNewFormat ? snapshot.frames : snapshot;
 
-    // PERFORMANCE FIX — COW (Copy-on-Write) restore.
-    // Instead of deep-cloning ALL frames' layers (the old bottleneck),
-    // create lightweight wrappers that SHARE the layers array by reference.
-    // The layers are safe to share because snapshot data is immutable.
-    // When pushHistory is called later for a modified frame, it will
-    // COW-detach (deep-clone) only that frame's layers before mutation.
-    //
-    // Result: restore is O(N) shallow copies instead of O(N × layers × pixels).
+    // Restore: copy the snapshot's frames into the live state.
+    // The snapshot itself is NOT modified (it's the history entry).
+    // Each frame's layers are deep-cloned so the live state is fully
+    // independent of the snapshot. We re-bump _v for thumbnail invalidation.
     state.frames = frames.map((f, i) => ({
         id: f.id,
         width: f.width,
@@ -366,8 +299,7 @@ export function restoreHistory(snapshot) {
         lastSelectedIdx: f.lastSelectedIdx,
         _v: (f._v || 0) + 1, // Bump _v for thumbnail invalidation
         tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
-        layers: f.layers,     // SHARE by reference (COW — will be cloned on next push)
-        _cowPending: true     // Flag: layers are shared with snapshot, clone before mutating
+        layers: f.layers.map(l => cloneLayerNode(l))
     }));
 
     if (isNewFormat) {
@@ -430,5 +362,4 @@ export function restoreHistory(snapshot) {
     renderFrameManager();
     renderHistory();
     if (hook_updateUIState) hook_updateUIState(state.frames.length > 0);
-    console.log("[History] Restore complete. UI refreshed.");
 }

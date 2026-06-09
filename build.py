@@ -54,6 +54,7 @@ JS_ORDER = [
     'infantry_sequence.js',
     'vehicle_sequence.js',
     'menu_handlers.js',
+    'tabs.js',
     'main.js'
 ]
 
@@ -173,11 +174,18 @@ def bundle():
         print(f"[OK] Build ID injected: {ts}")
 
     # 2. Embed CSS
-    print(f"Embedding {CSS_FILE}...")
+    print(f"Embedding {CSS_FILE} and refinements.css...")
     css_content = read_file(CSS_FILE)
+    if os.path.exists(os.path.join(COMPONENT_DIR, 'refinements.css')):
+        css_content += "\n" + read_file(os.path.join(COMPONENT_DIR, 'refinements.css'))
     html_content = html_content.replace(
         '<link rel="stylesheet" href="styles.css">',
         f'<style>\n{css_content}\n</style>'
+    )
+    # Also remove refinements.css link if present since it's merged above
+    html_content = html_content.replace(
+        '<link rel="stylesheet" href="refinements.css">',
+        ''
     )
     
     # 3. Bundle JS
