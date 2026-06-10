@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v2.0.1';</script>
+    <script>const APP_VERSION = 'v2.1';</script>
     <script>
         let CnCReloadedMode = true;
         document.addEventListener("DOMContentLoaded", () => {
@@ -775,6 +775,11 @@
                                 style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🚜</span><span
                                 data-i18n="menu_vehicle_sequence">Vehicle
                                 Sequence...</span>
+                        </div>
+                        <div id="menuAresCustomFoundation" class="menu-action" data-i18n-title="tt_menu_ares_foundation">
+                            <span class="menu-icon"
+                                style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🏛️</span><span
+                                data-i18n="menu_ares_foundation">Ares Custom Foundation...</span>
                         </div>
                     </div> <!-- End of menu-dropdown -->
                 </div> <!-- End of menuItemTools -->
@@ -3570,6 +3575,62 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </dialog>
+
+    <!-- ARES CUSTOM FOUNDATION EDITOR -->
+    <dialog id="aresEditorDialog" class="dialog-modal"
+        style="width:100%; height:100dvh; max-width:100%; max-height:100dvh; margin:0; padding:0; border:none; border-radius:0; background:var(--bg-panel); overflow:hidden;">
+        <div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+        <div class="panel-header" style="justify-content:space-between; padding:10px 15px 0 15px;">
+            <h3 data-i18n="dlg_ares_foundation">Ares Custom Foundation</h3>
+            <button id="aresBtnClose" class="close-modal close-modal-x">×</button>
+        </div>
+        <div style="display:flex; flex-direction:column; flex:1; overflow:hidden; padding:15px; gap:12px;">
+            <div style="display:flex; align-items:center; gap:15px; flex-wrap:wrap;">
+                <div class="radio-group" style="display:flex; gap:10px;">
+                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" data-i18n-title="tt_ares_mode_foundation">
+                        <input type="radio" name="aresMode" value="foundation" checked>
+                        <span data-i18n="ares_mode_foundation" style="color:#00ff66; font-weight:bold;">Foundation (Green)</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" data-i18n-title="tt_ares_mode_outline">
+                        <input type="radio" name="aresMode" value="outline">
+                        <span data-i18n="ares_mode_outline" style="color:#ff9900; font-weight:bold;">Outline (Orange)</span>
+                    </label>
+                </div>
+                <div style="display:flex; gap:8px; margin-left:auto;">
+                    <button id="aresBtnCopyDesign" class="btn btn-primary" data-i18n="ares_btn_copy_design" data-i18n-title="tt_ares_btn_copy_design">Copy Design</button>
+                    <button id="aresBtnAutoOutline" class="btn" data-i18n="ares_btn_auto_outline" data-i18n-title="tt_ares_btn_auto_outline">Auto Outline</button>
+                    <button id="aresBtnClear" class="btn btn-danger" data-i18n="ares_btn_clear" data-i18n-title="tt_ares_btn_clear">Clear All</button>
+                </div>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; font-size:12px;">
+                <div id="aresWidthStepper"></div>
+                <div id="aresHeightStepper"></div>
+                <div style="display:flex; flex-direction:column; gap:4px; min-width:240px; flex:1;">
+                    <label class="seq-num-label" data-i18n="ares_lbl_building_name" data-i18n-title="tt_ares_lbl_building_name">Building name</label>
+                    <input type="text" id="aresBuildingName" class="seq-input" placeholder="SOME_BUILDING">
+                </div>
+            </div>
+
+            <div style="display:flex; flex:1; gap:12px; min-height:0;">
+                <div style="flex:0 0 auto; width:350px; max-width:40%; display:flex; flex-direction:column; min-height:0;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+                        <label data-i18n="ares_lbl_code" style="font-weight:bold; font-size:12px;">Generated INI Code:</label>
+                        <button id="aresBtnCopyCode" class="btn btn-primary" style="margin-left:auto;" data-i18n="ares_btn_copy_code" data-i18n-title="tt_ares_btn_copy_code">Copy Code</button>
+                    </div>
+                    <textarea id="aresCode" readonly style="flex:1 1 0; min-height:0; width:100%; background:#16171d; color:#00ff9d; font-family:monospace; font-size:12px; padding:10px; border:1px solid var(--border); border-radius:2px; resize:none; box-sizing:border-box;"></textarea>
+                    <div style="font-size:11px; color:#718096; margin-top:6px;" data-i18n="ares_hint">
+                        Hint: Click cells to paint. Cells outside the dimension (margin) will always be Outline.
+                    </div>
+                </div>
+
+                <div id="aresCanvasScroll" style="flex:1 1 0; min-width:0; min-height:0; overflow:auto; border:1px solid var(--border); border-radius:2px; display:block;">
+                    <canvas id="aresCanvas" style="cursor: crosshair; display:block;"></canvas>
+                </div>
+            </div>
+        </div>
         </div>
     </dialog>
 

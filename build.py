@@ -53,6 +53,7 @@ JS_ORDER = [
     'palette_menu.js',
     'infantry_sequence.js',
     'vehicle_sequence.js',
+    'ares_foundation.js',
     'menu_handlers.js',
     'tabs.js',
     'main.js'

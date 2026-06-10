@@ -25,6 +25,7 @@ import {
 } from './image_ops.js';
 import { openSequenceEditor, initSequenceEditor } from './infantry_sequence.js';
 import { openVehicleSequenceEditor, initVehicleSequenceEditor } from './vehicle_sequence.js';
+import { openAresFoundationEditor, initAresFoundation } from './ares_foundation.js';
 import { saveTmpSelectedTilesToFile } from './export_helper.js';
 
 
@@ -200,7 +201,7 @@ export function updateMenuState(hasProject) {
     });
 
     // Tools enabled just with a project
-    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuRemoveColorZero', 'menuFillColorZero'];
+    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation', 'menuRemoveColorZero', 'menuFillColorZero'];
     projectToolActions.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -296,7 +297,7 @@ export function updateMenuState(hasProject) {
     if (state.isTmpMode) {
         const tmpDisabled = [
             'menuFrameMgr', 'menuToggleShadows', 'menuFixShadows', 'menuRemoveUselessShadowPixels',
-            'menuConvertTStoRA2', 'menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence',
+            'menuConvertTStoRA2', 'menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation',
             'menuResizeImage', 'menuResizeCanvasUnified', 'menuCropSelection',
             // Export: frame-based exports don't apply to TMP structure
             'triggerExport', 'menuExpSpriteSheet', 'menuExpRange', 'menuExpCurrent',
@@ -849,6 +850,15 @@ function showImportOtherShpDialog() {
 
 function setupSteppers() {
     document.querySelectorAll('.stepper-ui, .input-stepper').forEach(stepper => {
+        // Skip if this stepper already had setupAutoRepeat bound to its
+        // buttons — for example, the Ares Foundation steppers created
+        // dynamically by aresCreateStepper, which setupToolsMenu() runs
+        // before setupSteppers(). Without this guard every mousedown on
+        // those buttons would invoke action() twice and the value would
+        // jump by 2 per click.
+        if (stepper.dataset.autoRepeatBound === '1') return;
+        stepper.dataset.autoRepeatBound = '1';
+
         const input = stepper.querySelector('input');
         const btnDec = stepper.querySelector('button:first-of-type');
         const btnInc = stepper.querySelector('button:last-of-type');
@@ -3230,6 +3240,19 @@ export function setupToolsMenu() {
         };
     }
 
+    const aresEl = document.getElementById('menuAresCustomFoundation');
+    if (aresEl) {
+        aresEl.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            // Defensive guard: this tool only makes sense in SHP mode.
+            if (state.isTmpMode) return;
+            if (typeof openAresFoundationEditor === 'function') {
+                openAresFoundationEditor();
+            }
+        };
+    }
+
     const vseqEl = document.getElementById('menuVehicleSequence');
     if (vseqEl) {
         vseqEl.onclick = (e) => {
@@ -3242,6 +3265,7 @@ export function setupToolsMenu() {
     // Init sequence editor events (once)
     initSequenceEditor();
     initVehicleSequenceEditor();
+    initAresFoundation();
 }
 
 // ============================================================
