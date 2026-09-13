@@ -88,6 +88,7 @@ export function updateCanvasSize() {
     }
 
     updatePixelGrid();
+    syncZoomUI();
 
     const ctx = elements.bgCtx;
     if (ctx) {
@@ -395,10 +396,16 @@ export function handleReplacePickerInput(colorIdx) {
             }
             state.multiPickCounter++;
         } else {
-            // No selection: Auto-create or append new pair
-            const newPair = { srcIdx: null, tgtIdx: null };
-            newPair[idxProp] = colorIdx;
-            state.replacePairs.push(newPair);
+            // Find next existing row with an empty slot for this side
+            const targetRow = state.replacePairs.find(p => p[idxProp] === null || p[idxProp] === undefined);
+            if (targetRow) {
+                targetRow[idxProp] = colorIdx;
+            } else {
+                // No row with empty slot for this side: append new pair
+                const newPair = { srcIdx: null, tgtIdx: null };
+                newPair[idxProp] = colorIdx;
+                state.replacePairs.push(newPair);
+            }
         }
 
         renderReplaceGrid();
@@ -684,11 +691,26 @@ export function renderCanvas() {
 
         // Refresh menus (rotation, tools etc. should be disabled/updated)
         if (typeof updateMenuState === 'function') updateMenuState(state.frames.length > 0);
+        if (state.showFrameColors || state.showAllFramesColors) updatePaletteUsedMarks();
         return;
     }
 
     const frame = state.frames[state.currentFrameIdx];
-    if (!frame) return;
+    if (!frame) {
+        if (elements.ctx && elements.mainCanvas) {
+            elements.ctx.clearRect(0, 0, elements.mainCanvas.width, elements.mainCanvas.height);
+        }
+        if (elements.bgCanvas) {
+            const bgCtx = elements.bgCanvas.getContext('2d');
+            if (bgCtx) bgCtx.clearRect(0, 0, elements.bgCanvas.width, elements.bgCanvas.height);
+        }
+        if (elements.overlayCanvas) {
+            const oCtx = elements.overlayCanvas.getContext('2d');
+            if (oCtx) oCtx.clearRect(0, 0, elements.overlayCanvas.width, elements.overlayCanvas.height);
+        }
+        if (typeof updateMenuState === 'function') updateMenuState(false);
+        return;
+    }
 
     const ctx = elements.ctx;
     const w = state.canvasW;
@@ -910,6 +932,7 @@ export function renderCanvas() {
     updateActiveLayerPreview();
     // Refresh all selection-gated menu items (Cut, Copy, Flip Sel, Rotate Sel, etc.)
     if (typeof updateMenuState === 'function') updateMenuState(state.frames.length > 0);
+    if (state.showFrameColors || state.showAllFramesColors) updatePaletteUsedMarks();
 }
 
 /**
@@ -1131,26 +1154,47 @@ function _renderExternalShpLayersToCtx(layers, ctx, canvasW, canvasH, parentMask
 
 
 export function setupReplacePreviewListeners() {
-    const btn = elements.btnPreviewReplace;
-    if (!btn) return;
+    const btnAffects = elements.btnPreviewReplace;
+    if (btnAffects) {
+        const startPreview = (e) => {
+            if (e.cancelable) e.preventDefault();
+            state.isReplacePreviewActive = true;
+            renderCanvas();
+        };
 
-    const startPreview = (e) => {
-        if (e.cancelable) e.preventDefault();
-        state.isReplacePreviewActive = true;
-        renderCanvas();
-    };
+        const stopPreview = (e) => {
+            if (e.cancelable) e.preventDefault();
+            state.isReplacePreviewActive = false;
+            renderCanvas();
+        };
 
-    const stopPreview = (e) => {
-        if (e.cancelable) e.preventDefault();
-        state.isReplacePreviewActive = false;
-        renderCanvas();
-    };
+        btnAffects.addEventListener('mousedown', startPreview);
+        btnAffects.addEventListener('mouseup', stopPreview);
+        btnAffects.addEventListener('mouseleave', stopPreview);
+        btnAffects.addEventListener('touchstart', startPreview, { passive: false });
+        btnAffects.addEventListener('touchend', stopPreview, { passive: false });
+    }
 
-    btn.addEventListener('mousedown', startPreview);
-    btn.addEventListener('mouseup', stopPreview);
-    btn.addEventListener('mouseleave', stopPreview);
-    btn.addEventListener('touchstart', startPreview, { passive: false });
-    btn.addEventListener('touchend', stopPreview, { passive: false });
+    const btnChanges = elements.btnPreviewReplaceChanges;
+    if (btnChanges) {
+        const startChangesPreview = (e) => {
+            if (e.cancelable) e.preventDefault();
+            state.isPreviewingReplacement = true;
+            renderCanvas();
+        };
+
+        const stopChangesPreview = (e) => {
+            if (e.cancelable) e.preventDefault();
+            state.isPreviewingReplacement = false;
+            renderCanvas();
+        };
+
+        btnChanges.addEventListener('mousedown', startChangesPreview);
+        btnChanges.addEventListener('mouseup', stopChangesPreview);
+        btnChanges.addEventListener('mouseleave', stopChangesPreview);
+        btnChanges.addEventListener('touchstart', startChangesPreview, { passive: false });
+        btnChanges.addEventListener('touchend', stopChangesPreview, { passive: false });
+    }
 }
 
 
@@ -2233,23 +2277,116 @@ export function renderPalette() {
 
         elements.paletteGrid.appendChild(div);
     }
+
+    updatePaletteUsedMarks();
+    if (state.hoveredPaletteIdx !== null && elements.paletteGrid.children[state.hoveredPaletteIdx]) {
+        elements.paletteGrid.children[state.hoveredPaletteIdx].classList.add('pal-hover-mark');
+    }
+}
+
+export function getFrameUsedColors(frameIdx) {
+    const used = new Set();
+    if (!state.frames || frameIdx < 0 || frameIdx >= state.frames.length) return used;
+    const frame = state.frames[frameIdx];
+    if (!frame || !frame.layers) return used;
+    const transIdx = state.isAlphaImageMode ? 127 : 0;
+
+    if (state.floatingSelection && state.floatingSelection.data) {
+        const fsData = state.floatingSelection.data;
+        for (let i = 0; i < fsData.length; i++) {
+            const val = fsData[i];
+            if (val !== TRANSPARENT_COLOR && val !== transIdx && val >= 0 && val < 256) {
+                used.add(val);
+            }
+        }
+    }
+
+    for (let li = 0; li < frame.layers.length; li++) {
+        const layer = frame.layers[li];
+        if (!layer || !layer.visible || !layer.data) continue;
+        const d = layer.data;
+        for (let i = 0; i < d.length; i++) {
+            const val = d[i];
+            if (val !== TRANSPARENT_COLOR && val !== transIdx && val >= 0 && val < 256) {
+                used.add(val);
+            }
+        }
+    }
+    return used;
+}
+
+export function getAllFramesUsedColors() {
+    const used = new Set();
+    if (!state.frames || state.frames.length === 0) return used;
+    const transIdx = state.isAlphaImageMode ? 127 : 0;
+
+    for (let fi = 0; fi < state.frames.length; fi++) {
+        const frame = state.frames[fi];
+        if (!frame || !frame.layers) continue;
+        for (let li = 0; li < frame.layers.length; li++) {
+            const layer = frame.layers[li];
+            if (!layer || !layer.visible || !layer.data) continue;
+            const d = layer.data;
+            for (let i = 0; i < d.length; i++) {
+                const val = d[i];
+                if (val !== TRANSPARENT_COLOR && val !== transIdx && val >= 0 && val < 256) {
+                    used.add(val);
+                }
+            }
+        }
+    }
+    return used;
+}
+
+export function updatePaletteUsedMarks() {
+    if (!elements.paletteGrid) return;
+    let usedSet = null;
+    if (state.showFrameColors && state.frames.length > 0) {
+        usedSet = getFrameUsedColors(state.currentFrameIdx);
+    } else if (state.showAllFramesColors && state.frames.length > 0) {
+        usedSet = getAllFramesUsedColors();
+    }
+
+    const cells = elements.paletteGrid.children;
+    for (let i = 0; i < cells.length; i++) {
+        if (usedSet && usedSet.has(i)) {
+            cells[i].classList.add('pal-used-mark');
+        } else {
+            cells[i].classList.remove('pal-used-mark');
+        }
+    }
+}
+
+export function setHoveredPaletteIndex(idx) {
+    if (state.hoveredPaletteIdx === idx) return;
+    if (state.hoveredPaletteIdx !== null && elements.paletteGrid) {
+        const oldEl = elements.paletteGrid.children[state.hoveredPaletteIdx];
+        if (oldEl) oldEl.classList.remove('pal-hover-mark');
+    }
+    state.hoveredPaletteIdx = idx;
+    if (idx !== null && elements.paletteGrid) {
+        const newEl = elements.paletteGrid.children[idx];
+        if (newEl) newEl.classList.add('pal-hover-mark');
+    }
+}
+
+export function syncZoomUI() {
+    if (!elements.inpZoom) return;
+    const pct = Math.round((state.zoom || 1) * 100);
+    elements.inpZoom.value = pct;
+    if (elements.zoomVal) elements.zoomVal.innerText = pct + "%";
+    if (elements.zoomSizeBar) {
+        const min = parseInt(elements.inpZoom.min) || 50;
+        const max = parseInt(elements.inpZoom.max) || 5000;
+        const range = max - min;
+        const val = pct - min;
+        const ratio = range > 0 ? (val / range) * 100 : 0;
+        elements.zoomSizeBar.style.width = ratio + "%";
+    }
 }
 
 export function setupZoomOptions() {
     if (!elements.inpZoom) return;
-
-    // Sync Slider
-    const syncZoomUI = () => {
-        const pct = state.zoom * 100;
-        elements.inpZoom.value = pct;
-        if (elements.zoomVal) elements.zoomVal.innerText = Math.round(pct) + "%";
-        if (elements.zoomSizeBar) {
-            const range = elements.inpZoom.max - elements.inpZoom.min;
-            const val = pct - elements.inpZoom.min;
-            const ratio = (val / range) * 100;
-            elements.zoomSizeBar.style.width = ratio + "%";
-        }
-    };
 
     elements.inpZoom.oninput = (e) => {
         let val = parseInt(e.target.value);
@@ -2299,7 +2436,7 @@ export function setupZoomOptions() {
             if (e.ctrlKey) {
                 e.preventDefault();
                 const direction = e.deltaY < 0 ? 1 : -1;
-                let current = parseInt(elements.inpZoom.value);
+                let current = Math.round((state.zoom || 1) * 100);
                 let next;
 
                 if (direction > 0) {
@@ -3800,7 +3937,11 @@ export function renderReplaceGrid() {
                 const span = document.createElement('span');
                 span.className = 'replace-cell-text';
                 span.innerText = pair.srcIdx;
-                span.style.color = getContrastYIQ(color.r, color.g, color.b);
+                const contrast = getContrastYIQ(color.r, color.g, color.b);
+                span.style.color = contrast;
+                span.style.textShadow = contrast === '#000000'
+                    ? '0 0 2px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,0.7)'
+                    : '0 0 2px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.7)';
                 srcDiv.appendChild(span);
                 srcDiv.title = `${state.translations.tt_idx}: ${pair.srcIdx}\n${state.translations.tt_rgb}: ${color.r},${color.g},${color.b}`;
             }
@@ -3822,13 +3963,19 @@ export function renderReplaceGrid() {
                 const span = document.createElement('span');
                 span.className = 'replace-cell-text';
                 span.innerText = pair.tgtIdx;
-                span.style.color = getContrastYIQ(color.r, color.g, color.b);
+                const contrast = getContrastYIQ(color.r, color.g, color.b);
+                span.style.color = contrast;
+                span.style.textShadow = contrast === '#000000'
+                    ? '0 0 2px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,0.7)'
+                    : '0 0 2px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.7)';
                 tgtDiv.appendChild(span);
                 tgtDiv.title = `${state.translations.tt_idx}: ${pair.tgtIdx}\n${state.translations.tt_rgb}: ${color.r},${color.g},${color.b}`;
             } else {
                 const span = document.createElement('span');
                 span.className = 'replace-cell-text';
                 span.innerText = pair.tgtIdx;
+                span.style.color = '#ffffff';
+                span.style.textShadow = '0 0 2px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.7)';
                 tgtDiv.appendChild(span);
                 tgtDiv.title = `${state.translations.tt_idx}: ${pair.tgtIdx}\n${state.translations.tt_rgb}: ${state.translations.tt_unknown}`;
             }
@@ -3876,18 +4023,27 @@ export function renderReplaceGrid() {
             }
 
             state.dragSourceType = type;
-            if (!state.replaceSelection.has(i)) {
-                state.replaceSelection.clear();
-                state.replaceSelection.add(i);
-                state.lastReplaceIdx = i;
-                renderReplaceGrid();
+            if (type === 'replace-cell') {
+                state.dragSourceCount = 1;
+                e.dataTransfer.setData('application/json', JSON.stringify({
+                    t: type,
+                    indices: [i],
+                    side: side
+                }));
+            } else {
+                if (!state.replaceSelection.has(i)) {
+                    state.replaceSelection.clear();
+                    state.replaceSelection.add(i);
+                    state.lastReplaceIdx = i;
+                    renderReplaceGrid();
+                }
+                state.dragSourceCount = state.replaceSelection.size;
+                e.dataTransfer.setData('application/json', JSON.stringify({
+                    t: type,
+                    indices: Array.from(state.replaceSelection).sort((a, b) => a - b),
+                    side: side
+                }));
             }
-            state.dragSourceCount = state.replaceSelection.size;
-            e.dataTransfer.setData('application/json', JSON.stringify({
-                t: type,
-                indices: Array.from(state.replaceSelection).sort((a, b) => a - b),
-                side: side
-            }));
             e.dataTransfer.setData('text/plain', type);
             e.dataTransfer.effectAllowed = 'move';
         };
@@ -3970,38 +4126,19 @@ export function renderReplaceGrid() {
                     const srcIndices = data.indices;
                     const srcSide = data.side;
                     const count = srcIndices.length;
+                    const srcProp = srcSide + 'Idx';
+                    const tgtProp = targetSide + 'Idx';
 
-                    if (srcSide === targetSide) {
-                        // ROW REORDER (Same side drag)
-                        // Swap entire row objects
-                        for (let k = 0; k < count; k++) {
-                            const sIdx = srcIndices[k];
-                            const tIdx = i + k;
-                            if (tIdx < state.replacePairs.length) {
-                                const temp = state.replacePairs[sIdx];
-                                state.replacePairs[sIdx] = state.replacePairs[tIdx];
-                                state.replacePairs[tIdx] = temp;
-                            }
-                        }
-                    } else {
-                        // CROSS SWAP (Side to side)
-                        for (let k = 0; k < count; k++) {
-                            const sIdx = srcIndices[k];
-                            const tIdx = i + k;
-                            if (tIdx < state.replacePairs.length) {
-                                const srcVal = state.replacePairs[sIdx][srcSide + 'Idx'];
-                                const srcColor = state.replacePairs[sIdx][srcSide];
-                                const tgtVal = state.replacePairs[tIdx][targetSide + 'Idx'];
-                                const tgtColor = state.replacePairs[tIdx][targetSide];
-                                state.replacePairs[tIdx][targetSide + 'Idx'] = srcVal;
-                                state.replacePairs[tIdx][targetSide] = srcColor;
-                                state.replacePairs[sIdx][srcSide + 'Idx'] = tgtVal;
-                                state.replacePairs[sIdx][srcSide] = tgtColor;
-                            }
+                    for (let k = 0; k < count; k++) {
+                        const sIdx = srcIndices[k];
+                        const tIdx = i + k;
+                        if (tIdx < state.replacePairs.length) {
+                            const srcVal = state.replacePairs[sIdx][srcProp];
+                            const tgtVal = state.replacePairs[tIdx][tgtProp];
+                            state.replacePairs[tIdx][tgtProp] = srcVal;
+                            state.replacePairs[sIdx][srcProp] = tgtVal;
                         }
                     }
-                    state.replaceSelection.clear();
-                    for (let k = 0; k < count; k++) state.replaceSelection.add(i + k);
                     renderReplaceGrid();
                 } else if (data.t === 'replace-row') {
                     // INSERTION REORDER (the "queue" behavior)
@@ -4038,12 +4175,34 @@ export function renderReplaceGrid() {
             } catch (err) { console.error("Drop Error:", err); }
         };
 
-        srcDiv.ondragstart = (e) => onDragStart(e, 'replace-cell', 'src');
+        srcDiv.onmouseenter = () => {
+            if (pair.srcIdx !== null && pair.srcIdx !== undefined && pair.srcIdx >= 0 && pair.srcIdx < 256) {
+                setHoveredPaletteIndex(pair.srcIdx);
+            }
+        };
+        srcDiv.onmouseleave = () => {
+            setHoveredPaletteIndex(null);
+        };
+        srcDiv.ondragstart = (e) => {
+            setHoveredPaletteIndex(null);
+            onDragStart(e, 'replace-cell', 'src');
+        };
         srcDiv.ondragover = onDragOver;
         srcDiv.ondragleave = onDragLeave;
         srcDiv.ondrop = (e) => onDrop(e, 'src');
 
-        tgtDiv.ondragstart = (e) => onDragStart(e, 'replace-cell', 'tgt');
+        tgtDiv.onmouseenter = () => {
+            if (pair.tgtIdx !== null && pair.tgtIdx !== undefined && pair.tgtIdx >= 0 && pair.tgtIdx < 256) {
+                setHoveredPaletteIndex(pair.tgtIdx);
+            }
+        };
+        tgtDiv.onmouseleave = () => {
+            setHoveredPaletteIndex(null);
+        };
+        tgtDiv.ondragstart = (e) => {
+            setHoveredPaletteIndex(null);
+            onDragStart(e, 'replace-cell', 'tgt');
+        };
         tgtDiv.ondragover = onDragOver;
         tgtDiv.ondragleave = onDragLeave;
         tgtDiv.ondrop = (e) => onDrop(e, 'tgt');
@@ -4057,6 +4216,7 @@ export function renderReplaceGrid() {
         // CLICK EVENTS - Select row
         const handleClick = (e) => {
             e.stopPropagation();
+            setHoveredPaletteIndex(null);
             state.multiPickCounter = 0;
 
             if (e.shiftKey && typeof state.lastReplaceIdx === 'number') {
@@ -4133,7 +4293,20 @@ export function renderReplaceGrid() {
                     state.replacePairs[startIdx + k][targetSide + 'Idx'] = newIndices[k];
                 }
                 renderReplaceGrid();
-            } else if (data.t === 'replace-cell' || data.t === 'replace-row') {
+            } else if (data.t === 'replace-cell') {
+                const srcIndices = data.indices;
+                const srcSide = data.side;
+                srcIndices.forEach(sIdx => {
+                    if (state.replacePairs[sIdx]) {
+                        const val = state.replacePairs[sIdx][srcSide + 'Idx'];
+                        state.replacePairs[sIdx][srcSide + 'Idx'] = null;
+                        const newPair = { srcIdx: null, tgtIdx: null };
+                        newPair[targetSide + 'Idx'] = val;
+                        state.replacePairs.push(newPair);
+                    }
+                });
+                renderReplaceGrid();
+            } else if (data.t === 'replace-row') {
                 // MOVE SELECTED ROWS TO END (equivalent to insert at end)
                 const srcIndices = data.indices;
                 const rowsMoving = srcIndices.map(idx => state.replacePairs[idx]);
@@ -4153,6 +4326,14 @@ export function renderReplaceGrid() {
     elements.replaceGrid.ondragover = onContainerDragOver;
     elements.replaceGrid.ondragleave = () => elements.replaceGrid.classList.remove('new-entry-active');
     elements.replaceGrid.ondrop = onContainerDrop;
+    elements.replaceGrid.onmouseleave = () => setHoveredPaletteIndex(null);
+    elements.replaceGrid.onclick = (e) => {
+        if (e.target === elements.replaceGrid) {
+            state.replaceSelection.clear();
+            state.multiPickCounter = 0;
+            renderReplaceGrid();
+        }
+    };
 
     // Show/hide Remove Pair button based on selection
     if (elements.btnRemovePair) {
@@ -4169,6 +4350,7 @@ export function renderReplaceGrid() {
 export function toggleReplacePanel() {
     if (!elements.panelReplace) return;
     elements.panelReplace.classList.toggle('visible');
+    setHoveredPaletteIndex(null);
 }
 
 export function detectConflicts() {

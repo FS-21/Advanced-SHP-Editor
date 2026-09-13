@@ -7,47 +7,92 @@ import { t } from './translations.js';
 
 
 /**
+ * Encodes a list of editor frames into an SHP Format80 ArrayBuffer.
+ */
+export function encodeFramesToShpBuffer(frames, compression = 3, isAlphaImageMode = false) {
+    const flatImages = frames.map(f => {
+        const composite = new Uint8Array(f.width * f.height).fill(0);
+
+        function compositeNode(node) {
+            if (!node.visible || node.type === 'external_shp') return;
+
+            if (node.children) {
+                // Visit children in reverse (Bottom first)
+                for (let i = node.children.length - 1; i >= 0; i--) {
+                    compositeNode(node.children[i]);
+                }
+            } else if (node.data) {
+                // Composite Layer
+                for (let k = 0; k < composite.length; k++) {
+                    if (node.mask && node.mask[k] === 0) continue;
+                    const val = node.data[k];
+                    if (val !== TRANSPARENT_COLOR) composite[k] = val;
+                }
+            }
+        }
+
+        // Start from Bottom of Root
+        for (let i = f.layers.length - 1; i >= 0; i--) {
+            compositeNode(f.layers[i]);
+        }
+
+        return { width: f.width, height: f.height, indices: composite };
+    });
+
+    const transparentMapping = isAlphaImageMode ? 127 : 0;
+    return ShpFormat80.encode(flatImages, true, compression, transparentMapping);
+}
+
+/**
  * Generic helper to export a given list of frames as a SHP file.
  */
 export async function exportFrameList(filename, frames, compression, existingHandle = null) {
     try {
-        const flatImages = frames.map(f => {
-            const composite = new Uint8Array(f.width * f.height).fill(0);
-
-            function compositeNode(node) {
-                if (!node.visible || node.type === 'external_shp') return;
-
-                if (node.children) {
-                    // Visit children in reverse (Bottom first)
-                    for (let i = node.children.length - 1; i >= 0; i--) {
-                        compositeNode(node.children[i]);
-                    }
-                } else if (node.data) {
-                    // Composite Layer
-                    for (let k = 0; k < composite.length; k++) {
-                        if (node.mask && node.mask[k] === 0) continue;
-                        const val = node.data[k];
-                        if (val !== TRANSPARENT_COLOR) composite[k] = val;
-                    }
-                }
-            }
-
-            // Start from Bottom of Root
-            for (let i = f.layers.length - 1; i >= 0; i--) {
-                compositeNode(f.layers[i]);
-            }
-
-            return { width: f.width, height: f.height, indices: composite };
-        });
-
-        const transparentMapping = state.isAlphaImageMode ? 127 : 0;
-        const buf = ShpFormat80.encode(flatImages, true, compression, transparentMapping);
+        const buf = encodeFramesToShpBuffer(frames, compression, state.isAlphaImageMode);
         const handle = await downloadFile(filename, buf, existingHandle);
         return handle;
     } catch (err) {
-        alert("Error exporting SHP: " + err.message);
-        console.error(err);
+        console.error("Error exporting SHP:", err);
         return null;
+    }
+}
+
+export function downloadFileAsBlob(name, u8Array) {
+    const blob = new Blob([u8Array], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return null;
+}
+
+export async function writeToHandleDirect(handle, u8Array) {
+    if (!handle) return false;
+    try {
+        if (typeof handle.queryPermission === 'function') {
+            let status = 'prompt';
+            try {
+                status = await handle.queryPermission({ mode: 'readwrite' });
+            } catch (qErr) {
+                console.warn('[writeToHandleDirect] queryPermission failed:', qErr);
+            }
+            if (status !== 'granted') {
+                const req = await handle.requestPermission({ mode: 'readwrite' });
+                if (req !== 'granted') return false;
+            }
+        }
+        const writable = await handle.createWritable();
+        const blob = new Blob([u8Array], { type: "application/octet-stream" });
+        await writable.write(blob);
+        await writable.close();
+        return true;
+    } catch (err) {
+        console.warn('[writeToHandleDirect] write failed:', err);
+        throw err;
     }
 }
 
@@ -55,6 +100,29 @@ async function downloadFile(name, u8Array, existingHandle = null) {
     if (window.showSaveFilePicker) {
         let handle = existingHandle;
         try {
+            if (handle) {
+                // Ensure write permission for handles from drag-and-drop or recent files
+                if (typeof handle.queryPermission === 'function') {
+                    let status = 'prompt';
+                    try {
+                        status = await handle.queryPermission({ mode: 'readwrite' });
+                    } catch (qErr) {
+                        console.warn('[downloadFile] queryPermission error:', qErr);
+                    }
+                    if (status !== 'granted') {
+                        try {
+                            const req = await handle.requestPermission({ mode: 'readwrite' });
+                            if (req !== 'granted') {
+                                console.warn('[downloadFile] Permission not granted, falling back to picker');
+                                handle = null;
+                            }
+                        } catch (permErr) {
+                            console.warn('[downloadFile] requestPermission failed:', permErr.message);
+                            handle = null;
+                        }
+                    }
+                }
+            }
             if (!handle) {
                 handle = await window.showSaveFilePicker({
                     suggestedName: name,
@@ -80,22 +148,12 @@ async function downloadFile(name, u8Array, existingHandle = null) {
                 return null; // User cancelled — do nothing
             }
             console.error('showSaveFilePicker write failed:', err);
-            alert('Save failed: ' + (err.message || err));
             return null;
         }
     }
 
     // Fallback for browsers that do not support showSaveFilePicker (e.g. Firefox)
-    const blob = new Blob([u8Array], { type: "application/octet-stream" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    return null; // Indicate no handle was created
+    return downloadFileAsBlob(name, u8Array);
 }
 
 /**

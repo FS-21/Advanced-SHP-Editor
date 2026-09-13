@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v2.1';</script>
+    <script>const APP_VERSION = 'v2.2';</script>
     <script>
         let CnCReloadedMode = true;
         document.addEventListener("DOMContentLoaded", () => {
@@ -264,6 +264,10 @@
                         <div id="menuSaveAs" class="menu-action" data-i18n-title="tt_menu_save_as">
                             <span class="menu-icon icon-save-as"></span><span data-i18n="menu_save_as">Save
                                 as...</span><span class="shortcut">Ctrl+Shift+S</span>
+                        </div>
+                        <div id="menuSaveAll" class="menu-action" data-i18n-title="tt_menu_save_all" style="display: none;">
+                            <span class="menu-icon icon-save-all"></span><span data-i18n="menu_save_all">Save
+                                All</span><span class="shortcut">Ctrl+Alt+S</span>
                         </div>
                         <div class="menu-item-submenu" id="menuItemExportShp">
                             <div id="triggerExport" class="menu-action submenu-trigger">
@@ -541,6 +545,15 @@
                                 Image Mode</span>
                         </div>
                         <div class="menu-divider"></div>
+                        <div id="menuShowFrameColors" class="menu-action" data-i18n-title="tt_menu_show_frame_colors">
+                            <span class="menu-icon icon-palette-frame"></span><span
+                                data-i18n="menu_show_frame_colors">Show Current Frame Colors in Palette</span>
+                        </div>
+                        <div id="menuShowAllFramesColors" class="menu-action" data-i18n-title="tt_menu_show_all_frames_colors">
+                            <span class="menu-icon icon-palette-all-frames"></span><span
+                                data-i18n="menu_show_all_frames_colors">Show All Frames Colors in Palette</span>
+                        </div>
+                        <div class="menu-divider"></div>
 
                         <div class="menu-item-submenu">
                             <div id="triggerGridOptions" class="menu-action submenu-trigger" data-i18n-title="tt_grid">
@@ -780,6 +793,12 @@
                             <span class="menu-icon"
                                 style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🏛️</span><span
                                 data-i18n="menu_ares_foundation">Ares Custom Foundation...</span>
+                        </div>
+                        <div class="menu-divider"></div>
+                        <div id="menuConvertPalette" class="menu-action" data-i18n-title="tt_menu_convert_palette">
+                            <span class="menu-icon"
+                                style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🎨</span><span
+                                data-i18n="menu_convert_palette">Convert Image Palette...</span>
                         </div>
                     </div> <!-- End of menu-dropdown -->
                 </div> <!-- End of menuItemTools -->
@@ -1275,11 +1294,16 @@
                                     <!-- Dynamic Rows -->
                                 </div>
 
-                                <!-- Process Button -->
-                                <button id="btnProcessReplace" class="btn btn-primary btn-xs"
-                                    style="width: 100%; margin-top: 10px; margin-bottom: 10px; background-color: #00ffaa; color: black; font-weight: bold;"
-                                    data-i18n="btn_process_replace">PROCESS
-                                    REPLACE</button>
+                                <!-- Process Buttons -->
+                                <div class="replace-process-buttons" style="display: flex; gap: 6px; margin-top: 10px; margin-bottom: 10px;">
+                                    <button id="btnProcessReplace" class="btn btn-primary btn-xs"
+                                        style="flex: 1; background-color: #00ffaa; color: black; font-weight: bold;"
+                                        data-i18n="btn_process_replace" data-i18n-title="tt_btn_process_replace">PROCESS
+                                        REPLACE</button>
+                                    <button id="btnProcessReplaceAll" class="btn btn-primary btn-xs"
+                                        style="flex: 1; background-color: #00d4ff; color: black; font-weight: bold; display: none;"
+                                        data-i18n="btn_process_replace_all" data-i18n-title="tt_btn_process_replace_all">ALL TABS</button>
+                                </div>
 
                                 <!-- Frame Range Options -->
                                 <div class="replace-frame-range"
@@ -1309,12 +1333,15 @@
                                         </div>
                                     </div>
 
-                                    <!-- Preview Button -->
-                                    <button id="btnPreviewReplace" class="btn btn-xs"
-                                        style="width: 100%; background-color: #4a5568; color: #fff;"
-                                        data-i18n="btn_hold_preview">HOLD TO
-                                        PREVIEW
-                                        AFFECTS</button>
+                                    <!-- Preview Buttons -->
+                                    <div style="display:flex; flex-direction:column; gap:6px;">
+                                        <button id="btnPreviewReplaceChanges" class="btn btn-xs"
+                                            style="width: 100%; background-color: #2b6cb0; color: #fff; font-weight: 500;"
+                                            data-i18n="btn_hold_preview_changes" data-i18n-title="tt_btn_hold_preview_changes">HOLD TO PREVIEW CHANGES</button>
+                                        <button id="btnPreviewReplace" class="btn btn-xs"
+                                            style="width: 100%; background-color: #4a5568; color: #fff;"
+                                            data-i18n="btn_hold_preview" data-i18n-title="tt_btn_hold_preview">HOLD TO PREVIEW AFFECTS</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2341,6 +2368,82 @@
         <input type="file" id="inpImpShpPal" accept=".pal" hidden>
         <input type="file" id="inpImpShpFile" accept=".shp,.sha" hidden>
     </dialog>
+    <!-- CONVERT IMAGE PALETTE DIALOG -->
+    <dialog id="convertPaletteDialog" class="dialog-modal" style="width: 960px; max-width: 96vw; background: #0f111a;">
+        <h3 style="color: var(--accent); letter-spacing: 1px;" data-i18n="dlg_convert_palette_title">CONVERT IMAGE PALETTE</h3>
+        <p style="color: var(--text-muted); font-size: 11px; margin-bottom: 15px;" data-i18n="dlg_convert_palette_desc">
+            Remaps all frame pixels to the closest matching colors in the target palette.
+        </p>
+
+        <div style="display: flex; gap: 15px; height: 460px;">
+            <!-- Column 1: Current Palette (Fixed 240px) -->
+            <div style="width: 240px; display: flex; flex-direction: column; flex-shrink: 0;">
+                <div class="analysis-header" data-i18n="lbl_current_palette">1. Current Palette</div>
+                <div id="convPalSrcGrid" class="palette-grid-wrapper" style="flex: 1; border: 1px solid var(--border); background: #000;">
+                    <!-- 16x16 / 32x8 grid for current palette -->
+                </div>
+                <div id="convPalSrcInfo" style="font-size: 11px; color: #888; margin-top: 5px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    Current Palette
+                </div>
+            </div>
+
+            <!-- Column 2: Target Palette (Fixed 240px) -->
+            <div style="width: 240px; display: flex; flex-direction: column; flex-shrink: 0;">
+                <div class="analysis-header" data-i18n="lbl_target_palette">2. Target Palette</div>
+                <div class="menu-item palette-selector-menu height-auto" id="menuItemConvPalettes" style="margin-bottom: 5px;">
+                    <button class="menu-btn" style="width: 100%; text-align: left; display: flex; justify-content: space-between; padding: 8px 12px; border: 1px solid var(--border); background: var(--bg-input); border-radius: 4px; color: var(--accent); font-weight: bold;">
+                        <span data-i18n="btn_select_palette">🎨 SELECT PALETTE</span>
+                        <span class="arrow" style="opacity: 0.5;">▼</span>
+                    </button>
+                    <div class="menu-dropdown" id="convPalettesMenuDropdown" style="width: 280px; min-width: 280px; margin-top: 2px;">
+                        <!-- Populated by refreshDialogPaletteMenu -->
+                    </div>
+                </div>
+                <div id="convPalTgtGrid" class="palette-grid-wrapper" style="flex: 1; border: 1px solid var(--border); background: #000;">
+                    <!-- 16x16 / 32x8 grid for target palette -->
+                </div>
+                <div id="convPalTgtInfo" style="font-size: 11px; color: #888; margin-top: 5px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" data-i18n="msg_default_pal_loaded">
+                    Default Palette loaded.
+                </div>
+                <button id="btnConvLoadCustomPal" class="btn btn-xs" style="margin-top: 5px; width: 100%; background: #2d3748; color: #fff;" data-i18n="btn_load_custom_pal">
+                    LOAD CUSTOM PAL...
+                </button>
+                <input type="file" id="inpConvPalFile" accept=".pal" style="display: none;">
+            </div>
+
+            <!-- Column 3: Remapped Preview & Animation Controls (flex: 1) -->
+            <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+                <div class="analysis-header" data-i18n="lbl_preview">Preview</div>
+
+                <!-- Preview Container with Canvas -->
+                <div id="convPreviewContainer" class="checkerboard-bg" style="flex: 1; position: relative; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); overflow: hidden; min-height: 200px;">
+                    <canvas id="convPreviewCanvas" style="max-width: 100%; max-height: 100%; image-rendering: pixelated;"></canvas>
+                </div>
+
+                <!-- Timeline / Playback bar -->
+                <div class="timeline-controls" style="margin-top: 5px;">
+                    <button id="btnConvPlay" data-i18n-title="tt_prev_play"></button>
+                    <button id="btnConvPrev" data-i18n-title="tt_prev_step_back">◀</button>
+                    <button id="btnConvNext" data-i18n-title="tt_prev_step_next">▶</button>
+                    <input type="range" id="convSlider" min="0" value="0" step="1" style="flex: 1;">
+                    <span id="convCounter" style="font-family: monospace; color: #fff; min-width: 50px; text-align: right;">0/0</span>
+                </div>
+
+                <!-- Hide Shadows Checkbox -->
+                <div style="padding: 5px 10px; background: #1a202c; border: 1px solid var(--border); border-top: none; display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="chkConvNoShadow" style="cursor: pointer; accent-color: var(--accent);">
+                    <label for="chkConvNoShadow" style="font-size: 11px; color: #aaa; cursor: pointer;" data-i18n="lbl_hide_shadows">
+                        Hide shadows (only first half of frames)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="dialog-footer" style="padding-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
+            <button id="btnCancelConvPalette" class="btn-cancel" style="border: 1px solid #4a5568;" data-i18n="btn_cancel">CANCEL</button>
+            <button id="btnConfirmConvPalette" class="btn-download" disabled data-i18n="btn_ok">ACCEPT</button>
+        </div>
+    </dialog>
     <!-- EXTERNAL SHP DIALOG -->
     <dialog id="externalShpDialog" class="dialog-modal" style="width: 800px; max-width: 95vw; background: #0f111a;">
         <h3 style="color: #00ffaa; letter-spacing: 1px;" data-i18n="dlg_ext_shp_title">OPEN EXTERNAL SHP</h3>
@@ -2445,6 +2548,38 @@
         <div class="dialog-footer">
             <button id="btnBatchCancel" class="btn" data-i18n="btn_cancel">Cancel</button>
             <button id="btnBatchProcess" class="btn btn-primary" data-i18n="btn_save_changes">SAVE CHANGES</button>
+        </div>
+    </dialog>
+
+
+    <!-- Save All Open Files Confirmation Dialog -->
+    <dialog id="saveAllDialog" class="dialog-modal"
+        style="width: 580px; min-width: 420px; max-width: 95vw; padding: 22px; text-align: left; background: #141722; border: 1px solid var(--accent); box-shadow: 0 12px 35px rgba(0,0,0,0.75);">
+        <h3 id="saveAllTitle"
+            style="color: var(--accent); margin-bottom: 8px; font-size: 15px; letter-spacing: 1px; font-family: monospace; display: flex; align-items: center; gap: 8px;"
+            data-i18n="dlg_save_all_title">
+            SAVE ALL OPEN FILES</h3>
+        <p id="saveAllDesc"
+            style="font-size: 12px; color: #a0aec0; margin-bottom: 12px; line-height: 1.4; font-family: monospace;"
+            data-i18n="dlg_save_all_desc">
+            The following open files will be saved. Are you sure you want to proceed?
+        </p>
+
+        <div id="saveAllFileList" class="save-all-list">
+            <!-- Dynamically populated rows -->
+        </div>
+
+        <p id="saveAllConfirmQuestion"
+            style="font-size: 12px; color: #fff; margin-bottom: 18px; font-weight: bold; font-family: monospace;"
+            data-i18n="msg_confirm_save_all_question">
+            Are you sure you want to save all files?
+        </p>
+
+        <div class="dialog-footer" style="justify-content: flex-end; gap: 12px; margin-top: 0;">
+            <button id="btnCancelSaveAll" class="btn-cancel" style="padding: 8px 22px; min-width: 85px;"
+                data-i18n="btn_cancel">CANCEL</button>
+            <button id="btnConfirmSaveAll" class="btn-download" style="padding: 8px 25px; min-width: 110px;"
+                data-i18n="btn_save_all">SAVE ALL</button>
         </div>
     </dialog>
 

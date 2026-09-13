@@ -150,8 +150,6 @@ export function base64ToBuffer(b64) {
 }
 
 // ─────────────────────────────────────────────────────────────
-import { pushHistory } from './history.js';
-
 // APPLY PALETTE  (shared by menu items AND manager dialog)
 // ─────────────────────────────────────────────────────────────
 export function applyPaletteFromEntry(entry, isManual = true) {
@@ -160,7 +158,8 @@ export function applyPaletteFromEntry(entry, isManual = true) {
         if (isManual) {
             state.paletteSelectedManually = true;
         }
-        pushHistory(); // Record state before changing palette
+        // Do not call pushHistory(): palette change is a viewing/context preparation
+        // operation, not an edit to the SHP sprite file.
         const buffer = base64ToBuffer(entry.b64);
         parsePaletteData(buffer);   // from main app (ui.js / main.js)
         setTimeout(() => {
@@ -174,10 +173,11 @@ export function applyPaletteFromEntry(entry, isManual = true) {
 
         state.paletteVersion++; // Signal UI to refresh thumbnails
         _appliedPaletteId = entry.id;
-        // Track applied palette id per tab so the selector UI matches the
+        // Track applied palette id and palette array per tab so the selector UI matches the
         // current tab when switching between tabs.
         if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
             state.tabs[state.activeTabIndex].appliedPaletteId = entry.id;
+            state.tabs[state.activeTabIndex].palette = JSON.parse(JSON.stringify(state.palette));
         }
         recordUsage(entry);
         refreshPalettesMenuDynamic();
@@ -1336,6 +1336,20 @@ function refreshAllPaletteMenus() {
         }
         updatePaletteSelectorUI('menuItemExtPalettes', node);
     });
+
+    // Convert Palette dialog menu
+    refreshDialogPaletteMenu('convPalettesMenuDropdown', (node) => {
+        if (typeof parsePaletteBuffer === 'function') {
+            const buf = base64ToBuffer(node.b64);
+            const palArray = parsePaletteBuffer(buf);
+            if (typeof updatePaletteSelectorUI === 'function') {
+                updatePaletteSelectorUI('menuItemConvPalettes', node);
+            }
+            if (typeof window.onConvertPaletteSelected === 'function') {
+                window.onConvertPaletteSelected(palArray, node);
+            }
+        }
+    });
 }
 
 function _createPaletteSearchFilter(dropdownId) {
@@ -1694,7 +1708,7 @@ export function setupPaletteMenu() {
     }
 
     // Dialog menus: Click to toggle (floating menu behavior)
-    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes'].forEach(id => {
+    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes', 'menuItemConvPalettes'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             const btn = el.querySelector('.menu-btn');

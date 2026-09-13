@@ -15,20 +15,14 @@ export class Tab {
         this.activeLayerId = null;
         this.preferredLayerIdx = 0;
         this.primaryColorIdx = 0;
-        this.replacePairs = [];
-        this.replaceSelection = new Set();
-        this.isPickingForReplace = null;
-        this.isPreviewingReplacement = false;
-        this.isReplacePreviewActive = false;
-        this.multiPickCounter = 0;
         this.paletteSelection = new Set([0]);
         this.lastPaletteIdx = 0;
         this.dragSourceType = null;
         this.dragSourceCount = 0;
-        this.lastReplaceIdx = null;
-        this.replaceClipboard = [];
         this.isCtrlPressed = false;
-        this.zoom = initialState ? initialState.zoom : 1;
+        this.zoom = initialState ? (initialState.zoom || 1) : 1;
+        this.scrollLeft = (initialState && initialState.scrollLeft !== undefined) ? initialState.scrollLeft : 0;
+        this.scrollTop = (initialState && initialState.scrollTop !== undefined) ? initialState.scrollTop : 0;
         this.isPlaying = false;
         this.playTimer = null;
         this.canvasW = 60;
@@ -87,9 +81,11 @@ export class Tab {
         this.originalTmpTiles = null;
         this.tmpFilename = null;
         this.tmpFullZPreviewActive = false;
-        this.gameType = 'ra2';
-        this.paletteSelectedManually = false;
-        this.appliedPaletteId = null;
+        this.gameType = initialState ? (initialState.gameType || 'ra2') : 'ra2';
+        this.paletteSelectedManually = initialState ? (initialState.paletteSelectedManually || false) : false;
+        this.appliedPaletteId = initialState ? (initialState.appliedPaletteId || null) : null;
+        this.showFrameColors = false;
+        this.showAllFramesColors = false;
     }
 }
 
@@ -120,6 +116,8 @@ export const state = {
     isCtrlPressed: false, // Track Ctrl modifier state globaly for repeaters
 
     zoom: 1, // Default 100%
+    scrollLeft: 0,
+    scrollTop: 0,
     isPlaying: false,
     playTimer: null,
     canvasW: 60,
@@ -201,30 +199,66 @@ export const state = {
     tmpFullZPreviewActive: false, // New: true when viewing composed Z-data full preview
     paletteSelectedManually: false, // Tracks if user clicked/applied a palette manually in this session
     appliedPaletteId: null, // ID of the palette currently displayed in the SELECT PALETTE selector
+    showFrameColors: false,
+    showAllFramesColors: false,
+    hoveredPaletteIdx: null,
 
     // Tab Management
     tabs: [],
     activeTabIndex: -1,
     newFileCounter: 0,
 
+    fileHandle: null,
+
     saveToTab(tab) {
         if (!tab) return;
+        const wrapper = document.getElementById('canvasWrapper');
+        if (wrapper && wrapper.parentElement) {
+            this.scrollLeft = wrapper.parentElement.scrollLeft;
+            this.scrollTop = wrapper.parentElement.scrollTop;
+        }
+        const ignoredKeys = [
+            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle',
+            'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
+            'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard'
+        ];
         const dummy = new Tab('dummy');
         const keys = Object.keys(dummy);
         keys.forEach(k => {
-            if (['id', 'fileName', 'idName', 'fileHandle', 'internalClipboard'].includes(k)) return;
+            if (ignoredKeys.includes(k)) return;
             tab[k] = this[k];
         });
+        tab.fileHandle = this.fileHandle || null;
     },
 
     loadFromTab(tab) {
         if (!tab) return;
+        const ignoredKeys = [
+            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle',
+            'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
+            'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard'
+        ];
         const dummy = new Tab('dummy');
         const keys = Object.keys(dummy);
         keys.forEach(k => {
-            if (['id', 'fileName', 'idName', 'fileHandle', 'internalClipboard'].includes(k)) return;
+            if (ignoredKeys.includes(k)) return;
             this[k] = tab[k];
         });
+        this.fileHandle = tab.fileHandle || null;
+        window._lastShpFileHandle = tab.fileHandle || null;
+        window._lastShpFilename = tab.fileName || null;
+        if (tab.isTmpMode) {
+            window._lastTmpFileHandle = tab.fileHandle || null;
+            window._lastTmpFilename = tab.fileName || null;
+        } else {
+            window._lastTmpFileHandle = null;
+            window._lastTmpFilename = null;
+        }
+        const wrapper = document.getElementById('canvasWrapper');
+        if (wrapper && wrapper.parentElement && tab.scrollLeft !== undefined) {
+            wrapper.parentElement.scrollLeft = tab.scrollLeft;
+            wrapper.parentElement.scrollTop = tab.scrollTop;
+        }
     }
 };
 

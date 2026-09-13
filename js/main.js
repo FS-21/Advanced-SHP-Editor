@@ -35,24 +35,24 @@ import {
     showEditorInterface, renderPaletteSimple, initFrameManager,
     showConfirm, updateActiveLayerPreview, setupSubmenusRecursive,
     openActiveLayerProperties, setupTooltips, getLayerDataSnapshot, setupToolbarOverflow,
-    showPasteNotification, initPasteRangeDialog
+    showPasteNotification, initPasteRangeDialog, setHoveredPaletteIndex
 } from './ui.js';
 import { initPreviewWindow, openPreview } from './preview_window.js';
 import {
     magicWand, finishLassoSelection, pickColor, deleteSelection,
-    fillCircle, fillRectangle, addReplacePair, removeReplacePairs, swapReplaceCols, processReplace,
+    fillCircle, fillRectangle, addReplacePair, removeReplacePairs, swapReplaceCols, processReplace, processReplaceAll,
     copyReplacePairs, pasteReplacePairs,
     updateCanvasCursor, cropToSelection, deselect, getSelectionHandleAt, handleToCursor
 } from './tools.js';
 
 import { resampleLayerData, rotateBufferArbitrary, shiftColorIndex } from './image_ops.js';
 import { bresenham, setupAutoRepeat } from './utils.js';
-import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData } from './file_io.js';
+import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleSaveAsShp, handleSaveAll, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData } from './file_io.js';
 import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile } from './menu_handlers.js';
 import { setupPaletteMenu, setActivePaletteId, getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
 import { initLanguageSelector } from './translations.js';
-import { initTabs, updateCurrentTabName, createNewTab, closeTab } from './tabs.js';
+import { initTabs, updateCurrentTabName, createNewTab, closeTab, switchTab } from './tabs.js';
 
 
 // Toggle UI visibility based on whether project is loaded
@@ -332,9 +332,15 @@ function setupEventListeners() {
         }
         if (ctrl && k === 's') {
             e.preventDefault();
-            if (e.shiftKey) {
+            if (e.altKey) {
+                // Ctrl+Alt+S: Save All
+                handleSaveAll();
+            } else if (e.shiftKey) {
+                // Ctrl+Shift+S: Save As
                 if (state.isTmpMode) {
                     saveTmpData(true);
+                } else if (window.showSaveFilePicker) {
+                    handleSaveAsShp();
                 } else {
                     showExportDialog();
                 }
@@ -593,6 +599,10 @@ function setupEventListeners() {
         elements.btnProcessReplace.onclick = processReplace;
     }
 
+    if (elements.btnProcessReplaceAll) {
+        elements.btnProcessReplaceAll.onclick = processReplaceAll;
+    }
+
     // Color Picker Buttons
     if (elements.btnPickReplaceSrc) {
         elements.btnPickReplaceSrc.onclick = () => {
@@ -726,51 +736,6 @@ function setupEventListeners() {
     // Handlers for assigning colors to Source/Target cells from the canvas/palette
 
 
-    if (elements.btnProcessReplace) {
-        elements.btnProcessReplace.onclick = () => {
-            const map = new Map();
-            const conflicts = analyzeReplaceConflicts();
-
-            state.replacePairs.forEach((p, i) => {
-                if (!conflicts[i] && p.srcIdx !== null && p.srcIdx !== undefined &&
-                    p.tgtIdx !== null && p.tgtIdx !== undefined) {
-                    map.set(p.srcIdx, p.tgtIdx);
-                }
-            });
-
-            if (map.size === 0) {
-                alert('No valid replacement pairs defined.');
-                return;
-            }
-
-            // Frame range logic
-            let startFrame = parseInt(elements.replaceFrameStart.value) || 0;
-            let endFrame = parseInt(elements.replaceFrameEnd.value) || 0;
-
-            // If both are 0, it might mean "all frames" or just frame 0. 
-            // Better logic: if end is 0 but state.frames.length > 1, maybe it wasn't set.
-            // Process the specified frame range
-            startFrame = Math.max(0, Math.min(startFrame, state.frames.length - 1));
-            if (endFrame === 0 && startFrame === 0 && state.frames.length > 1) {
-                // Default to current frame or all? 
-                // Use the visible range for context-aware processing
-            }
-            endFrame = Math.max(startFrame, Math.min(endFrame, state.frames.length - 1));
-
-            // Apply to frames in range
-            for (let frameIdx = startFrame; frameIdx <= endFrame; frameIdx++) {
-                const frame = state.frames[frameIdx];
-                if (!frame) continue;
-
-                // Recursively process all layers
-                const processLayers = (layers) => {
-                    layers.forEach(layer => {
-                        if (layer.data) {
-                            for (let i = 0; i < layer.data.length; i++) {
-                                if (map.has(layer.data[i])) {
-                                    layer.data[i] = map.get(layer.data[i]);
-    }
-
     // Update palette button UI
     const el = document.getElementById('menuItemNewPalettes');
     if (el) {
@@ -793,23 +758,6 @@ function setupEventListeners() {
                 }
             }
         }
-    }
-}
-                        }
-                        if (layer.children) {
-                            processLayers(layer.children);
-                        }
-                    });
-                };
-
-                processLayers(frame.layers);
-            }
-
-            pushHistory('all');
-            renderCanvas();
-            renderFramesList();
-            showEditorInterface();
-        };
     }
 
     // Initialize Color Replace picker logic if needed
@@ -1062,6 +1010,7 @@ function setupEventListeners() {
         }
 
         const { x, y } = getPos(e);
+        setHoveredPaletteIndex(null);
         e.preventDefault(); // Prevent text selection/native dragging
 
         // --- NEW: Replace Picking from Canvas ---
@@ -1239,11 +1188,15 @@ function setupEventListeners() {
             const cvArea = elements.canvasArea;
             const isOverWorkspace = (scArea && (e.target === scArea || scArea.contains(e.target))) ||
                 (cvArea && (e.target === cvArea || cvArea.contains(e.target)));
-            if (!isOverWorkspace) return;
+            if (!isOverWorkspace) {
+                setHoveredPaletteIndex(null);
+                return;
+            }
 
             // CRITICAL FIX: Skip canvas-specific tooltip reset if hovering over any UI elements
             // This prevents the canvas picker logic from hiding our custom tooltips in the toolbar.
             if (e.target.closest('.toolbar-horizontal, .panel-header, button, select, input, .properties-panel, .ui-tooltip, #topBar')) {
+                setHoveredPaletteIndex(null);
                 return;
             }
         }
@@ -1481,67 +1434,99 @@ function setupEventListeners() {
         // Reset cursor if not hit or tool not move-capable
         updateCanvasCursor(false);
 
-        // Picker Tool Feedback: Show tooltip and highlight palette cell
-        if (activeTool === 'picker' && !isDrawing) {
+        // Hover Palette Indicator & Picker Feedback
+        let hoveredPixelIdx = null;
+        if (!isDrawing && x >= 0 && x < state.canvasW && y >= 0 && y < state.canvasH) {
             const frame = state.frames[state.currentFrameIdx];
             if (frame) {
-                let foundIdx = null;
-                const activeLayer = getActiveLayer();
-
-                if (activeLayer && activeLayer.visible && x >= 0 && x < activeLayer.width && y >= 0 && y < activeLayer.height) {
-                    const idx = activeLayer.data[y * activeLayer.width + x];
-                    if (idx !== TRANSPARENT_COLOR) {
-                        foundIdx = idx;
+                const transIdx = state.isAlphaImageMode ? 127 : 0;
+                // 1. Check floating selection first if present
+                if (state.floatingSelection && state.floatingSelection.data) {
+                    const fs = state.floatingSelection;
+                    if (x >= fs.x && x < fs.x + fs.w && y >= fs.y && y < fs.y + fs.h) {
+                        const lx = x - fs.x;
+                        const ly = y - fs.y;
+                        const p = fs.data[ly * fs.w + lx];
+                        if (p !== TRANSPARENT_COLOR && p !== transIdx && p >= 0 && p < 256) {
+                            hoveredPixelIdx = p;
+                        }
                     }
                 }
-
-                const tooltip = document.getElementById('uiTooltip');
-                if (foundIdx !== null) {
-                    const color = state.palette[foundIdx];
-                    if (tooltip && color) {
-                        let label = `Index: ${foundIdx}`;
-                        if (state.isAlphaImageMode) {
-                            if (foundIdx === 127) label += " (Transparency/Neutral)";
-                            else if (foundIdx === 0) label += " (Black/Solid)";
-                        } else {
-                            if (foundIdx === 0) label += " (Transparency)";
+                // 2. Check active layer
+                if (hoveredPixelIdx === null) {
+                    const activeLayer = getActiveLayer();
+                    if (activeLayer && activeLayer.visible && activeLayer.data) {
+                        const lw = activeLayer.width || state.canvasW;
+                        const lh = activeLayer.height || state.canvasH;
+                        const lx = activeLayer.x || 0;
+                        const ly = activeLayer.y || 0;
+                        const localX = Math.floor(x - lx);
+                        const localY = Math.floor(y - ly);
+                        if (localX >= 0 && localX < lw && localY >= 0 && localY < lh) {
+                            const p = activeLayer.data[localY * lw + localX];
+                            if (p !== TRANSPARENT_COLOR && p !== transIdx && p >= 0 && p < 256) {
+                                hoveredPixelIdx = p;
+                            }
                         }
-                        tooltip.innerHTML = `${label}<br>RGB: ${color.r},${color.g},${color.b}`;
-
-                        // Ensure it's in the correct container for visibility (Standard re-parenting for Top Layer)
-                        const activeDialog = e.target.closest('dialog');
-                        const targetParent = activeDialog || document.body;
-                        if (tooltip.parentElement !== targetParent) {
-                            targetParent.appendChild(tooltip);
+                    }
+                }
+                // 3. If activeLayer is void at this position, check other visible layers top-to-bottom
+                if (hoveredPixelIdx === null && frame.layers) {
+                    for (let li = frame.layers.length - 1; li >= 0; li--) {
+                        const l = frame.layers[li];
+                        if (!l || !l.visible || !l.data) continue;
+                        const lw = l.width || state.canvasW;
+                        const lh = l.height || state.canvasH;
+                        const lx = l.x || 0;
+                        const ly = l.y || 0;
+                        const localX = Math.floor(x - lx);
+                        const localY = Math.floor(y - ly);
+                        if (localX >= 0 && localX < lw && localY >= 0 && localY < lh) {
+                            const p = l.data[localY * lw + localX];
+                            if (p !== TRANSPARENT_COLOR && p !== transIdx && p >= 0 && p < 256) {
+                                hoveredPixelIdx = p;
+                                break;
+                            }
                         }
-
-                        tooltip.classList.add('active');
-                        tooltip.style.display = 'block';
-                        tooltip.style.left = (e.clientX + 15) + 'px';
-                        tooltip.style.top = (e.clientY + 15) + 'px';
-
-                        document.querySelectorAll('.pal-cell').forEach(cell => {
-                            cell.classList.toggle('picker-highlight', parseInt(cell.dataset.idx) === foundIdx);
-                        });
-                    } else if (tooltip) {
-                        tooltip.classList.remove('active');
-                        tooltip.style.display = 'none';
                     }
-                } else {
-                    if (tooltip) {
-                        tooltip.classList.remove('active');
-                        tooltip.style.display = 'none';
-                    }
-                    document.querySelectorAll('.pal-cell').forEach(cell => cell.classList.remove('picker-highlight'));
                 }
             }
-        } else {
-            const tooltip = document.getElementById('uiTooltip');
-            if (tooltip) {
+        }
+
+        // Highlight palette cell with temporary 'X'
+        setHoveredPaletteIndex(hoveredPixelIdx);
+
+        // Tooltip feedback for Picker tool
+        const tooltip = document.getElementById('uiTooltip');
+        if (activeTool === 'picker' && !isDrawing && hoveredPixelIdx !== null) {
+            const color = state.palette[hoveredPixelIdx];
+            if (tooltip && color) {
+                let label = `Index: ${hoveredPixelIdx}`;
+                if (state.isAlphaImageMode) {
+                    if (hoveredPixelIdx === 127) label += " (Transparency/Neutral)";
+                    else if (hoveredPixelIdx === 0) label += " (Black/Solid)";
+                } else {
+                    if (hoveredPixelIdx === 0) label += " (Transparency)";
+                }
+                tooltip.innerHTML = `${label}<br>RGB: ${color.r},${color.g},${color.b}`;
+
+                const activeDialog = e.target.closest('dialog');
+                const targetParent = activeDialog || document.body;
+                if (tooltip.parentElement !== targetParent) {
+                    targetParent.appendChild(tooltip);
+                }
+
+                tooltip.classList.add('active');
+                tooltip.style.display = 'block';
+                tooltip.style.left = (e.clientX + 15) + 'px';
+                tooltip.style.top = (e.clientY + 15) + 'px';
+            } else if (tooltip) {
                 tooltip.classList.remove('active');
                 tooltip.style.display = 'none';
             }
-            document.querySelectorAll('.pal-cell').forEach(cell => cell.classList.remove('picker-highlight'));
+        } else if (tooltip) {
+            tooltip.classList.remove('active');
+            tooltip.style.display = 'none';
         }
 
         if (!isDrawing) {
@@ -1593,6 +1578,7 @@ function setupEventListeners() {
             if (e.target !== elements.mainCanvas && e.target !== elements.overlayCanvas && e.target !== workspace && e.target !== elements.canvasWrapper && e.target !== elements.pixelGridOverlay && e.target.id !== 'canvasResizePreview' && e.target.tagName !== 'CANVAS' && e.target !== elements.canvasArea) {
                 return; // Clicking on dialogs or scrollbars
             }
+            setHoveredPaletteIndex(null);
             document.querySelectorAll('.pal-cell').forEach(cell => cell.classList.remove('picker-highlight'));
         });
         workspace.addEventListener('mouseleave', () => {
@@ -1601,6 +1587,7 @@ function setupEventListeners() {
                 tooltip.classList.remove('active');
                 tooltip.style.display = 'none';
             }
+            setHoveredPaletteIndex(null);
             document.querySelectorAll('.pal-cell').forEach(cell => cell.classList.remove('picker-highlight'));
         });
     }
@@ -1918,7 +1905,7 @@ function setupEventListeners() {
 
     if (elements.btnZoomMinus) {
         setupAutoRepeat(elements.btnZoomMinus, (ev) => {
-            let val = parseInt(elements.inpZoom.value);
+            let val = Math.round((state.zoom || 1) * 100);
             if (ev && ev.ctrlKey) {
                 val = val - 5;
             } else {
@@ -1933,7 +1920,7 @@ function setupEventListeners() {
 
     if (elements.btnZoomPlus) {
         setupAutoRepeat(elements.btnZoomPlus, (ev) => {
-            let val = parseInt(elements.inpZoom.value);
+            let val = Math.round((state.zoom || 1) * 100);
             if (ev && ev.ctrlKey) {
                 val = val + 5;
             } else {
@@ -2133,9 +2120,15 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     // 3. Update UI
     resetHistoryForFreshOpen();
 
-    // 4. Save to Recent Files (if FSAPI handle available)
-    if (window._lastShpFileHandle && impShpData.filename) {
-        saveRecentFile(impShpData.filename, window._lastShpFileHandle);
+    // 4. Save to Recent Files & bind handle to active tab (if FSAPI handle available)
+    if (window._lastShpFileHandle) {
+        state.fileHandle = window._lastShpFileHandle;
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].fileHandle = window._lastShpFileHandle;
+        }
+        if (impShpData.filename) {
+            saveRecentFile(impShpData.filename, window._lastShpFileHandle);
+        }
     }
 
     // Update UI element visibility
@@ -2172,9 +2165,15 @@ function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelected
     // 3. Update UI
     resetHistoryForFreshOpen();
 
-    // 4. Save to Recent Files (if FSAPI handle available)
-    if (window._lastTmpFileHandle && filename) {
-        saveRecentFile(filename, window._lastTmpFileHandle);
+    // 4. Save to Recent Files & bind handle to active tab (if FSAPI handle available)
+    if (window._lastTmpFileHandle) {
+        state.fileHandle = window._lastTmpFileHandle;
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].fileHandle = window._lastTmpFileHandle;
+        }
+        if (filename) {
+            saveRecentFile(filename, window._lastTmpFileHandle);
+        }
     }
 
     // Update UI element visibility
@@ -2563,22 +2562,29 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
         const buffer = preloadedBuffer || await file.arrayBuffer();
         const type = detectFileType(buffer);
 
-        // SHP Editor: always load into the current tab (no auto-new-tab).
-        // The tab system already provides explicit "+" / File > New / context
-        // menu options for the user to manage tabs as they see fit.
-        if (handle && state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-            state.tabs[state.activeTabIndex].fileHandle = handle;
+        // Pre-bind handle to current tab and global state
+        if (handle) {
+            state.fileHandle = handle;
+            window._lastShpFileHandle = handle;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].fileHandle = handle;
+            }
         }
 
         if (type === 'tmp') {
             loadTmpData(buffer, file.name);
             if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
             window._lastShpFilename = file.name;
+            window._lastTmpFilename = file.name;
+            window._lastTmpFileHandle = handle;
             window._lastShpFileHandle = handle;
             state.fileHandle = handle;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].fileHandle = handle;
+            }
             resetHistoryForFreshOpen();
             if (typeof updateUIState === 'function') updateUIState();
-            console.log(`[FileOpen] Loaded TMP via Drag&Drop: ${file.name}`);
+            console.log(`[FileOpen] Loaded TMP via Drag&Drop: ${file.name} ${handle ? '(Direct Save Enabled)' : ''}`);
             return true;
         } else if (type === 'shp') {
             const shp = ShpFormat80.parse(buffer);
@@ -2587,9 +2593,12 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
             window._lastShpFilename = file.name;
             window._lastShpFileHandle = handle;
             state.fileHandle = handle;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].fileHandle = handle;
+            }
             resetHistoryForFreshOpen();
             if (typeof updateUIState === 'function') updateUIState();
-            console.log(`[FileOpen] Loaded SHP via Drag&Drop: ${file.name}`);
+            console.log(`[FileOpen] Loaded SHP via Drag&Drop: ${file.name} ${handle ? '(Direct Save Enabled)' : ''}`);
             return true;
         } else {
             console.warn(`[FileOpen] Unknown signature for: ${file.name}`);
@@ -2609,8 +2618,22 @@ document.addEventListener('drop', async (e) => {
     hidesDrop();
     
     const items = Array.from(e.dataTransfer.items || []);
-    const files = Array.from(e.dataTransfer.files);
+    const files = Array.from(e.dataTransfer.files || []);
     if (files.length === 0) return;
+
+    // Capture file system handles IMMEDIATELY before any async operations detach DataTransferItems
+    const fileHandles = await Promise.all(
+        files.map(async (f, idx) => {
+            try {
+                if (items[idx] && typeof items[idx].getAsFileSystemHandle === 'function') {
+                    return await items[idx].getAsFileSystemHandle();
+                }
+            } catch (err) {
+                console.warn('[Drop] Failed to obtain handle for item:', f.name, err);
+            }
+            return null;
+        })
+    );
 
     // Check if the user dropped image files (PNG/PCX)
     // If they did, handle frame drop (multi-import is supported for images)
@@ -2631,30 +2654,53 @@ document.addEventListener('drop', async (e) => {
         return;
     }
 
-    // Scan the files and process ALL valid SHP or TMP files
-    const initialTab = (state.tabs && state.tabs.length === 1) ? state.tabs[0] : null;
-    let anyLoaded = false;
+    // Scan the files and collect ALL valid SHP or TMP files
+    const validEntries = [];
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        const handle = fileHandles[i] || null;
         try {
             const buffer = await file.arrayBuffer();
             const type = detectFileType(buffer);
             if (type === 'shp' || type === 'tmp') {
-                let handle = null;
-                try {
-                    if (items[i] && typeof items[i].getAsFileSystemHandle === 'function') {
-                        handle = await items[i].getAsFileSystemHandle();
-                    }
-                } catch (err) {}
-                const success = await processSystemFileOpen(file, handle, buffer);
-                if (success) anyLoaded = true;
+                validEntries.push({ file, handle, buffer, type });
             }
         } catch (err) {
             console.error("Error reading file in selection:", file.name, err);
         }
     }
 
-    if (anyLoaded) return;
+    if (validEntries.length === 0) {
+        alert(`No se detectó ningún archivo SHP o TMP válido entre los elementos arrastrados. Asegúrese de que sea un archivo SHP o TMP válido, o imágenes PNG/PCX si tiene un proyecto activo.`);
+        return;
+    }
 
-    alert(`No se detectó ningún archivo SHP o TMP válido entre los elementos arrastrados. Asegúrese de que sea un archivo SHP o TMP válido, o imágenes PNG/PCX si tiene un proyecto activo.`);
+    // Determine if the current tab can be reused (only if completely empty and untouched)
+    const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+    const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName && !curTab.isNewProject;
+
+    let firstOpenedTabIndex = -1;
+
+    for (let i = 0; i < validEntries.length; i++) {
+        const { file, handle, buffer } = validEntries[i];
+        if (i === 0 && isCurrentTabEmpty) {
+            // First file reuses the current empty tab
+            const success = await processSystemFileOpen(file, handle, buffer);
+            if (success && firstOpenedTabIndex === -1) {
+                firstOpenedTabIndex = state.activeTabIndex;
+            }
+        } else {
+            // Open in a new tab (inheriting palette from current active tab)
+            createNewTab(file.name, false);
+            const success = await processSystemFileOpen(file, handle, buffer);
+            if (success && firstOpenedTabIndex === -1) {
+                firstOpenedTabIndex = state.activeTabIndex;
+            }
+        }
+    }
+
+    // Switch to the first loaded file so the user sees the first tab
+    if (firstOpenedTabIndex >= 0 && firstOpenedTabIndex !== state.activeTabIndex) {
+        switchTab(firstOpenedTabIndex);
+    }
 });

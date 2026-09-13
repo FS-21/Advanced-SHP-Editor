@@ -413,9 +413,8 @@ export function restoreHistory(snapshot) {
         if (snapshot.currentFrameIdx !== undefined) state.currentFrameIdx = snapshot.currentFrameIdx;
         state.tmpFullZPreviewActive = snapshot.tmpFullZPreviewActive !== undefined ? snapshot.tmpFullZPreviewActive : false;
         
-        if (snapshot.palette) {
-            state.palette = snapshot.palette.map(c => c ? { ...c } : null);
-        }
+        // Palette is an editor/tab viewing property, not an undoable pixel drawing step.
+        // Keep active palette stable during undo/redo operations.
 
     } else {
         state.floatingSelection = null;

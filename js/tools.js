@@ -1,9 +1,10 @@
 import { state, activeTool, setActiveTool, isDrawing, setIsDrawing, lastPos, setLastPos, TRANSPARENT_COLOR } from './state.js';
 import { elements } from './constants.js';
-import { renderCanvas, renderOverlay, setColor, updateToolSettingsUI, getActiveLayer, triggerSelectionFlash, commitSelection, clearSelection, combineSelection, renderReplaceGrid, updateLayersList, renderFramesList, getLayerDataSnapshot } from './ui.js';
+import { renderCanvas, renderOverlay, setColor, updateToolSettingsUI, getActiveLayer, triggerSelectionFlash, commitSelection, clearSelection, combineSelection, renderReplaceGrid, updateLayersList, renderFramesList, getLayerDataSnapshot, showPasteNotification } from './ui.js';
 import { pushHistory } from './history.js';
 import { bresenham } from './utils.js';
 import { openNewShpDialog, updateUIState } from './main.js';
+import { t } from './translations.js';
 export function setTool(t) {
     const selectionRelatedTools = ['select', 'lasso', 'wand', 'movePixels', 'moveSelectionArea'];
     const isNewToolSelectionRelated = selectionRelatedTools.includes(t);
@@ -746,38 +747,54 @@ export function pasteReplacePairs() {
 export function processReplace() {
     const startInp = document.getElementById('replaceFrameStart');
     const endInp = document.getElementById('replaceFrameEnd');
-
-    const start = startInp ? (parseInt(startInp.value) || 0) : 0;
-    const end = endInp ? (parseInt(endInp.value) || state.frames.length - 1) : state.frames.length - 1;
+    const limitChk = document.getElementById('chkReplaceLimitFrames');
 
     // Build valid map: srcIdx -> tgtIdx
     const validMap = new Map();
     state.replacePairs.forEach(pair => {
         // Prioritize srcIdx/tgtIdx
         if (pair.srcIdx !== undefined && pair.tgtIdx !== undefined && pair.srcIdx !== null && pair.tgtIdx !== null) {
-            validMap.set(pair.srcIdx, pair.tgtIdx);
+            if (pair.srcIdx !== pair.tgtIdx && !validMap.has(pair.srcIdx)) {
+                validMap.set(pair.srcIdx, pair.tgtIdx);
+            }
         } else if (pair.src && pair.tgt && pair.src.idx !== undefined && pair.tgt.idx !== undefined) {
             // Fallback for legacy objects
-            validMap.set(pair.src.idx, pair.tgt.idx);
+            if (pair.src.idx !== pair.tgt.idx && !validMap.has(pair.src.idx)) {
+                validMap.set(pair.src.idx, pair.tgt.idx);
+            }
         }
     });
 
-    if (validMap.size === 0) return;
+    if (validMap.size === 0) {
+        showPasteNotification(t('msg_no_replace_pairs') || "No valid replacement pairs defined.", 'warning', 2500);
+        return;
+    }
+
+    let start = 0;
+    let end = state.frames.length - 1;
+
+    if (limitChk && limitChk.checked) {
+        const s = parseInt(startInp ? startInp.value : '');
+        const e = parseInt(endInp ? endInp.value : '');
+        start = !isNaN(s) ? s : 0;
+        end = !isNaN(e) ? e : (state.frames.length - 1);
+        start = Math.max(0, Math.min(start, state.frames.length - 1));
+        end = Math.max(start, Math.min(end, state.frames.length - 1));
+    }
 
     const frameIndices = [];
-    for (let i = Math.max(0, start); i <= Math.min(end, state.frames.length - 1); i++) {
+    for (let i = start; i <= end; i++) {
         frameIndices.push(i);
     }
 
     frameIndices.forEach(fIdx => {
         const frame = state.frames[fIdx];
+        if (!frame) return;
 
         function processNode(node) {
             if (node.type === 'external_shp') return; // PROTECT External SHP
             if (node.data) {
                 let changed = false;
-                // Determine if node.data is TypedArray or regular array
-                // It's typically Uint8Array for layers
                 for (let i = 0; i < node.data.length; i++) {
                     const currentIdx = node.data[i];
                     if (validMap.has(currentIdx)) {
@@ -797,9 +814,118 @@ export function processReplace() {
     });
 
     pushHistory('all');
+    state.hasChanges = true;
+    if (typeof window.renderTabs === 'function') window.renderTabs();
     renderCanvas();
-    console.log("Replace processed for frames", start, "to", end);
-    alert("Colors replaced successfully.");
+    renderFramesList();
+    renderOverlay();
+    showPasteNotification(t('msg_replace_success') || "Colors replaced successfully.", 'success', 2000);
+}
+
+export function processReplaceAll() {
+    // Build valid map: srcIdx -> tgtIdx
+    const validMap = new Map();
+    state.replacePairs.forEach(pair => {
+        if (pair.srcIdx !== undefined && pair.tgtIdx !== undefined && pair.srcIdx !== null && pair.tgtIdx !== null) {
+            if (pair.srcIdx !== pair.tgtIdx && !validMap.has(pair.srcIdx)) {
+                validMap.set(pair.srcIdx, pair.tgtIdx);
+            }
+        } else if (pair.src && pair.tgt && pair.src.idx !== undefined && pair.tgt.idx !== undefined) {
+            if (pair.src.idx !== pair.tgt.idx && !validMap.has(pair.src.idx)) {
+                validMap.set(pair.src.idx, pair.tgt.idx);
+            }
+        }
+    });
+
+    if (validMap.size === 0) {
+        showPasteNotification(t('msg_no_replace_pairs') || "No valid replacement pairs defined.", 'warning', 2500);
+        return;
+    }
+
+    const startInp = document.getElementById('replaceFrameStart');
+    const endInp = document.getElementById('replaceFrameEnd');
+    const limitChk = document.getElementById('chkReplaceLimitFrames');
+
+    // Save active tab state before iterating
+    const originalActive = state.activeTabIndex;
+    if (originalActive >= 0 && state.tabs[originalActive]) {
+        state.saveToTab(state.tabs[originalActive]);
+    }
+
+    let modifiedTabs = 0;
+
+    for (let tIdx = 0; tIdx < state.tabs.length; tIdx++) {
+        const tab = state.tabs[tIdx];
+        state.activeTabIndex = tIdx;
+        state.loadFromTab(tab);
+
+        const maxFrames = state.frames ? state.frames.length : 0;
+        if (maxFrames === 0) continue;
+
+        let start = 0;
+        let end = maxFrames - 1;
+        if (limitChk && limitChk.checked) {
+            const s = parseInt(startInp ? startInp.value : '');
+            const e = parseInt(endInp ? endInp.value : '');
+            start = !isNaN(s) ? s : 0;
+            end = !isNaN(e) ? e : (maxFrames - 1);
+            start = Math.max(0, Math.min(start, maxFrames - 1));
+            end = Math.max(start, Math.min(end, maxFrames - 1));
+        }
+
+        let tabModified = false;
+
+        for (let i = start; i <= end; i++) {
+            const frame = state.frames[i];
+            if (!frame || !frame.layers) continue;
+
+            function processNode(node) {
+                if (node.type === 'external_shp') return;
+                if (node.data) {
+                    let changed = false;
+                    for (let k = 0; k < node.data.length; k++) {
+                        const cur = node.data[k];
+                        if (validMap.has(cur)) {
+                            node.data[k] = validMap.get(cur);
+                            changed = true;
+                            tabModified = true;
+                        }
+                    }
+                    if (changed) node._v = (node._v || 0) + 1;
+                }
+                if (node.children) node.children.forEach(processNode);
+            }
+
+            frame.layers.forEach(processNode);
+            frame._v = (frame._v || 0) + 1;
+        }
+
+        if (tabModified) {
+            pushHistory('all');
+            state.hasChanges = true;
+            tab.hasChanges = true;
+            modifiedTabs++;
+        }
+
+        state.saveToTab(tab);
+    }
+
+    // Restore original active tab
+    if (originalActive >= 0 && originalActive < state.tabs.length) {
+        state.activeTabIndex = originalActive;
+        state.loadFromTab(state.tabs[originalActive]);
+    }
+
+    if (typeof window.renderTabs === 'function') window.renderTabs();
+    renderCanvas();
+    renderFramesList();
+    renderOverlay();
+
+    const tObj = state.translations;
+    const msg = (tObj && tObj.msg_replace_all_success)
+        ? tObj.msg_replace_all_success.replace('{count}', String(modifiedTabs))
+        : `✅ Colors replaced across ${modifiedTabs} tab(s).`;
+    showPasteNotification(msg, 'success', 2500);
 }
 
 export function spray(layer, cx, cy, size, colorIdx) {

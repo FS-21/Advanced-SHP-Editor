@@ -5,10 +5,10 @@ import {
     renderFramesList, updateLayersList, showEditorInterface,
     updateCanvasSize, addFrame, createNewProject, openFrameManager,
     selectAll, invertSelection, copySelection, cutSelection, pasteClipboard, pasteAsNewFrame, zoomToSelection, openPasteRangeDialog, removeColorZeroFromEntireShp, fillColorZeroInEntireShp,
-    updatePixelGrid, renderLayerThumbnail, setupTooltips
+    updatePixelGrid, renderLayerThumbnail, setupTooltips, updatePaletteUsedMarks
 } from './ui.js';
 import { openNewShpDialog, updateUIState } from './main.js';
-import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, loadTmpData, saveTmpData } from './file_io.js';
+import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, handleSaveAsShp, handleSaveAll, loadTmpData, saveTmpData } from './file_io.js';
 import { resetImportState, syncImporterPalette } from './import_shp.js';
 import { resetTmpImportState, syncTmpImporterPalette } from './import_tmp.js';
 import { ShpFormat80 } from './shp_format.js';
@@ -26,6 +26,7 @@ import {
 import { openSequenceEditor, initSequenceEditor } from './infantry_sequence.js';
 import { openVehicleSequenceEditor, initVehicleSequenceEditor } from './vehicle_sequence.js';
 import { openAresFoundationEditor, initAresFoundation } from './ares_foundation.js';
+import { openConvertPaletteDialog } from './palette_convert.js';
 import { saveTmpSelectedTilesToFile } from './export_helper.js';
 
 
@@ -141,7 +142,7 @@ export function updateMenuState(hasProject) {
     const viewActions = [
         'menuZoomIn', 'menuZoomOut', 'menuZoomToSelection', 'menuZoom100', 'menuShowCenter',
         'menuToggleGrid', 'menuToggleBg', 'triggerGridOptions', 'triggerGameGrid', 'menuToggleShadows', 'menuPreview',
-        'menuToggleShadowOverlay', 'menuAlphaImageMode'
+        'menuToggleShadowOverlay', 'menuAlphaImageMode', 'menuShowFrameColors', 'menuShowAllFramesColors'
     ];
     viewActions.forEach(id => {
         const el = document.getElementById(id);
@@ -200,18 +201,25 @@ export function updateMenuState(hasProject) {
         }
     });
 
+    // Import and tools gating based on palette
+    const hasPalette = state.palette && state.palette.some(c => c !== null);
+
     // Tools enabled just with a project
-    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation', 'menuRemoveColorZero', 'menuFillColorZero'];
+    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation', 'menuRemoveColorZero', 'menuFillColorZero', 'menuConvertPalette'];
     projectToolActions.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-            if (hasProject) el.classList.remove('disabled');
-            else el.classList.add('disabled');
+            if (id === 'menuConvertPalette') {
+                if (hasProject && hasPalette) el.classList.remove('disabled');
+                else el.classList.add('disabled');
+            } else {
+                if (hasProject) el.classList.remove('disabled');
+                else el.classList.add('disabled');
+            }
         }
     });
 
     // Import gating: Enabled only if a palette is loaded
-    const hasPalette = state.palette.some(c => c !== null);
     ['menuImpSpriteSheet', 'menuImpOtherShp', 'menuImpFromImage'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -396,7 +404,9 @@ export function syncMenuToggles() {
         'menuGameGridToggle': state.isoGrid !== 'none',
         'menuShowCenter': !!state.showCenter,
         'menuToggleShadowOverlay': !!state.showShadowOverlay,
-        'menuAlphaImageMode': !!state.isAlphaImageMode
+        'menuAlphaImageMode': !!state.isAlphaImageMode,
+        'menuShowFrameColors': !!state.showFrameColors,
+        'menuShowAllFramesColors': !!state.showAllFramesColors
     };
 
     Object.entries(toggles).forEach(([id, active]) => {
@@ -547,9 +557,21 @@ function setupFileMenu() {
             closeAllMenus();
             if (state.isTmpMode) {
                 saveTmpData(true);
+            } else if (window.showSaveFilePicker) {
+                handleSaveAsShp();
             } else {
                 showExportDialog();
             }
+        };
+    }
+
+    // Save All
+    const menuSaveAll = document.getElementById('menuSaveAll');
+    if (menuSaveAll) {
+        menuSaveAll.onclick = () => {
+            if (menuSaveAll.classList.contains('disabled')) return;
+            closeAllMenus();
+            handleSaveAll();
         };
     }
 
@@ -1590,6 +1612,18 @@ function setupViewMenu() {
         },
         'menuAlphaImageMode': () => {
             toggleAlphaImageMode();
+        },
+        'menuShowFrameColors': () => {
+            state.showFrameColors = !state.showFrameColors;
+            if (state.showFrameColors) state.showAllFramesColors = false;
+            syncMenuToggles();
+            if (typeof updatePaletteUsedMarks === 'function') updatePaletteUsedMarks();
+        },
+        'menuShowAllFramesColors': () => {
+            state.showAllFramesColors = !state.showAllFramesColors;
+            if (state.showAllFramesColors) state.showFrameColors = false;
+            syncMenuToggles();
+            if (typeof updatePaletteUsedMarks === 'function') updatePaletteUsedMarks();
         }
     };
 
@@ -3262,6 +3296,19 @@ export function setupToolsMenu() {
         };
     }
 
+    const convPalEl = document.getElementById('menuConvertPalette');
+    if (convPalEl) {
+        convPalEl.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            if (typeof openConvertPaletteDialog === 'function') {
+                openConvertPaletteDialog();
+            } else if (typeof window.openConvertPaletteDialog === 'function') {
+                window.openConvertPaletteDialog();
+            }
+        };
+    }
+
     // Init sequence editor events (once)
     initSequenceEditor();
     initVehicleSequenceEditor();
@@ -3312,6 +3359,7 @@ async function getRecentFiles() {
 
 export async function saveRecentFile(name, handle) {
     if (!handle) return;
+    window.saveRecentFile = saveRecentFile;
     try {
         const db = await openRecentDB();
 

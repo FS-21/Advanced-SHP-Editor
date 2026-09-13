@@ -51,6 +51,7 @@ JS_ORDER = [
     'image_ops.js',
     'game_palettes.js',
     'palette_menu.js',
+    'palette_convert.js',
     'infantry_sequence.js',
     'vehicle_sequence.js',
     'ares_foundation.js',

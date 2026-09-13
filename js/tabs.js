@@ -3,8 +3,9 @@ let currentContextTabIndex = -1;
 
 import { state, Tab, generateId } from './state.js';
 import { updateUIState } from './main.js';
-import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, renderOverlay, showConfirm, showChoice } from './ui.js';
+import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, renderReplaceGrid } from './ui.js';
 import { renderHistory } from './history.js';
+import { handleSaveShp, saveTmpData } from './file_io.js';
 import { t } from './translations.js';
 
 export function initTabs() {
@@ -25,7 +26,7 @@ export function initTabs() {
         createNewTabAt(0, null);
     }
 
-    btnNewTab.onclick = () => createNewTab(null, true);
+    btnNewTab.onclick = () => createNewTab(null, false);
 
     btnPrevTab.onclick = () => {
         if (state.activeTabIndex > 0) switchTab(state.activeTabIndex - 1);
@@ -56,7 +57,7 @@ export function initTabs() {
 
     // Context Menu Actions
     document.getElementById('ctxNewTab').onclick = () => {
-        createNewTabAt(currentContextTabIndex + 1, null, true);
+        createNewTabAt(currentContextTabIndex + 1, null, false);
         ctxMenu.classList.remove('active');
     };
     document.getElementById('ctxDuplicateTab').onclick = () => {
@@ -123,13 +124,11 @@ export function createNewTab(fileName = null, blankPalette = false) {
 function createNewTabAt(index, fileName = null, blankPalette = false) {
     const id = generateId();
     const name = fileName || "";
-    // When called from the "+" button or the tab context menu, we want a fresh
-    // tab with no inherited palette (the user will pick one via "New SHP/TMP"
-    // or an import). For Open Recent / Open dialogs, we pass blankPalette=false
-    // so the new tab can inherit the current palette state and have it swapped
-    // by applyPaletteById / loadTmpData right after.
-    const tab = new Tab(id, fileName, blankPalette ? null : state);
+    // Inherit the palette and palette selector state from the currently active tab
+    const sourceTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : state;
+    const tab = new Tab(id, fileName, blankPalette ? null : sourceTab);
     tab.idName = name;
+    tab.zoom = 1; // Always start new tab with default 100% zoom
 
     state.tabs.splice(index, 0, tab);
     switchTab(index);
@@ -181,15 +180,11 @@ async function closeOtherTabs(keptIndex) {
 
                 let saveOk = false;
                 if (tab.isTmpMode) {
-                    if (typeof saveTmpData === 'function') {
-                        await saveTmpData(false);
-                        saveOk = !state.hasChanges;
-                    }
+                    await saveTmpData(false);
+                    saveOk = !state.hasChanges;
                 } else {
-                    if (typeof saveShpData === 'function') {
-                        await saveShpData(false);
-                        saveOk = !state.hasChanges;
-                    }
+                    await handleSaveShp();
+                    saveOk = !state.hasChanges;
                 }
                 // Capture the saved snapshot back into the tab.
                 state.saveToTab(tab);
@@ -232,6 +227,7 @@ async function closeOtherTabs(keptIndex) {
     renderFramesList();
     updateLayersList();
     renderPalette();
+    renderReplaceGrid();
     if (typeof renderHistory === 'function') renderHistory();
 }
 
@@ -245,8 +241,8 @@ function reopenLastTab() {
 export function switchTab(index) {
     if (index < 0 || index >= state.tabs.length) return;
 
-    // Persist current state before switching
-    if (state.activeTabIndex !== -1 && state.tabs[state.activeTabIndex]) {
+    // Persist current state before switching, only if switching to a different tab
+    if (state.activeTabIndex !== -1 && state.activeTabIndex !== index && state.tabs[state.activeTabIndex]) {
         const currentTab = state.tabs[state.activeTabIndex];
         state.saveToTab(currentTab);
     }
@@ -254,6 +250,15 @@ export function switchTab(index) {
     state.activeTabIndex = index;
     const newTab = state.tabs[index];
     state.loadFromTab(newTab);
+
+    // Synchronize file handles and filenames with active tab
+    state.fileHandle = newTab.fileHandle || null;
+    window._lastShpFileHandle = newTab.fileHandle || null;
+    window._lastShpFilename = newTab.fileName || null;
+    if (newTab.isTmpMode) {
+        window._lastTmpFileHandle = newTab.fileHandle || null;
+        window._lastTmpFilename = newTab.fileName || null;
+    }
 
     // Update palette selector UI to match the new active tab
     if (typeof window.syncPaletteSelector === 'function') {
@@ -264,12 +269,33 @@ export function switchTab(index) {
     renderTabs();
     updateUIState();
     updateCanvasSize();
+    syncZoomUI();
     renderCanvas();
     renderOverlay();
     renderFramesList();
     updateLayersList();
     renderPalette();
+    renderReplaceGrid();
     if (typeof renderHistory === 'function') renderHistory();
+
+    // Sync Replace Picker buttons active state across tabs
+    const btnPickReplaceSrc = document.getElementById('btnPickReplaceSrc');
+    const btnPickReplaceTgt = document.getElementById('btnPickReplaceTgt');
+    if (btnPickReplaceSrc && btnPickReplaceTgt) {
+        if (state.isPickingForReplace && state.isPickingForReplace.side === 'src') {
+            btnPickReplaceSrc.classList.add('picker-active');
+            btnPickReplaceTgt.classList.remove('picker-active');
+            document.body.classList.add('picking-mode');
+        } else if (state.isPickingForReplace && state.isPickingForReplace.side === 'tgt') {
+            btnPickReplaceTgt.classList.add('picker-active');
+            btnPickReplaceSrc.classList.remove('picker-active');
+            document.body.classList.add('picking-mode');
+        } else {
+            btnPickReplaceSrc.classList.remove('picker-active');
+            btnPickReplaceTgt.classList.remove('picker-active');
+            document.body.classList.remove('picking-mode');
+        }
+    }
 
     // Active tab visibility adjustment
     setTimeout(() => {
@@ -295,13 +321,62 @@ export async function closeTab(index, e) {
     lastClosedTab = structuredClone(tab);
 
     if (state.tabs.length <= 1) {
-        // Reset single remaining tab state
-        state.tabs[0] = new Tab(generateId());
+        // Reset single remaining tab state, preserving current palette
+        const cleanTab = new Tab(generateId(), null, tab);
         state.newFileCounter = 1;
-        state.tabs[0].idName = 'New File 1';
-        state.tabs[0].isNewProject = true;
-        state.tabs[0].hasChanges = false;
-        switchTab(0);
+        cleanTab.idName = 'New File 1';
+        cleanTab.fileName = null;
+        cleanTab.isNewProject = true;
+        cleanTab.hasChanges = false;
+        cleanTab.frames = [];
+        cleanTab.fileHandle = null;
+        cleanTab.history = [];
+        cleanTab.historyPtr = -1;
+        cleanTab.savedHistoryPtr = -1;
+
+        state.tabs[0] = cleanTab;
+        state.activeTabIndex = 0;
+
+        // Reset global state explicitly
+        state.fileHandle = null;
+        window._lastShpFileHandle = null;
+        window._lastShpFilename = null;
+        state.isTmpMode = false;
+        state.tmpHeader = null;
+        state.originalTmpTiles = null;
+        state.tmpFilename = null;
+        window._lastTmpFileHandle = null;
+        window._lastTmpFilename = null;
+        state.frames = [];
+        state.currentFrameIdx = 0;
+        state.selection = null;
+        state.floatingSelection = null;
+        state.history = [];
+        state.historyPtr = -1;
+        state.savedHistoryPtr = -1;
+        state.hasChanges = false;
+
+        document.body.classList.remove('tmp-mode');
+        document.body.classList.remove('picking-mode');
+        const btnPickReplaceSrc = document.getElementById('btnPickReplaceSrc');
+        const btnPickReplaceTgt = document.getElementById('btnPickReplaceTgt');
+        if (btnPickReplaceSrc) btnPickReplaceSrc.classList.remove('picker-active');
+        if (btnPickReplaceTgt) btnPickReplaceTgt.classList.remove('picker-active');
+
+        // Load cleanTab directly into state (do NOT call switchTab which would call saveToTab)
+        state.loadFromTab(cleanTab);
+
+        renderTabs();
+        updateUIState();
+        updateCanvasSize();
+        syncZoomUI();
+        renderCanvas();
+        renderOverlay();
+        renderFramesList();
+        updateLayersList();
+        renderPalette();
+        renderReplaceGrid();
+        if (typeof renderHistory === 'function') renderHistory();
         return;
     }
 
@@ -317,6 +392,7 @@ export async function closeTab(index, e) {
     renderTabs();
     updateUIState();
     updateCanvasSize();
+    syncZoomUI();
     renderCanvas();
     renderOverlay();
     renderFramesList();
@@ -349,6 +425,18 @@ function renderTabs() {
 
     const canClose = state.tabs.length > 1;
     tabBar.classList.toggle('single-tab', !canClose);
+
+    // Toggle Save All visibility when multiple tabs are open
+    const menuSaveAll = document.getElementById('menuSaveAll');
+    if (menuSaveAll) {
+        menuSaveAll.style.display = canClose ? 'flex' : 'none';
+    }
+
+    // Toggle Replace All Tabs button visibility when multiple tabs are open
+    const btnProcessReplaceAll = document.getElementById('btnProcessReplaceAll');
+    if (btnProcessReplaceAll) {
+        btnProcessReplaceAll.style.display = canClose ? 'block' : 'none';
+    }
 
     // Hide entire bar if only one tab AND it's totally empty
     const firstTab = state.tabs[0];

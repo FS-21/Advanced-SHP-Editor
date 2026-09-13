@@ -62,7 +62,7 @@
     /* Ensure newline behavior in some browsers if needed, though <br> is used */
 }
 
-/* Palette Cell Picker Highlight */
+/* Palette Cell Picker & Hover Highlight */
 .pal-cell.picker-highlight::after {
     content: 'X';
     position: absolute;
@@ -74,6 +74,45 @@
     color: #00ffaa;
     text-shadow: 0 0 3px #000, 0 0 3px #000;
     pointer-events: none;
+}
+
+/* Palette Cell Used Marks (View Menu: Show frame / all frames colors) */
+.pal-cell.pal-used-mark::after {
+    content: 'X';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 13px;
+    font-weight: 900;
+    color: #00ffaa;
+    text-shadow: 0 0 2px #000, 0 0 3px #000, 0 0 4px #000;
+    pointer-events: none;
+    line-height: 1;
+    z-index: 2;
+}
+
+/* Palette Cell Hover Mark (Mouse hovering over canvas pixel) */
+.pal-cell.pal-hover-mark {
+    outline: 2px solid #00e5ff !important;
+    outline-offset: -1px;
+    z-index: 5;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.9);
+}
+
+.pal-cell.pal-hover-mark::after {
+    content: 'X';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 15px;
+    font-weight: 950;
+    color: #ffffff !important;
+    text-shadow: 0 0 3px #000, 0 0 5px #000, 0 0 8px #00e5ff !important;
+    pointer-events: none;
+    line-height: 1;
+    z-index: 6;
 }
 
 /* When in picking mode, elevate Palette Grid */
@@ -1453,19 +1492,16 @@ canvas {
 
 .replace-cell-text {
     pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.2s;
-    font-size: 9px;
+    opacity: 1;
+    font-size: 11px;
+    font-weight: bold;
     text-align: center;
     width: 100%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     padding: 0 2px;
-}
-
-.replace-cell:hover .replace-cell-text {
-    opacity: 1;
+    user-select: none;
 }
 
 .replace-arrow {
@@ -1538,6 +1574,35 @@ canvas {
 
 #btnProcessReplace:hover {
     background-color: #00cca0;
+}
+
+#btnProcessReplaceAll {
+    background-color: #00d4ff;
+    color: #1a202c;
+    font-weight: bold;
+    border: none;
+}
+
+#btnProcessReplaceAll:hover {
+    background-color: #00b4d8;
+}
+
+#btnPreviewReplaceChanges {
+    background-color: #2b6cb0;
+    color: #fff;
+    border: 1px solid #2b6cb0;
+    font-weight: 500;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+#btnPreviewReplaceChanges:hover {
+    background-color: #3182ce;
+}
+
+#btnPreviewReplaceChanges:active {
+    background-color: #00ffaa;
+    color: #000;
+    border-color: #00ffaa;
 }
 
 #btnPreviewReplace {
@@ -3545,6 +3610,10 @@ input[type="number"]:focus,
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z'/%3E%3C/svg%3E");
 }
 
+.icon-save-all {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z'/%3E%3Cpath d='M21 7v14a2 2 0 0 1-2 2H7v-2h12V7h2z' opacity='0.7'/%3E%3C/svg%3E");
+}
+
 .icon-save {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z'/%3E%3C/svg%3E");
 }
@@ -3688,6 +3757,14 @@ input[type="number"]:focus,
 
 .icon-shadow-ra2-ts {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M21 3.01H3c-1.1 0-2 .9-2 2V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5.01c0-1.1-.9-2-2-2zM21 19H3V5.01h18V19zM10 12l4-4v3h4v2h-4v3l-4-4z'/%3E%3C/svg%3E");
+}
+
+.icon-palette-frame {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z'/%3E%3C/svg%3E");
+}
+
+.icon-palette-all-frames {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z'/%3E%3Cpath d='M10 8h8v2h-8zm0 3h6v2h-6z'/%3E%3C/svg%3E");
 }
 
 .icon-shadow-ts-ra2 {
@@ -5632,3 +5709,172 @@ body:not(.tmp-mode) #menuItemExportTmp { display: none !important; }
     image-rendering: pixelated;
     pointer-events: none;
 }
+
+/* Convert Palette Dialog */
+#convertPaletteDialog .timeline-controls button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+}
+
+#convertPaletteDialog .timeline-controls button svg {
+    pointer-events: none;
+}
+
+/* Save All Open Files Dialog */
+#saveAllDialog {
+    width: 580px;
+    max-width: 95vw;
+    background: #141722;
+    border: 1px solid var(--accent);
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.75);
+    border-radius: 8px;
+    padding: 22px;
+}
+
+.save-all-list {
+    max-height: 240px;
+    overflow-y: auto;
+    background: #0b0d14;
+    border: 1px solid #232738;
+    border-radius: 6px;
+    padding: 6px;
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.save-all-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    background: #171b26;
+    border: 1px solid #282f42;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #e2e8f0;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.save-all-item:hover {
+    background: #1c2233;
+    border-color: #38425d;
+}
+
+.save-all-item-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.save-all-type-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    background: #2a344a;
+    color: #00ccff;
+    flex-shrink: 0;
+}
+
+.save-all-type-tag.tmp-tag {
+    background: #3d2f4a;
+    color: #ff99cc;
+}
+
+.save-all-filename {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #edf2f7;
+    font-weight: 500;
+}
+
+.save-all-item-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.save-all-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.save-all-badge.badge-modified {
+    background: rgba(255, 170, 0, 0.15);
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.35);
+}
+
+.save-all-badge.badge-clean {
+    background: rgba(0, 255, 170, 0.12);
+    color: #00ffaa;
+    border: 1px solid rgba(0, 255, 170, 0.25);
+}
+
+.save-all-badge.badge-new {
+    background: rgba(0, 204, 255, 0.15);
+    color: #00ccff;
+    border: 1px solid rgba(0, 204, 255, 0.35);
+}
+
+.save-all-badge.badge-saved {
+    background: rgba(0, 255, 170, 0.22);
+    color: #00ffaa;
+    border: 1px solid #00ffaa;
+    font-weight: bold;
+}
+
+.save-all-badge.badge-saving {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e2e8f0;
+    border: 1px solid #4a5568;
+}
+
+.save-all-badge.badge-failed {
+    background: rgba(255, 68, 68, 0.2);
+    color: #ff6666;
+    border: 1px solid rgba(255, 68, 68, 0.4);
+}
+
+.save-all-btn-action {
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: bold;
+    border-radius: 3px;
+    cursor: pointer;
+    background: #3182ce;
+    color: #fff;
+    border: 1px solid #4299e1;
+    transition: background 0.15s ease;
+}
+
+.save-all-btn-action:hover {
+    background: #2b6cb0;
+}
+
+.save-all-btn-action.download-btn {
+    background: #2d3748;
+    color: #cbd5e0;
+    border-color: #4a5568;
+}
+
+.save-all-btn-action.download-btn:hover {
+    background: #4a5568;
+    color: #fff;
+}
