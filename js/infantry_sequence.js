@@ -58,6 +58,10 @@ let iseq_PlayerTimers = {};
 let iseq_PreviewState = {};
 let iseq_DraggedIdx = null;
 
+function iseq_escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function iseq_isValidString(s) {
     return /^[a-zA-Z0-9_-]+$/.test(s);
 }
@@ -689,13 +693,13 @@ export function initSequenceEditor() {
     document.getElementById('seqBtnDeleteSelected').onclick = async () => {
         if (iseq_SelectedIndices.size === 0) return;
         const sorted = [...iseq_SelectedIndices].sort((a, b) => a - b);
-        let msg = `<div style="margin-bottom:10px;">Are you sure you want to delete these ${iseq_SelectedIndices.size} actions?</div>`;
+        let msg = '<div style="margin-bottom:10px;">Are you sure you want to delete these ' + iseq_SelectedIndices.size + ' actions?</div>';
         msg += `<div style="max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.2); padding:8px; border-radius:4px; font-family:monospace; font-size:12px; line-height:1.4;">`;
         for (const idx of sorted) {
             const e = iseq_Entries[idx];
             msg += `<div style="display:flex; justify-content:space-between; gap:20px; border-bottom:1px solid rgba(255,255,255,0.05); padding:2px 0;">`;
-            msg += `<span>${e.name}</span>`;
-            msg += `<span style="color:#718096; font-style:italic;">${e.startFrame}, ${e.frameCount}, ${e.facingMult}${e.direction ? ', ' + e.direction : ''}</span>`;
+            msg += `<span>${iseq_escapeHtml(e.name)}</span>`;
+            msg += `<span style="color:#718096; font-style:italic;">${e.startFrame}, ${e.frameCount}, ${e.facingMult}${e.direction ? ', ' + iseq_escapeHtml(e.direction) : ''}</span>`;
             msg += `</div>`;
         }
         msg += `</div>`;
