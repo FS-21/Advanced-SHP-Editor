@@ -1,6 +1,6 @@
 [package]
 name = "advanced-shp-editor"
-version = "3.0.0"
+version = "4.0.0"
 description = "Advanced SHP Sprite Editor for Tiberian Sun & Red Alert 2"
 authors = ["FS-21"]
 license = "LGPL-3.0-or-later"

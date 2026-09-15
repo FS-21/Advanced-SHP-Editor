@@ -212,7 +212,8 @@ export function initPreviewWindow() {
 
         const getMax = () => {
             const cbShadow = document.getElementById('prevChkShadows');
-            if (cbShadow && cbShadow.checked && state.frames.length % 2 === 0) {
+            const isTdRa = state.shpFormat === 'td_ra';
+            if (!isTdRa && cbShadow && cbShadow.checked && state.frames.length % 2 === 0) {
                 return (state.frames.length / 2) - 1;
             }
             return Math.max(0, state.frames.length - 1);
@@ -292,8 +293,9 @@ function updateTimelineBounds() {
 
     const chkCustomRange = document.getElementById('prevChkCustomRange');
     const useRange = chkCustomRange && chkCustomRange.checked;
+    const isTdRa = state.shpFormat === 'td_ra';
     const cbShadow = document.getElementById('prevChkShadows');
-    const useShadow = cbShadow && cbShadow.checked;
+    const useShadow = !isTdRa && cbShadow && cbShadow.checked;
 
     let start = 0;
     let end = Math.max(0, state.frames.length - 1);
@@ -384,13 +386,22 @@ export function openPreview() {
     const cbLoop = document.getElementById('prevChkLoop');
     if (cbLoop) cbLoop.checked = true;
 
-    // Shadow Mode availability based on frame count
+    // Shadow Mode availability based on frame count and format
+    const lblShadow = document.getElementById('prevLblShadows');
     const cbShadow = document.getElementById('prevChkShadows');
     if (cbShadow) {
-        const canShadow = state.frames.length > 0 && state.frames.length % 2 === 0;
-        cbShadow.disabled = !canShadow;
-        cbShadow.parentElement.style.opacity = canShadow ? "1" : "0.5";
-        if (!canShadow) cbShadow.checked = false;
+        if (state.shpFormat === 'td_ra') {
+            if (lblShadow) lblShadow.style.display = 'none';
+            cbShadow.checked = false;
+            cbShadow.disabled = true;
+        } else {
+            if (lblShadow) lblShadow.style.display = 'flex';
+            const canShadow = state.frames.length > 0 && state.frames.length % 2 === 0;
+            cbShadow.disabled = !canShadow;
+            const targetContainer = lblShadow || cbShadow.parentElement;
+            if (targetContainer) targetContainer.style.opacity = canShadow ? "1" : "0.5";
+            if (!canShadow) cbShadow.checked = false;
+        }
     }
 
     zoom = 1.0;
@@ -409,8 +420,9 @@ function stepFrame(dir) {
     const useRange = chkCustomRange && chkCustomRange.checked;
     const cbLoop = document.getElementById('prevChkLoop');
     const loop = cbLoop && cbLoop.checked;
+    const isTdRa = state.shpFormat === 'td_ra';
     const cbShadow = document.getElementById('prevChkShadows');
-    const useShadow = cbShadow && cbShadow.checked;
+    const useShadow = !isTdRa && cbShadow && cbShadow.checked;
 
     let start = 0;
     let end = state.frames.length - 1;
@@ -498,8 +510,9 @@ function renderPreview() {
         previewCtx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
+    const isTdRa = state.shpFormat === 'td_ra';
     const cbShadow = document.getElementById('prevChkShadows');
-    const useShadow = cbShadow && cbShadow.checked;
+    const useShadow = !isTdRa && cbShadow && cbShadow.checked;
 
     const totalFrames = state.frames.length;
     let shadowFrame = null;
@@ -552,34 +565,55 @@ function renderPreview() {
     if (slider && isPlaying) {
         slider.value = currentFrameIdx;
     }
-    // Draw Game Grid (ISO) if enabled - AFTER drawing frame
+    // Draw Game Grid if enabled - AFTER drawing frame
     if (state.isoGrid && state.isoGrid !== 'none' && frame) {
         // Use the exact same logic as main canvas to ensure pixel-perfect match
-        const isTS = state.isoGrid === 'ts';
-        const tileW = isTS ? 48 : 60;
         const color = { r: 255, g: 255, b: 255, a: 180 };
-
         const fw = frame.width;
         const fh = frame.height;
-        const cx = Math.floor(fw / 2);
-        const cy = fh;
 
         previewCtx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
 
-        for (let py = 0; py < fh; py++) {
-            for (let px = 0; px < fw; px++) {
-                // Skip if this pixel has actual image content
-                if (compositeData && compositeData[py * fw + px] !== TRANSPARENT_COLOR && compositeData[py * fw + px] !== 0) {
-                    continue;
-                }
+        if (state.isoGrid === 'td_ra') {
+            const cellSize = 24;
+            const cx = Math.floor(fw / 2);
+            const cy = Math.floor(fh / 2);
+            const xAnchor = (fw % cellSize === 0) ? 0 : (cx - Math.floor(cellSize / 2));
+            const yAnchor = (fh % cellSize === 0) ? 0 : (cy - Math.floor(cellSize / 2));
 
-                const dx = px - cx;
-                const dy = py - cy;
-                const u = dx + 2 * dy;
-                const v = 2 * dy - dx;
-                if (Math.abs(u % tileW) < 2 || Math.abs(v % tileW) < 2) {
-                    // Draw a scalable rect for each pixel
-                    previewCtx.fillRect(px * zoom, py * zoom, zoom, zoom);
+            for (let py = 0; py < fh; py++) {
+                const dy = ((py - yAnchor) % cellSize + cellSize) % cellSize;
+                for (let px = 0; px < fw; px++) {
+                    if (compositeData && compositeData[py * fw + px] !== TRANSPARENT_COLOR && compositeData[py * fw + px] !== 0) {
+                        continue;
+                    }
+                    const dx = ((px - xAnchor) % cellSize + cellSize) % cellSize;
+                    if (dx === 0 || dy === 0) {
+                        previewCtx.fillRect(px * zoom, py * zoom, zoom, zoom);
+                    }
+                }
+            }
+        } else {
+            const isTS = state.isoGrid === 'ts';
+            const tileW = isTS ? 48 : 60;
+            const cx = Math.floor(fw / 2);
+            const cy = fh;
+
+            for (let py = 0; py < fh; py++) {
+                for (let px = 0; px < fw; px++) {
+                    // Skip if this pixel has actual image content
+                    if (compositeData && compositeData[py * fw + px] !== TRANSPARENT_COLOR && compositeData[py * fw + px] !== 0) {
+                        continue;
+                    }
+
+                    const dx = px - cx;
+                    const dy = py - cy;
+                    const u = dx + 2 * dy;
+                    const v = 2 * dy - dx;
+                    if (Math.abs(u % tileW) < 2 || Math.abs(v % tileW) < 2) {
+                        // Draw a scalable rect for each pixel
+                        previewCtx.fillRect(px * zoom, py * zoom, zoom, zoom);
+                    }
                 }
             }
         }

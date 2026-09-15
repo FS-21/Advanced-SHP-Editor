@@ -86,6 +86,8 @@ export class Tab {
         this.appliedPaletteId = initialState ? (initialState.appliedPaletteId || null) : null;
         this.showFrameColors = false;
         this.showAllFramesColors = false;
+        this.shpFormat = initialState ? (initialState.shpFormat || 'ts_ra2') : 'ts_ra2';
+        this.tdRaShadowMode = initialState ? (initialState.tdRaShadowMode || 'raw') : 'raw';
     }
 }
 
@@ -128,7 +130,9 @@ export const state = {
     // View Options
     showBackground: true, // true=Solid (Index 0), false=Checkerboard
     showCenter: false,    // Center lines overlay
-    isoGrid: 'none',      // 'none', 'ts', 'ra2'
+    isoGrid: 'none',      // 'none', 'td_ra', 'ts', 'ra2'
+    shpFormat: 'ts_ra2',  // 'ts_ra2' (Standard) or 'td_ra' (Classic Westwood)
+    tdRaShadowMode: 'raw', // 'raw', 'ingame', 'hidden'
     useShadows: false,    // SHP Shadow Mode
     fmViewMode: 'mosaic', // 'mosaic' | 'strip'
     fmRelIndex: false,    // Relative indexing for shadow frames

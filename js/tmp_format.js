@@ -1,6 +1,5 @@
 /**
- * TMP Format Parser/Encoder for TS/RA2
- * Based on XCC TMP Editor specifications.
+ * Isometric Tile Set (TMP) Format Parser/Encoder for TS and RA2
  */
 
 export class TmpTsFile {
@@ -71,46 +70,38 @@ export class TmpTsFile {
             cy_extra: dv.getInt32(offset + 32, true)
         };
         
-        // Based on analysis and user report:
-        // 36: Flags (uint8) - bit 0=Extra, bit 1=Z, bit 3=Transparent
-        // 37: Height (int8) - Actual elevation
-        // 38-39: Padding or potentially high bytes of height (but many files use byte only)
-        // 40: Terrain Type (uint8)
-        // 41: Ramp Type (uint8)
-        
-        // Corrected offsets for TS/RA2 TMP tile header (Format 80):
-        // 36: Flags (uint32 usually, but we read byte 36)
-        // 40: Height (int8) 
-        // 41: Land Type (uint8)
-        // 42: Ramp Type (uint8) 
-        // 43-48: Radar Colors (6 bytes)
-        
-        imageHeader.flags = dv.getUint8(offset + 36);
-        imageHeader.height = dv.getInt8(offset + 40);
-        imageHeader.land_type = dv.getUint8(offset + 41);
-        imageHeader.ramp_type = dv.getUint8(offset + 42);
-        
+        // Flags: 32-bit field (offset 36..39)
+        // Bit 0 (0x01): IsHasExtraData
+        // Bit 1 (0x02): IsHasZData
+        // Bit 2 (0x04): IsRandomized
+        imageHeader.flags = dv.getUint32(offset + 36, true);
         imageHeader.has_extra_data = (imageHeader.flags & 0x01) !== 0;
         imageHeader.has_z_data = (imageHeader.flags & 0x02) !== 0;
-        imageHeader.has_damaged_data = (imageHeader.flags & 0x04) !== 0;
-        imageHeader.is_fully_transparent = (imageHeader.flags & 0x08) !== 0;
-
-        // Radar colors start at 42 (3 bytes each)
-        // Radar colors start at 43 (3 bytes each)
+        imageHeader.is_randomized = (imageHeader.flags & 0x04) !== 0;
+        
+        // Elevation, Land Type, Ramp Type
+        imageHeader.height = dv.getUint8(offset + 40);
+        imageHeader.terrain_type = dv.getInt8(offset + 41);
+        imageHeader.land_type = imageHeader.terrain_type;
+        imageHeader.ramp_type = dv.getInt8(offset + 42);
+        
+        // Terrain radar colors (LowColor and HighColor, 3 bytes each)
         imageHeader.radar_red_left = dv.getUint8(offset + 43);
         imageHeader.radar_green_left = dv.getUint8(offset + 44);
         imageHeader.radar_blue_left = dv.getUint8(offset + 45);
         imageHeader.radar_red_right = dv.getUint8(offset + 46);
         imageHeader.radar_green_right = dv.getUint8(offset + 47);
         imageHeader.radar_blue_right = dv.getUint8(offset + 48);
+        imageHeader.low_color = [imageHeader.radar_red_left, imageHeader.radar_green_left, imageHeader.radar_blue_left];
+        imageHeader.high_color = [imageHeader.radar_red_right, imageHeader.radar_green_right, imageHeader.radar_blue_right];
         
+        // Data payload starts at offset + 52 (sizeof(IsoTileRecord))
         const dataOffset = offset + 52; 
         const imageData = new Uint8Array(u8.slice(dataOffset, dataOffset + diamondSize));
         
         let zData = null;
         let extraImageData = null;
         let extraZData = null;
-        let damagedData = null;
         
         let currentEnd = dataOffset + diamondSize;
 
@@ -120,14 +111,9 @@ export class TmpTsFile {
             if (imageHeader.z_ofs === 0) currentEnd += diamondSize;
         }
 
-        if (imageHeader.has_damaged_data) {
-            damagedData = new Uint8Array(u8.slice(currentEnd, currentEnd + diamondSize));
-            currentEnd += diamondSize;
-        }
-        
         if (imageHeader.has_extra_data) {
             const extraSize = imageHeader.cx_extra * imageHeader.cy_extra;
-            if (extraSize > 1) {
+            if (extraSize > 0) {
                 const extraStart = imageHeader.extra_ofs > 0 ? offset + imageHeader.extra_ofs : currentEnd;
                 extraImageData = new Uint8Array(u8.slice(extraStart, extraStart + extraSize));
                 if (imageHeader.extra_ofs === 0) currentEnd += extraSize;
@@ -155,7 +141,6 @@ export class TmpTsFile {
             zData: zData,          
             extraImageData, 
             extraZData,
-            damagedData,
             cx,
             cy
         };
@@ -226,7 +211,7 @@ export class TmpTsFile {
         
         // Validation
         if (!(header.cx === 48 && header.cy === 24) && !(header.cx === 60 && header.cy === 30)) {
-            console.warn(`[TMP Encoder] NON-STANDARD: ${header.cx}x${header.cy}. Potential XCC crash.`);
+            console.warn(`[TMP Encoder] Non-standard tile dimensions: ${header.cx}x${header.cy}. Expected 48x24 or 60x30.`);
         }
         
         if (numTiles <= 0) {
@@ -253,7 +238,6 @@ export class TmpTsFile {
 
             const tileHeader = { ...tile.tileHeader };
             
-            // 🚨 XCC Compatibility: Use ACTUAL coordinates from the tile, NOT the grid index!
             if (tileHeader.x === undefined || tileHeader.y === undefined) {
                 const gx = i % header.cblocks_x;
                 const gy = Math.floor(i / header.cblocks_x);
@@ -261,11 +245,32 @@ export class TmpTsFile {
                 tileHeader.y = halfCy * (gx + gy);
             }
 
-            const tilePayloadSize = 52 + cbDiamond + 
-                                   (tileHeader.has_z_data ? cbDiamond : 0) + 
-                                   ((tile.damagedData && (tileHeader.flags & 0x04)) ? cbDiamond : 0) + 
-                                   ((tileHeader.has_extra_data && tile.extraImageData) ? (tileHeader.cx_extra * tileHeader.cy_extra) : 0) +
-                                   ((tileHeader.has_extra_data && tile.extraImageData && tileHeader.has_z_data && tile.extraZData) ? (tileHeader.cx_extra * tileHeader.cy_extra) : 0);
+            const hasExtra = !!(tileHeader.has_extra_data && tile.extraImageData && (tileHeader.cx_extra > 0) && (tileHeader.cy_extra > 0));
+            const hasZ = !!(tileHeader.has_z_data && tile.zData);
+            const cbExtraSize = hasExtra ? (tileHeader.cx_extra * tileHeader.cy_extra) : 0;
+
+            let cursor = 52 + cbDiamond;
+            let zOffset = 0;
+            if (hasZ) {
+                cursor = (cursor + 3) & ~3;
+                zOffset = cursor;
+                cursor += cbDiamond;
+            }
+            let extraOffset = 0;
+            let extraZOffset = 0;
+            if (hasExtra && cbExtraSize > 0) {
+                cursor = (cursor + 3) & ~3;
+                extraOffset = cursor;
+                cursor += cbExtraSize;
+
+                if (hasZ && tile.extraZData) {
+                    cursor = (cursor + 3) & ~3;
+                    extraZOffset = cursor;
+                    cursor += cbExtraSize;
+                }
+            }
+            cursor = (cursor + 3) & ~3;
+            const tilePayloadSize = cursor;
             
             const tileBuf = new ArrayBuffer(tilePayloadSize);
             const dv = new DataView(tileBuf);
@@ -273,67 +278,62 @@ export class TmpTsFile {
             
             dv.setInt32(0, tileHeader.x || 0, true);
             dv.setInt32(4, tileHeader.y || 0, true);
+            dv.setInt32(8, extraOffset, true);
+            dv.setInt32(12, zOffset, true);
+            dv.setInt32(16, extraZOffset, true);
             
-            // 🚨 Write Extra Metadata at offsets 20, 24, 28, 32
-            if (tileHeader.has_extra_data) {
+            if (hasExtra) {
                 dv.setInt32(20, tileHeader.x_extra || 0, true);
                 dv.setInt32(24, tileHeader.y_extra || 0, true);
                 dv.setInt32(28, tileHeader.cx_extra || 0, true);
                 dv.setInt32(32, tileHeader.cy_extra || 0, true);
             }
 
+            // Flags: Bit 0=IsHasExtraData, Bit 1=IsHasZData, Bit 2=IsRandomized
+            let flags = 0;
+            if (hasExtra) flags |= 0x01;
+            if (hasZ) flags |= 0x02;
+            if (tileHeader.is_randomized || (tileHeader.flags & 0x04)) flags |= 0x04;
+            dv.setUint32(36, flags, true);
+
+            // Elevation, Land Type, Ramp Type
+            dv.setUint8(40, tileHeader.height || 0);
+            dv.setInt8(41, tileHeader.terrain_type !== undefined ? tileHeader.terrain_type : (tileHeader.land_type || 0));
+            dv.setInt8(42, tileHeader.ramp_type || 0);
+
+            // Radar Terrain Colors (LowColor and HighColor)
+            dv.setUint8(43, tileHeader.radar_red_left ?? (tileHeader.low_color ? tileHeader.low_color[0] : 0));
+            dv.setUint8(44, tileHeader.radar_green_left ?? (tileHeader.low_color ? tileHeader.low_color[1] : 0));
+            dv.setUint8(45, tileHeader.radar_blue_left ?? (tileHeader.low_color ? tileHeader.low_color[2] : 0));
+            dv.setUint8(46, tileHeader.radar_red_right ?? (tileHeader.high_color ? tileHeader.high_color[0] : 0));
+            dv.setUint8(47, tileHeader.radar_green_right ?? (tileHeader.high_color ? tileHeader.high_color[1] : 0));
+            dv.setUint8(48, tileHeader.radar_blue_right ?? (tileHeader.high_color ? tileHeader.high_color[2] : 0));
+
             // Main Image Data
             if (tile.data) u8.set(tile.data, 52);
             
-            let cursor = 52 + cbDiamond;
-            
             // Z-Data
-            if (tileHeader.has_z_data && tile.zData) { 
-                dv.setInt32(12, cursor, true); 
-                u8.set(tile.zData, cursor); 
-                cursor += cbDiamond; 
-            }
-            
-            // Damaged Data
-            if (tile.damagedData && (tileHeader.flags & 0x04)) { 
-                u8.set(tile.damagedData, cursor); 
-                cursor += cbDiamond; 
+            if (hasZ && zOffset > 0) {
+                u8.set(tile.zData, zOffset);
             }
             
             // Extra Data
-            const cbExtraSize = (tileHeader.cx_extra || 0) * (tileHeader.cy_extra || 0);
-            if (tileHeader.has_extra_data && tile.extraImageData && cbExtraSize > 0) {
-                dv.setInt32(8, cursor, true); 
-                u8.set(tile.extraImageData, cursor); 
-                cursor += cbExtraSize;
-                
-                // Extra Z-Data
-                if (tileHeader.has_z_data && tile.extraZData) { 
-                    dv.setInt32(16, cursor, true); 
-                    u8.set(tile.extraZData, cursor); 
-                    cursor += cbExtraSize; 
+            if (hasExtra && extraOffset > 0) {
+                u8.set(tile.extraImageData, extraOffset);
+                if (extraZOffset > 0 && tile.extraZData) {
+                    u8.set(tile.extraZData, extraZOffset);
                 }
             }
             
-            // Header Attributes
-            dv.setUint32(36, tileHeader.flags || 0, true); // Write as 32-bit flags
-            dv.setInt8(40, tileHeader.height || 0);
-            dv.setUint8(41, tileHeader.land_type || 0);
-            dv.setUint8(42, tileHeader.ramp_type || 0);
-            dv.setUint8(43, tileHeader.radar_red_left || 0);
-            dv.setUint8(44, tileHeader.radar_green_left || 0);
-            dv.setUint8(45, tileHeader.radar_blue_left || 0);
-            dv.setUint8(46, tileHeader.radar_red_right || 0);
-            dv.setUint8(47, tileHeader.radar_green_right || 0);
-            dv.setUint8(48, tileHeader.radar_blue_right || 0);
-            
+            currentOffset = (currentOffset + 3) & ~3;
             indexTable[i] = currentOffset;
-            tileBuffers.push(new Uint8Array(tileBuf));
+            tileBuffers.push({ offset: currentOffset, data: new Uint8Array(tileBuf) });
             currentOffset += tilePayloadSize;
             encodedCount++;
         }
         
-        const finalBuffer = new ArrayBuffer(currentOffset);
+        const totalSize = (currentOffset + 3) & ~3;
+        const finalBuffer = new ArrayBuffer(totalSize);
         const finalDv = new DataView(finalBuffer);
         const finalU8 = new Uint8Array(finalBuffer);
         
@@ -343,10 +343,11 @@ export class TmpTsFile {
         finalDv.setInt32(12, header.cy, true);
         for (let i = 0; i < numTiles; i++) finalDv.setInt32(16 + i * 4, indexTable[i], true);
         
-        let writePtr = globalHeaderSize + indexSize;
-        for (const buf of tileBuffers) { finalU8.set(buf, writePtr); writePtr += buf.length; }
+        for (const item of tileBuffers) {
+            finalU8.set(item.data, item.offset);
+        }
         
-        console.log(`[TMP Encoder] Finished: ${encodedCount} tiles. ${currentOffset} bytes.`);
+        console.log(`[TMP Encoder] Finished: ${encodedCount} tiles. ${totalSize} bytes.`);
         console.groupEnd();
         return finalBuffer;
     }

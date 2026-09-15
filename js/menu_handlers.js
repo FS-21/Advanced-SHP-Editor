@@ -149,8 +149,11 @@ export function updateMenuState(hasProject) {
         const el = document.getElementById(id);
         if (el) {
             let enabled = hasProject;
-            if (id === 'menuToggleShadowOverlay') enabled = hasProject && state.useShadows;
+            const hasShadowPairs = state.frames.length >= 2 && state.frames.length % 2 === 0;
+            if (id === 'menuToggleShadowOverlay') enabled = hasProject && (state.useShadows || hasShadowPairs);
             if (id === 'menuToggleShadows' && state.isAlphaImageMode) enabled = false;
+            if (id === 'menuToggleShadows' && state.shpFormat === 'td_ra') enabled = false;
+            if (id === 'menuToggleShadowOverlay' && state.shpFormat === 'td_ra') enabled = false;
 
             if (state.isTmpMode && (id === 'menuShowCenter' || id === 'menuPreview' || id === 'menuAlphaImageMode')) {
                 enabled = false;
@@ -213,6 +216,13 @@ export function updateMenuState(hasProject) {
             if (id === 'menuConvertPalette') {
                 if (hasProject && hasPalette) el.classList.remove('disabled');
                 else el.classList.add('disabled');
+            } else if (id === 'menuBatchCompression') {
+                const hasTsRa2Tabs = state.tabs.some(tab => !tab.isTmpMode && tab.shpFormat !== 'td_ra' && tab.frames && tab.frames.length > 0);
+                if (hasProject && state.shpFormat !== 'td_ra' && hasTsRa2Tabs) el.classList.remove('disabled');
+                else el.classList.add('disabled');
+            } else if (id === 'menuConvertRA2toTS' || id === 'menuAresCustomFoundation') {
+                if (hasProject && state.shpFormat !== 'td_ra') el.classList.remove('disabled');
+                else el.classList.add('disabled');
             } else {
                 if (hasProject) el.classList.remove('disabled');
                 else el.classList.add('disabled');
@@ -239,7 +249,8 @@ export function updateMenuState(hasProject) {
             let enabled = hasProject;
             if (id === 'btnUndo') enabled = state.historyPtr > 0;
             if (id === 'btnRedo') enabled = state.historyPtr < state.history.length - 1;
-            if (id === 'cbShowShadowOverlay') enabled = hasProject && state.useShadows;
+            const hasShadowPairs = state.frames.length >= 2 && state.frames.length % 2 === 0;
+            if (id === 'cbShowShadowOverlay') enabled = hasProject && (state.useShadows || hasShadowPairs);
             if (id === 'cbUseShadows' && state.isAlphaImageMode) enabled = false;
 
             if (enabled) {
@@ -342,6 +353,30 @@ export function updateMenuState(hasProject) {
         // Note: wrapperUseShadows and wrapperShowShadowOverlay are hidden in TMP mode via CSS (body.tmp-mode rules)
     }
 
+    // Toggle TS/RA2 Shadow controls vs TD/RA1 Shadow dropdown
+    const isTdRa = state.shpFormat === 'td_ra';
+    const wrapperTdRa = document.getElementById('wrapperTdRaShadows');
+    const wrapperShadows = document.getElementById('wrapperUseShadows');
+    const wrapperOverlay = document.getElementById('wrapperShowShadowOverlay');
+    const sepOverlay = document.getElementById('sepBeforeShadowOverlay');
+    const wrapperRel = document.getElementById('wrapperMainRelIndex');
+
+    if (wrapperTdRa) {
+        wrapperTdRa.style.display = (hasProject && isTdRa && !state.isTmpMode) ? 'flex' : 'none';
+        const selTdRa = document.getElementById('selTdRaShadows');
+        if (selTdRa) selTdRa.value = state.tdRaShadowMode || 'raw';
+    }
+    if (isTdRa) {
+        if (wrapperShadows) wrapperShadows.style.display = 'none';
+        if (wrapperOverlay) wrapperOverlay.style.display = 'none';
+        if (sepOverlay) sepOverlay.style.display = 'none';
+        if (wrapperRel) wrapperRel.style.display = 'none';
+    } else if (!state.isTmpMode) {
+        if (wrapperTdRa) wrapperTdRa.style.display = 'none';
+        if (wrapperShadows) wrapperShadows.style.display = hasProject ? 'flex' : 'none';
+        if (sepOverlay) sepOverlay.style.display = hasProject ? '' : 'none';
+    }
+
     // Swap data-i18n attributes for TMP mode
     const suffix = state.isTmpMode ? '_tmp' : '';
     const sidebarTitleKey = state.isTmpMode ? 'sidebar_tiles' : 'sidebar_frames';
@@ -400,6 +435,7 @@ export function syncMenuToggles() {
         'menuToggleBg': !!state.showBackground,
         'menuToggleShadows': !!state.useShadows,
         'menuGridNone': state.isoGrid === 'none',
+        'menuGridTD': state.isoGrid === 'td_ra',
         'menuGridTS': state.isoGrid === 'ts',
         'menuGridRA2': state.isoGrid === 'ra2',
         'menuGameGridToggle': state.isoGrid !== 'none',
@@ -1574,6 +1610,8 @@ export function populateStartupPaletteOptions() {
             ? window.isCnCReloadedEnabled()
             : (typeof window.CnCReloadedMode !== 'undefined' ? window.CnCReloadedMode : (localStorage.getItem('ase_pref_show_cncreloaded') !== '0'));
         const gameDefs = [
+            { key: 'td', label: 'Tiberian Dawn' },
+            { key: 'ra1', label: 'Red Alert 1' },
             { key: 'ts', label: 'Tiberian Sun' },
             { key: 'ra2', label: 'Red Alert 2' },
             { key: 'yr', label: "Yuri's Revenge" }
@@ -1906,6 +1944,16 @@ function setupViewMenu() {
             syncMenuToggles();
             if (typeof window.renderPreview === 'function') window.renderPreview();
         },
+        'menuGridTD': () => {
+            state.isoGrid = 'td_ra';
+            const sel = document.getElementById('selIsoGrid');
+            if (sel) sel.value = 'td_ra';
+            const prevSel = document.getElementById('prevSelIsoGrid');
+            if (prevSel) prevSel.value = 'td_ra';
+            renderCanvas();
+            syncMenuToggles();
+            if (typeof window.renderPreview === 'function') window.renderPreview();
+        },
         'menuGridTS': () => {
             state.isoGrid = 'ts';
             const sel = document.getElementById('selIsoGrid');
@@ -1927,15 +1975,21 @@ function setupViewMenu() {
             if (typeof window.renderPreview === 'function') window.renderPreview();
         },
         'menuGameGridToggle': () => {
-            // TMP mode toggle: if grid is on, turn off; if off, auto-detect TS vs RA2 from tile width
+            // Toggle game grid: if on, turn off; if off, auto-detect TD/RA1 vs TS vs RA2
             if (state.isoGrid !== 'none') {
                 state.isoGrid = 'none';
+            } else if (state.shpFormat === 'td_ra') {
+                state.isoGrid = 'td_ra';
             } else {
                 const tileW = (state.tmpHeader && state.tmpHeader.cx) || state.canvasW || 48;
                 state.isoGrid = tileW === 60 ? 'ra2' : 'ts';
             }
             const cbIsoGrid = document.getElementById('cbIsoGrid');
             if (cbIsoGrid) cbIsoGrid.checked = state.isoGrid !== 'none';
+            const sel = document.getElementById('selIsoGrid');
+            if (sel) sel.value = state.isoGrid;
+            const prevSel = document.getElementById('prevSelIsoGrid');
+            if (prevSel) prevSel.value = state.isoGrid;
             renderCanvas();
             syncMenuToggles();
             if (typeof window.renderPreview === 'function') window.renderPreview();
@@ -3607,6 +3661,7 @@ export function setupToolsMenu() {
     const ra2tsEl = document.getElementById('menuConvertRA2toTS');
     if (ra2tsEl) {
         ra2tsEl.onclick = (e) => {
+            if (ra2tsEl.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             convertRA2toTS();
@@ -3616,6 +3671,7 @@ export function setupToolsMenu() {
     const tsra2El = document.getElementById('menuConvertTStoRA2');
     if (tsra2El) {
         tsra2El.onclick = (e) => {
+            if (tsra2El.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             convertTStoRA2();
@@ -3625,6 +3681,7 @@ export function setupToolsMenu() {
     const seqEl = document.getElementById('menuInfantrySequence');
     if (seqEl) {
         seqEl.onclick = (e) => {
+            if (seqEl.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             openSequenceEditor();
@@ -3634,6 +3691,7 @@ export function setupToolsMenu() {
     const aresEl = document.getElementById('menuAresCustomFoundation');
     if (aresEl) {
         aresEl.onclick = (e) => {
+            if (aresEl.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             // Defensive guard: this tool only makes sense in SHP mode.
@@ -3647,6 +3705,7 @@ export function setupToolsMenu() {
     const vseqEl = document.getElementById('menuVehicleSequence');
     if (vseqEl) {
         vseqEl.onclick = (e) => {
+            if (vseqEl.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             openVehicleSequenceEditor();
@@ -3656,6 +3715,7 @@ export function setupToolsMenu() {
     const convPalEl = document.getElementById('menuConvertPalette');
     if (convPalEl) {
         convPalEl.onclick = (e) => {
+            if (convPalEl.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             if (typeof openConvertPaletteDialog === 'function') {
@@ -3669,6 +3729,7 @@ export function setupToolsMenu() {
     const batchCompEl = document.getElementById('menuBatchCompression');
     if (batchCompEl) {
         batchCompEl.onclick = (e) => {
+            if (batchCompEl.classList.contains('disabled')) return;
             e.stopPropagation();
             closeAllMenus();
             openBatchCompressionDialog();
@@ -3689,8 +3750,13 @@ export function openBatchCompressionDialog() {
     const btnConfirm = elements.btnConfirmBatchComp || document.getElementById('btnConfirmBatchComp');
     if (!dialog || !selComp || !fileListEl) return;
 
-    // Filter open valid tabs
-    const validTabs = state.tabs.filter(tab => !tab.isTmpMode && tab.frames && tab.frames.length > 0);
+    if (state.shpFormat === 'td_ra') {
+        showPasteNotification(t('msg_batch_compression_not_td_ra') || "TD/RA1 files use native Westwood compression (Format 80) and cannot be converted to TS/RA2 Type 1/3.", "warning", 3500);
+        return;
+    }
+
+    // Filter open valid tabs (exclude TD/RA1)
+    const validTabs = state.tabs.filter(tab => !tab.isTmpMode && tab.shpFormat !== 'td_ra' && tab.frames && tab.frames.length > 0);
     if (validTabs.length === 0) {
         showPasteNotification(t('msg_batch_compression_no_files') || "No SHP files are currently open.", "warning", 3000);
         return;
@@ -3726,7 +3792,14 @@ export function openBatchCompressionDialog() {
             const right = document.createElement('div');
             right.className = 'save-all-item-right';
 
-            if (tab.isAlphaImageMode) {
+            if (tab.shpFormat === 'td_ra') {
+                const tdBadge = document.createElement('span');
+                tdBadge.className = 'save-all-badge badge-clean';
+                tdBadge.textContent = "TD / RA1";
+                tdBadge.style.color = '#f59e0b';
+                tdBadge.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+                right.appendChild(tdBadge);
+            } else if (tab.isAlphaImageMode) {
                 const alphaTag = document.createElement('span');
                 alphaTag.className = 'save-all-badge badge-clean';
                 alphaTag.textContent = t('lbl_locked_alpha_mode') || "Locked (Alpha Mode)";
@@ -3779,6 +3852,7 @@ export function openBatchCompressionDialog() {
         for (let i = 0; i < state.tabs.length; i++) {
             const tab = state.tabs[i];
             if (tab.isTmpMode || !tab.frames || tab.frames.length === 0) continue;
+            if (tab.shpFormat === 'td_ra') continue; // TD/RA1 files retain native format
             if (tab.isAlphaImageMode && targetComp !== 1) continue;
 
             const oldComp = (tab.compression === 1 || tab.compression === 0) ? 1 : 3;

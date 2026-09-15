@@ -228,8 +228,8 @@ function clearRecentUsage() {
 // MENU RENDERING — Dynamic sections (recently + most used)
 // ─────────────────────────────────────────────────────────────
 // Helper to create inline SVG game icons
-const _GAME_ICON_COLORS = { ts: '#4ade80', ra2: '#f87171', yr: '#a78bfa', cncreloaded: '#38bdf8' };
-const _GAME_ICON_LABELS = { ts: 'TS', ra2: 'RA2', yr: 'YR', cncreloaded: 'R' };
+const _GAME_ICON_COLORS = { td: '#f59e0b', ra1: '#ef4444', ts: '#4ade80', ra2: '#f87171', yr: '#a78bfa', cncreloaded: '#38bdf8' };
+const _GAME_ICON_LABELS = { td: 'TD', ra1: 'RA1', ts: 'TS', ra2: 'RA2', yr: 'YR', cncreloaded: 'R' };
 
 export function isCnCReloadedEnabled() {
     if (typeof window.CnCReloadedMode !== 'undefined') {
@@ -291,7 +291,7 @@ function _createGameIconSvg(category, size) {
     txt.setAttribute('text-anchor', 'middle');
     txt.setAttribute('font-family', 'Inter, system-ui, sans-serif');
     txt.setAttribute('fill', '#000');
-    if (category === 'ra2') txt.setAttribute('letter-spacing', '-0.5px');
+    if (category === 'ra2' || category === 'ra1') txt.setAttribute('letter-spacing', '-0.5px');
     txt.textContent = text;
     svg.appendChild(rect);
     svg.appendChild(txt);
@@ -539,9 +539,11 @@ function refreshPalettesMenuDynamic() {
         }
     }
 
-    // Game submenus (TS, RA2, YR, C&C Reloaded)
+    // Game submenus (TD, RA1, TS, RA2, YR, C&C Reloaded)
     if (typeof GAME_PALETTES !== 'undefined') {
         const categories = [
+            { id: 'palTdSubmenu', container: 'palMenuTdContainer', trigger: 'triggerPalTD', key: 'td' },
+            { id: 'palRa1Submenu', container: 'palMenuRa1Container', trigger: 'triggerPalRA1', key: 'ra1' },
             { id: 'palTsSubmenu', container: 'palMenuTsContainer', trigger: 'triggerPalTS', key: 'ts' },
             { id: 'palRa2Submenu', container: 'palMenuRa2Container', trigger: 'triggerPalRA2', key: 'ra2' },
             { id: 'palYrSubmenu', container: 'palMenuYrContainer', trigger: 'triggerPalYR', key: 'yr' },
@@ -1580,6 +1582,8 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
 
     // 4. Games
     const games = [
+        { id: 'TD', name: 'Tiberian Dawn', subId: 'palTdSubmenu_dlg_' + dropdownId, nodes: GAME_PALETTES.td },
+        { id: 'RA1', name: 'Red Alert 1', subId: 'palRa1Submenu_dlg_' + dropdownId, nodes: GAME_PALETTES.ra1 },
         { id: 'TS', name: 'Tiberian Sun', subId: 'palTsSubmenu_dlg_' + dropdownId, nodes: GAME_PALETTES.ts },
         { id: 'RA2', name: 'Red Alert 2', subId: 'palRa2Submenu_dlg_' + dropdownId, nodes: GAME_PALETTES.ra2 },
         { id: 'YR', name: 'Yuri\'s Revenge', subId: 'palYrSubmenu_dlg_' + dropdownId, nodes: GAME_PALETTES.yr }

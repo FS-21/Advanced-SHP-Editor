@@ -1,5 +1,6 @@
 import { state, TRANSPARENT_COLOR } from './state.js';
 import { ShpFormat80 } from './shp_format.js';
+import { ShpTdRaFormat } from './shp_td_ra_format.js';
 import { TmpTsFile } from './tmp_format.js';
 import { getCurrentEditedTiles } from './file_io.js';
 import { PcxLoader } from './pcx_loader.js';
@@ -7,9 +8,9 @@ import { t } from './translations.js';
 
 
 /**
- * Encodes a list of editor frames into an SHP Format80 ArrayBuffer.
+ * Encodes a list of editor frames into an SHP Format80 (TS/RA2) or TD/RA1 buffer.
  */
-export function encodeFramesToShpBuffer(frames, compression = 3, isAlphaImageMode = false) {
+export function encodeFramesToShpBuffer(frames, compression = 3, isAlphaImageMode = false, formatType = null) {
     const flatImages = frames.map(f => {
         const composite = new Uint8Array(f.width * f.height).fill(0);
 
@@ -40,15 +41,20 @@ export function encodeFramesToShpBuffer(frames, compression = 3, isAlphaImageMod
     });
 
     const transparentMapping = isAlphaImageMode ? 127 : 0;
-    return ShpFormat80.encode(flatImages, true, compression, transparentMapping);
+    const targetFormat = formatType || state.shpFormat || 'ts_ra2';
+    if (targetFormat === 'td_ra') {
+        const u8 = ShpTdRaFormat.encode(flatImages, transparentMapping);
+        return u8.buffer;
+    }
+    return ShpFormat80.encode(flatImages, true, compression, transparentMapping, { palette: state.palette });
 }
 
 /**
  * Generic helper to export a given list of frames as a SHP file.
  */
-export async function exportFrameList(filename, frames, compression, existingHandle = null) {
+export async function exportFrameList(filename, frames, compression, existingHandle = null, formatType = null) {
     try {
-        const buf = encodeFramesToShpBuffer(frames, compression, state.isAlphaImageMode);
+        const buf = encodeFramesToShpBuffer(frames, compression, state.isAlphaImageMode, formatType);
         const handle = await downloadFile(filename, buf, existingHandle);
         return handle;
     } catch (err) {

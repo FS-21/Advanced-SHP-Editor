@@ -59,6 +59,8 @@ export const elements = {
 
     get chkShowBackground() { return document.getElementById('chkShowBackground'); },
     get cbUseShadows() { return document.getElementById('cbUseShadows'); },
+    get wrapperTdRaShadows() { return document.getElementById('wrapperTdRaShadows'); },
+    get selTdRaShadows() { return document.getElementById('selTdRaShadows'); },
     get cbShowShadowOverlay() { return document.getElementById('cbShowShadowOverlay'); },
     get btnUndo() { return document.getElementById('btnUndo'); },
     get btnRedo() { return document.getElementById('btnRedo'); },

@@ -287,6 +287,17 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
             if (lx >= 0 && lx < layerW) {
                 const colorIdx = dataSource[lyOff + lx];
                 if (colorIdx !== TRANSPARENT_COLOR) {
+                    if (state.shpFormat === 'td_ra' && (colorIdx & 0xFF) === 4) {
+                        if (state.tdRaShadowMode === 'hidden') continue;
+                        if (state.tdRaShadowMode === 'ingame') {
+                            const off = (pyOff + px) * 4;
+                            const isDark = ((px >> 2) + (py >> 2)) % 2 === 0;
+                            const bgC = isDark ? 102 : 153;
+                            const shadowC = Math.round(bgC * 0.4);
+                            d[off] = shadowC; d[off + 1] = shadowC; d[off + 2] = shadowC; d[off + 3] = 255;
+                            continue;
+                        }
+                    }
                     d32[pyOff + px] = palLUT[colorIdx & 0xFF];
                 }
             }
@@ -866,12 +877,7 @@ export function renderCanvas() {
             }
         }
         // Non-TMP SHP: formula-based repeating grid
-        const isTS = state.isoGrid === 'ts';
-        const tileW = isTS ? 48 : 60;
         const color = { r: 255, g: 255, b: 255, a: 180 };
-
-        const cx = Math.floor(w / 2);
-        const cy = h;
 
         const drawPixel = (px, py) => {
             if (px < 0 || px >= w || py < 0 || py >= h) return;
@@ -886,52 +892,118 @@ export function renderCanvas() {
             d[idx + 2] = Math.min(255, d[idx + 2] * invAlpha + color.b * alpha);
         };
 
-        for (let py = 0; py < h; py++) {
-            for (let px = 0; px < w; px++) {
-                const dx = px - cx;
-                const dy = py - cy;
-                const u = dx + 2 * dy;
-                const v = 2 * dy - dx;
-                if (Math.abs(u % tileW) < 2 || Math.abs(v % tileW) < 2) {
-                    drawPixel(px, py);
+        if (state.isoGrid === 'td_ra') {
+            // TD / RA1 2D Orthographic Tactical Grid (24x24 px cells)
+            const cellSize = 24;
+            const cx = Math.floor(w / 2);
+            const cy = Math.floor(h / 2);
+            const xAnchor = (w % cellSize === 0) ? 0 : (cx - Math.floor(cellSize / 2));
+            const yAnchor = (h % cellSize === 0) ? 0 : (cy - Math.floor(cellSize / 2));
+
+            for (let py = 0; py < h; py++) {
+                const dy = ((py - yAnchor) % cellSize + cellSize) % cellSize;
+                for (let px = 0; px < w; px++) {
+                    const dx = ((px - xAnchor) % cellSize + cellSize) % cellSize;
+                    if (dx === 0 || dy === 0) {
+                        drawPixel(px, py);
+                    }
+                }
+            }
+        } else {
+            // TS / RA2 Isometric Diamond Grid
+            const isTS = state.isoGrid === 'ts';
+            const tileW = isTS ? 48 : 60;
+            const cx = Math.floor(w / 2);
+            const cy = h;
+
+            for (let py = 0; py < h; py++) {
+                for (let px = 0; px < w; px++) {
+                    const dx = px - cx;
+                    const dy = py - cy;
+                    const u = dx + 2 * dy;
+                    const v = 2 * dy - dx;
+                    if (Math.abs(u % tileW) < 2 || Math.abs(v % tileW) < 2) {
+                        drawPixel(px, py);
+                    }
                 }
             }
         }
     }
 
-    // --- Shadow Reference Overlay ---
-    if (state.useShadows && state.showShadowOverlay && state.currentFrameIdx >= Math.floor(state.frames.length / 2)) {
+    // --- Shadow Reference Overlay (TS/RA2 Paired SHP) ---
+    if (state.showShadowOverlay && !state.isTmpMode && state.shpFormat !== 'td_ra' && state.frames.length >= 2 && (state.frames.length % 2 === 0)) {
         const shadowStart = Math.floor(state.frames.length / 2);
-        const normalIdx = state.currentFrameIdx - shadowStart;
-        const normalFrame = state.frames[normalIdx];
-        if (normalFrame) {
-            const normalComposite = compositeFrame(normalFrame, { transparentIdx: TRANSPARENT_COLOR });
+        const isEditingShadow = state.currentFrameIdx >= shadowStart;
 
-            for (let k = 0; k < normalComposite.length; k++) {
-                const nIdx = normalComposite[k];
-                if (nIdx === TRANSPARENT_COLOR || nIdx === actualTransparent) continue;
+        if (isEditingShadow) {
+            // User is editing the SHADOW frame: overlay the NORMAL unit frame as a grayscale/red guide
+            const normalIdx = state.currentFrameIdx - shadowStart;
+            const normalFrame = state.frames[normalIdx];
+            if (normalFrame) {
+                const normalComposite = compositeFrame(normalFrame, { transparentIdx: TRANSPARENT_COLOR });
 
-                const c = state.palette[nIdx] || { r: 0, g: 0, b: 0 };
-                let r = c.r, g = c.g, b = c.b;
+                for (let k = 0; k < normalComposite.length; k++) {
+                    const nIdx = normalComposite[k];
+                    if (nIdx === TRANSPARENT_COLOR || nIdx === actualTransparent) continue;
 
-                // Grayscale
-                const gray = Math.round(r * 0.3 + g * 0.59 + b * 0.11);
-                r = g = b = gray;
+                    const c = state.palette[nIdx] || { r: 0, g: 0, b: 0 };
+                    let r = c.r, g = c.g, b = c.b;
 
-                // Check for collision with shadow pixels (compositeResult is the shadow frame)
-                const sIdx = compositeResult[k];
-                if (sIdx !== TRANSPARENT_COLOR && sIdx !== actualTransparent) {
-                    // Collision! Pointed out by user: reddish tint
-                    r = 255;
-                    g = 50;
-                    b = 50;
+                    // Grayscale
+                    const gray = Math.round(r * 0.3 + g * 0.59 + b * 0.11);
+                    r = g = b = gray;
+
+                    // Check for collision with shadow pixels (compositeResult is the shadow frame)
+                    const sIdx = compositeResult[k];
+                    if (sIdx !== TRANSPARENT_COLOR && sIdx !== actualTransparent) {
+                        // Collision! Pointed out by user: reddish tint
+                        r = 255;
+                        g = 50;
+                        b = 50;
+                    }
+
+                    const off = k * 4;
+                    d[off] = r;
+                    d[off + 1] = g;
+                    d[off + 2] = b;
+                    d[off + 3] = 230; // Fix: ensure visible even on transparent background
                 }
+            }
+        } else {
+            // User is editing the NORMAL unit frame: overlay the paired SHADOW frame
+            const shadowIdx = state.currentFrameIdx + shadowStart;
+            const shadowFrame = state.frames[shadowIdx];
+            if (shadowFrame) {
+                const shadowComposite = compositeFrame(shadowFrame, { transparentIdx: TRANSPARENT_COLOR });
 
-                const off = k * 4;
-                // No more translucency - opaque guide
-                d[off] = r;
-                d[off + 1] = g;
-                d[off + 2] = b;
+                for (let k = 0; k < shadowComposite.length; k++) {
+                    const sIdx = shadowComposite[k];
+                    if (sIdx === TRANSPARENT_COLOR || sIdx === actualTransparent) continue;
+
+                    const off = k * 4;
+                    const isUnitPixel = (compositeResult[k] !== TRANSPARENT_COLOR && compositeResult[k] !== actualTransparent);
+
+                    if (!isUnitPixel) {
+                        // Ground shadow (not covered by unit)
+                        if (state.showBackground) {
+                            d[off] = Math.round(d[off] * 0.35);
+                            d[off + 1] = Math.round(d[off + 1] * 0.35);
+                            d[off + 2] = Math.round(d[off + 2] * 0.35);
+                            d[off + 3] = 255;
+                        } else {
+                            d[off] = 0;
+                            d[off + 1] = 0;
+                            d[off + 2] = 0;
+                            d[off + 3] = 160;
+                        }
+                    } else {
+                        // Shadow overlaps with unit: show subtle collision/overlap tint
+                        d[off] = Math.min(255, Math.round(d[off] * 0.55 + 90));
+                        d[off + 1] = Math.round(d[off + 1] * 0.45);
+                        d[off + 2] = Math.round(d[off + 2] * 0.45);
+                        d[off + 3] = 255;
+                    }
+                }
             }
         }
     }
@@ -2518,6 +2590,45 @@ export function syncStatusCompressionUI() {
     item.style.display = 'flex';
     if (sep) sep.style.display = '';
 
+    if (state.shpFormat === 'td_ra') {
+        const hasDelta = state.frames.some(f => f.compression === 4 || f.compression === 2 || f.formatCode === 4 || f.formatCode === 2 || f.classicFormat === 4 || f.classicFormat === 2);
+        const targetVal = hasDelta ? "td_ra_delta" : "td_ra_80";
+        if (!sel.querySelector(`option[value="${targetVal}"]`)) {
+            const opt = document.createElement('option');
+            opt.value = targetVal;
+            opt.textContent = "TD / RA1";
+            sel.appendChild(opt);
+        }
+        Array.from(sel.options).forEach(opt => {
+            if (opt.value === '1' || opt.value === '3') {
+                opt.hidden = true;
+                opt.disabled = true;
+            }
+        });
+        sel.value = targetVal;
+        sel.disabled = true;
+        sel.style.pointerEvents = 'none';
+        sel.style.cursor = 'not-allowed';
+        const msg = "TD / RA1 (Westwood Native Format)";
+        item.setAttribute('data-title', msg);
+        item.title = msg;
+        sel.title = msg;
+        return;
+    } else {
+        // Clean up TD/RA1 options if switching back to TS/RA2
+        const opt80 = sel.querySelector('option[value="td_ra_80"]');
+        if (opt80) opt80.remove();
+        const optDelta = sel.querySelector('option[value="td_ra_delta"]');
+        if (optDelta) optDelta.remove();
+        Array.from(sel.options).forEach(opt => {
+            opt.hidden = false;
+            opt.disabled = false;
+        });
+        sel.style.pointerEvents = '';
+        sel.style.cursor = '';
+        sel.title = '';
+    }
+
     if (state.isAlphaImageMode) {
         sel.value = "1";
         sel.disabled = true;
@@ -3224,14 +3335,18 @@ export async function showChoice(title, message, label1, label2, cls1 = null, cl
     });
 }
 
-export function createNewProject(w, h, frames = 1, useShadows = false, palette = null, compression = 3, solidStart = true) {
+export function createNewProject(w, h, frames = 1, useShadows = false, palette = null, compression = 3, solidStart = true, formatType = 'ts_ra2') {
     // Reset TMP mode if active
     state.isTmpMode = false;
     state.tmpHeader = null;
     state.originalTmpTiles = null;
     state.tmpFilename = null;
     state.tmpFullZPreviewActive = false;
-    state.gameType = 'ra2';
+    state.gameType = (formatType === 'td_ra') ? 'td' : 'ra2';
+    state.shpFormat = formatType || 'ts_ra2';
+    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+        state.tabs[state.activeTabIndex].shpFormat = state.shpFormat;
+    }
 
     state.canvasW = w;
     state.canvasH = h;
@@ -5533,7 +5648,8 @@ const _compositeCache = new WeakMap();
 function _getCachedComposite(frame, options = {}) {
     const isCurrentFrame = state.frames[state.currentFrameIdx] === frame;
     // Cache key must include all factors that affect the composite output
-    const cacheKey = `${frame._v || 0}_${state.paletteVersion}_${options.showIndex0 !== undefined ? options.showIndex0 : true}_${options.showOnlyBackground || false}_${isCurrentFrame && state.floatingSelection ? 'fs' : 'nofs'}_${options.includeExternalShp ? 'ext' : 'noext'}`;
+    const tdRaShadow = state.shpFormat === 'td_ra' ? (state.tdRaShadowMode || 'raw') : 'no_td';
+    const cacheKey = `${frame._v || 0}_${state.paletteVersion}_${options.showIndex0 !== undefined ? options.showIndex0 : true}_${options.showOnlyBackground || false}_${isCurrentFrame && state.floatingSelection ? 'fs' : 'nofs'}_${options.includeExternalShp ? 'ext' : 'noext'}_${tdRaShadow}`;
 
     let entry = _compositeCache.get(frame);
     if (!options.visualData && entry && entry.key === cacheKey) {
@@ -5637,6 +5753,16 @@ export function createFrameThumbnail(frame, w = 120, h = 90, options = {}) {
                 const colorIdx = compositeData[rowBase + lx];
                 if (colorIdx !== TRANSPARENT_COLOR) {
                     if (colorIdx === actualTransparent && !show0) continue;
+                    if (state.shpFormat === 'td_ra' && colorIdx === 4) {
+                        if (state.tdRaShadowMode === 'hidden') continue;
+                        if (state.tdRaShadowMode === 'ingame') {
+                            const off = outIdx * 4;
+                            d[off] = Math.round(d[off] * 0.4);
+                            d[off + 1] = Math.round(d[off + 1] * 0.4);
+                            d[off + 2] = Math.round(d[off + 2] * 0.4);
+                            continue;
+                        }
+                    }
                     if (palLUT[colorIdx]) {
                         d32[outIdx] = palLUT[colorIdx];
                     } else {

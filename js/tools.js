@@ -588,6 +588,8 @@ export function deleteSelection() {
     if (state.floatingSelection) {
         state.floatingSelection = null;
         state.isMovingSelection = false;
+        const frame = state.frames[state.currentFrameIdx];
+        if (frame) frame._v = (frame._v || 0) + 1;
         pushHistory();
         renderCanvas();
         renderOverlay();
@@ -597,23 +599,42 @@ export function deleteSelection() {
     const layer = getActiveLayer();
     if (!layer || !layer.visible) return;
     const sel = state.selection;
+    const lw = layer.width || state.canvasW;
+    const lh = layer.height || state.canvasH;
+    const lx = layer.x || 0;
+    const ly = layer.y || 0;
+    let target = (layer.editMask && layer.mask) ? layer.mask : layer.data;
+    if (layer.type === 'external_shp' && !target) target = layer.extShpFrameData;
+    if (!target) return;
+
     if (sel.type === 'rect') {
         for (let y = sel.y; y < sel.y + sel.h; y++) {
             for (let x = sel.x; x < sel.x + sel.w; x++) {
-                if (x >= 0 && x < layer.width && y >= 0 && y < layer.height) layer.data[y * layer.width + x] = TRANSPARENT_COLOR;
+                const tx = x - lx;
+                const ty = y - ly;
+                if (tx >= 0 && tx < lw && ty >= 0 && ty < lh) {
+                    target[ty * lw + tx] = TRANSPARENT_COLOR;
+                }
             }
         }
-    } else if (sel.type === 'mask') {
+    } else if (sel.type === 'mask' && sel.maskData) {
+        const isGlobalMask = sel.maskData.length === state.canvasW * state.canvasH;
         for (let y = 0; y < sel.h; y++) {
             for (let x = 0; x < sel.w; x++) {
-                if (sel.maskData[y * sel.w + x]) {
-                    const idx = (sel.y + y) * layer.width + (sel.x + x);
-                    if (idx >= 0 && idx < layer.data.length) layer.data[idx] = TRANSPARENT_COLOR;
+                const maskVal = isGlobalMask ? sel.maskData[(sel.y + y) * state.canvasW + (sel.x + x)] : sel.maskData[y * sel.w + x];
+                if (maskVal) {
+                    const tx = (sel.x + x) - lx;
+                    const ty = (sel.y + y) - ly;
+                    if (tx >= 0 && tx < lw && ty >= 0 && ty < lh) {
+                        target[ty * lw + tx] = TRANSPARENT_COLOR;
+                    }
                 }
             }
         }
     }
     layer._v = (layer._v || 0) + 1;
+    const frame = state.frames[state.currentFrameIdx];
+    if (frame) frame._v = (frame._v || 0) + 1;
     pushHistory();
     renderCanvas();
     updateLayersList();
@@ -1140,33 +1161,46 @@ export function fillSelection() {
 
     const sel = state.selection;
     const colorIdx = state.primaryColorIdx;
-    const w = state.canvasW;
-    const h = state.canvasH;
+    const lw = layer.width || state.canvasW;
+    const lh = layer.height || state.canvasH;
+    const lx = layer.x || 0;
+    const ly = layer.y || 0;
+    let target = (layer.editMask && layer.mask) ? layer.mask : layer.data;
+    if (layer.type === 'external_shp' && !target) target = layer.extShpFrameData;
+    if (!target) return;
 
     if (sel.type === 'rect') {
         for (let y = sel.y; y < sel.y + sel.h; y++) {
             for (let x = sel.x; x < sel.x + sel.w; x++) {
-                if (x >= 0 && x < w && y >= 0 && y < h) {
-                    layer.data[y * w + x] = colorIdx;
+                const tx = x - lx;
+                const ty = y - ly;
+                if (tx >= 0 && tx < lw && ty >= 0 && ty < lh) {
+                    target[ty * lw + tx] = colorIdx;
                 }
             }
         }
-    } else if (sel.type === 'mask') {
+    } else if (sel.type === 'mask' && sel.maskData) {
+        const isGlobalMask = sel.maskData.length === state.canvasW * state.canvasH;
         for (let y = 0; y < sel.h; y++) {
             for (let x = 0; x < sel.w; x++) {
-                if (sel.maskData[y * sel.w + x]) {
-                    const tx = sel.x + x;
-                    const ty = sel.y + y;
-                    if (tx >= 0 && tx < w && ty >= 0 && ty < h) {
-                        layer.data[ty * w + tx] = colorIdx;
+                const maskVal = isGlobalMask ? sel.maskData[(sel.y + y) * state.canvasW + (sel.x + x)] : sel.maskData[y * sel.w + x];
+                if (maskVal) {
+                    const tx = (sel.x + x) - lx;
+                    const ty = (sel.y + y) - ly;
+                    if (tx >= 0 && tx < lw && ty >= 0 && ty < lh) {
+                        target[ty * lw + tx] = colorIdx;
                     }
                 }
             }
         }
     }
     layer._v = (layer._v || 0) + 1;
+    const frame = state.frames[state.currentFrameIdx];
+    if (frame) frame._v = (frame._v || 0) + 1;
     pushHistory();
     renderCanvas();
+    updateLayersList();
+    renderFramesList();
     renderOverlay();
 }
 

@@ -331,43 +331,53 @@ export function compositeFrame(frame, options = {}) {
                                     let finalIdx = idx;
                                     if (substitutionMap && substitutionMap.has(idx) && !isExt) finalIdx = substitutionMap.get(idx);
 
-                                    const col = nodePal[finalIdx] || { r: 0, g: 0, b: 0 };
-                                    let r = col.r, g = col.g, b = col.b, a = gAlpha;
-
-                                    if (affectedIndices && affectedIndices.has(idx) && !isExt) {
-                                        r = Math.min(255, r + 60); g = Math.min(255, g + 60); b = Math.min(255, b + 60);
-                                    } else if (affectedIndices && !isExt) {
-                                        r *= 0.2; g *= 0.2; b *= 0.2;
-                                    }
-
-                                    // Faction Remapping
-                                    if (remapBase && finalIdx >= 16 && finalIdx <= 31 && !isExt) {
-                                        let brightness = Math.max(r, Math.max(g, b)) / 255.0;
-                                        brightness *= 1.25;
-                                        r = Math.min(255, Math.round(remapBase.r * brightness));
-                                        g = Math.min(255, Math.round(remapBase.g * brightness));
-                                        b = Math.min(255, Math.round(remapBase.b * brightness));
-                                    }
-
-                                    if (isShadow) { r = 0; g = 0; b = 0; a = Math.round(a * 120 / 255); }
-
-                                    const off = gk * 4;
-                                    if (a === 255) {
-                                        visualData[off] = r; visualData[off + 1] = g; visualData[off + 2] = b; visualData[off + 3] = 255;
+                                    // Special handling for TD/RA1 shadows (Palette Index 4)
+                                    const isTdRaShadow = state.shpFormat === 'td_ra' && finalIdx === 4 && !isExt;
+                                    if (isTdRaShadow && state.tdRaShadowMode === 'hidden') {
+                                        // Hidden mode: don't render to visualData (keep transparent/background)
                                     } else {
-                                        // Back-to-front alpha blending (Painter's algorithm)
-                                        // Standard formula: outA = srcA + dstA * (1 - srcA)
-                                        // outRGB = (srcRGB * srcA + dstRGB * dstA * (1 - srcA)) / outA
-                                        const fa = a / 255;
-                                        const da = visualData[off + 3] / 255;
-                                        const outA = fa + da * (1 - fa);
+                                        const col = nodePal[finalIdx] || { r: 0, g: 0, b: 0 };
+                                        let r = col.r, g = col.g, b = col.b, a = gAlpha;
 
-                                        if (outA > 0) {
-                                            visualData[off] = Math.round((r * fa + visualData[off] * da * (1 - fa)) / outA);
-                                            visualData[off + 1] = Math.round((g * fa + visualData[off + 1] * da * (1 - fa)) / outA);
-                                            visualData[off + 2] = Math.round((b * fa + visualData[off + 2] * da * (1 - fa)) / outA);
+                                        if (affectedIndices && affectedIndices.has(idx) && !isExt) {
+                                            r = Math.min(255, r + 60); g = Math.min(255, g + 60); b = Math.min(255, b + 60);
+                                        } else if (affectedIndices && !isExt) {
+                                            r *= 0.2; g *= 0.2; b *= 0.2;
                                         }
-                                        visualData[off + 3] = Math.round(outA * 255);
+
+                                        // Faction Remapping
+                                        if (remapBase && finalIdx >= 16 && finalIdx <= 31 && !isExt) {
+                                            let brightness = Math.max(r, Math.max(g, b)) / 255.0;
+                                            brightness *= 1.25;
+                                            r = Math.min(255, Math.round(remapBase.r * brightness));
+                                            g = Math.min(255, Math.round(remapBase.g * brightness));
+                                            b = Math.min(255, Math.round(remapBase.b * brightness));
+                                        }
+
+                                        if (isShadow) {
+                                            r = 0; g = 0; b = 0; a = Math.round(a * 120 / 255);
+                                        } else if (isTdRaShadow && state.tdRaShadowMode === 'ingame') {
+                                            r = 0; g = 0; b = 0; a = Math.round(a * 128 / 255);
+                                        }
+
+                                        const off = gk * 4;
+                                        if (a === 255) {
+                                            visualData[off] = r; visualData[off + 1] = g; visualData[off + 2] = b; visualData[off + 3] = 255;
+                                        } else {
+                                            // Back-to-front alpha blending (Painter's algorithm)
+                                            // Standard formula: outA = srcA + dstA * (1 - srcA)
+                                            // outRGB = (srcRGB * srcA + dstRGB * dstA * (1 - srcA)) / outA
+                                            const fa = a / 255;
+                                            const da = visualData[off + 3] / 255;
+                                            const outA = fa + da * (1 - fa);
+
+                                            if (outA > 0) {
+                                                visualData[off] = Math.round((r * fa + visualData[off] * da * (1 - fa)) / outA);
+                                                visualData[off + 1] = Math.round((g * fa + visualData[off + 1] * da * (1 - fa)) / outA);
+                                                visualData[off + 2] = Math.round((b * fa + visualData[off + 2] * da * (1 - fa)) / outA);
+                                            }
+                                            visualData[off + 3] = Math.round(outA * 255);
+                                        }
                                     }
                                 }
                             }
@@ -538,6 +548,10 @@ export function compositeFrame(frame, options = {}) {
             if (idx === actualTransparent && !showIndex0) continue;
             if (isShadow && idx === actualTransparent) continue; // Index representing background
 
+            // Special handling for TD/RA1 shadows (Palette Index 4)
+            const isTdRaShadow = state.shpFormat === 'td_ra' && idx === 4;
+            if (isTdRaShadow && state.tdRaShadowMode === 'hidden') continue;
+
             const pCol = pPalette[idx] || { r: 0, g: 0, b: 0 };
             let r = pCol.r, g = pCol.g, b = pCol.b, a = ghostAlpha[i];
 
@@ -552,6 +566,8 @@ export function compositeFrame(frame, options = {}) {
 
             if (isShadow) {
                 r = 0; g = 0; b = 0; a = 120;
+            } else if (isTdRaShadow && state.tdRaShadowMode === 'ingame') {
+                r = 0; g = 0; b = 0; a = Math.round(a * 128 / 255);
             }
 
             const pi = i * 4;

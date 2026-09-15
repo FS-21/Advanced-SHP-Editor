@@ -37,6 +37,7 @@ JS_ORDER = [
     'constants.js',
     'state.js',
     'translations.js',
+    'shp_td_ra_format.js',
     'shp_format.js',
     'tmp_format.js',
     'history.js',
@@ -69,6 +70,8 @@ def generate_game_palettes_data():
 
     print("Generating game palettes data...")
     categories = [
+        {"folder": "Tiberian Down", "key": "td"},
+        {"folder": "Red Alert 1", "key": "ra1"},
         {"folder": "Tiberian Sun", "key": "ts"},
         {"folder": "Red Alert 2", "key": "ra2"},
         {"folder": "Yuri's Revenge", "key": "yr"},

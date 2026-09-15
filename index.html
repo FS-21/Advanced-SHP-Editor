@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v3.0';</script>
+    <script>const APP_VERSION = 'v4.0';</script>
     <script>
         // CnCReloadedMode: Defaults to true (standard on web), user-toggleable via Preferences
         const _savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
@@ -538,6 +538,26 @@
                             </div>
                         </div>
 
+                        <!-- Tiberian Dawn submenu -->
+                        <div class="menu-item-submenu" id="palMenuTdContainer">
+                            <div id="triggerPalTD" class="menu-action submenu-trigger">
+                                <span class="menu-icon pm-icon-td"></span><span>Tiberian Dawn</span><span class="arrow">▶</span>
+                            </div>
+                            <div class="menu-dropdown submenu" id="palTdSubmenu">
+                                <div class="pal-menu-section-label">Loading...</div>
+                            </div>
+                        </div>
+
+                        <!-- Red Alert 1 submenu -->
+                        <div class="menu-item-submenu" id="palMenuRa1Container">
+                            <div id="triggerPalRA1" class="menu-action submenu-trigger">
+                                <span class="menu-icon pm-icon-ra1"></span><span>Red Alert 1</span><span class="arrow">▶</span>
+                            </div>
+                            <div class="menu-dropdown submenu" id="palRa1Submenu">
+                                <div class="pal-menu-section-label">Loading...</div>
+                            </div>
+                        </div>
+
                         <!-- Tiberian Sun submenu -->
                         <div class="menu-item-submenu" id="palMenuTsContainer">
                             <div id="triggerPalTS" class="menu-action submenu-trigger">
@@ -661,6 +681,9 @@
                                 <div id="menuGridNone" class="menu-action" data-i18n-title="tt_menu_iso_grid_none"><span
                                         class="menu-icon icon-grid-none"></span><span
                                         data-i18n="menu_grid_none">None</span></div>
+                                <div id="menuGridTD" class="menu-action" data-i18n-title="tt_menu_iso_grid_td"><span
+                                        class="menu-icon icon-grid-td"></span><span
+                                        data-i18n="menu_td_grid">TD / RA1 Grid (24x24)</span></div>
                                 <div id="menuGridTS" class="menu-action" data-i18n-title="tt_menu_iso_grid_ts"><span
                                         class="menu-icon icon-grid-ts"></span><span data-i18n="menu_ts_grid">TS
                                         Grid</span></div>
@@ -955,6 +978,7 @@
                         Grid:</span>
                     <select id="selIsoGrid" class="input-dark" style="height:24px; padding:0 5px; width: 100px;">
                         <option value="none" data-i18n="menu_grid_none">None</option>
+                        <option value="td_ra" data-i18n="menu_td_grid">TD / RA1 Grid</option>
                         <option value="ts" data-i18n="menu_ts_grid">TS Grid</option>
                         <option value="ra2" data-i18n="menu_ra2_grid">RA2 Grid</option>
                     </select>
@@ -976,6 +1000,16 @@
                         <input type="checkbox" id="cbUseShadows" style="margin-right:5px;">
                         Shadows
                     </label>
+                </div>
+
+                <div id="wrapperTdRaShadows" style="display:none; align-items:center; margin-left:5px;"
+                    data-i18n-title="tt_td_ra_shadows">
+                    <span style="font-size:11px; color:#cbd5e0; margin-right:5px; font-weight:500;" data-i18n="lbl_td_ra_shadows">Shadows:</span>
+                    <select id="selTdRaShadows" class="status-select" style="height:22px; font-size:11px; padding:1px 4px;">
+                        <option value="raw" data-i18n="opt_td_ra_shadow_raw">Raw (Palette)</option>
+                        <option value="ingame" data-i18n="opt_td_ra_shadow_ingame">In-Game Filter</option>
+                        <option value="hidden" data-i18n="opt_td_ra_shadow_hidden">Hidden</option>
+                    </select>
                 </div>
 
                 <div id="wrapperMainRelIndex" style="display:none; align-items:center; margin-left:12px;"
@@ -1854,13 +1888,23 @@
                         </div>
                     </div>
 
+                    <div style="margin-bottom: 12px;">
+                        <label
+                            style="display:block; margin-bottom:4px; color: var(--accent); font-size:11px; text-transform:uppercase;"
+                            data-i18n="lbl_target_game">Target Game</label>
+                        <select id="selNewShpFormat" class="input-dark" style="width:100%;">
+                            <option value="ts_ra2" selected data-i18n="opt_shp_game_ts_ra2">Tiberian Sun / Red Alert 2</option>
+                            <option value="td_ra" data-i18n="opt_shp_game_td_ra">Tiberian Dawn / Red Alert 1</option>
+                        </select>
+                    </div>
+
                     <div style="margin-bottom: 5px;">
                         <label
                             style="display:block; margin-bottom:4px; color: var(--accent); font-size:11px; text-transform:uppercase;"
                             data-i18n="lbl_compression">Compression</label>
                         <select id="selNewShpComp" class="input-dark" style="width:100%;">
-                            <option value="3" data-i18n="opt_format80_c">Format 80 (Type 3 - Compressed)</option>
-                            <option value="1" data-i18n="opt_format80_u">Format 80 (Type 1 - Uncompressed)</option>
+                            <option value="3" data-i18n="opt_format80_c">Type 3 (Compressed)</option>
+                            <option value="1" data-i18n="opt_format80_u">Type 1 (Uncompressed)</option>
                         </select>
                     </div>
 
@@ -3621,7 +3665,7 @@
                             data-i18n="lbl_range_mode">
                             RANGE & MODE</div>
                         <div style="display: flex; flex-direction: column; gap: 8px;">
-                            <label class="checkbox-container" style="font-size: 11px;"
+                            <label class="checkbox-container" id="prevLblShadows" style="font-size: 11px;"
                                 data-i18n-title="tt_prev_shadow_mode">
                                 <input type="checkbox" id="prevChkShadows">
                                 <span class="checkmark"></span>
@@ -3643,6 +3687,7 @@
                                 <select id="prevSelIsoGrid" class="input-dark"
                                     style="height:22px; padding:0 5px; width: 80px; font-size: 11px;">
                                     <option value="none" data-i18n="opt_none">None</option>
+                                    <option value="td_ra" data-i18n="opt_td_grid">TD / RA1 Grid</option>
                                     <option value="ts" data-i18n="opt_ts_grid">TS Grid</option>
                                     <option value="ra2" data-i18n="opt_ra2_grid">RA2 Grid</option>
                                 </select>

@@ -20,7 +20,7 @@ import { state, activeTool, isDrawing, setIsDrawing, lastPos, setLastPos } from 
 import { elements } from './constants.js';
 import { initImportShp, syncImporterPalette, resetImportState } from './import_shp.js';
 import { initImportTmp, syncTmpImporterPalette, resetTmpImportState } from './import_tmp.js';
-import { ShpFormat80 } from './shp_format.js';
+import { ShpFormat80, ShpTdRaFormat } from './shp_format.js';
 import { initHistoryHooks, undo, redo, pushHistory, resetHistoryForFreshOpen } from './history.js';
 import {
     updateCanvasSize, renderCanvas, renderOverlay,
@@ -210,6 +210,17 @@ window.addEventListener('keyup', (e) => {
     if (e.key === 'Control') state.isCtrlPressed = false;
 });
 
+function isEditableTextInput(el) {
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag === 'input') {
+        const type = (el.type || 'text').toLowerCase();
+        return !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color'].includes(type);
+    }
+    return !!el.isContentEditable;
+}
+
 function setupEventListeners() {
     // Shortcuts
     window.addEventListener('keydown', async (e) => {
@@ -234,7 +245,7 @@ function setupEventListeners() {
 
         // Consolidated Shortcuts
         if (ctrl && k === 'a') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
             const replacePanel = document.getElementById('sidePanelExtra');
             if (replacePanel && !replacePanel.classList.contains('collapsed')) {
@@ -246,7 +257,7 @@ function setupEventListeners() {
             }
         }
         if (ctrl && k === 'c') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
 
             const replacePanel = document.getElementById('sidePanelExtra');
@@ -257,7 +268,7 @@ function setupEventListeners() {
             }
         }
         if (ctrl && k === 'v') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
 
             const replacePanel = document.getElementById('sidePanelExtra');
@@ -289,33 +300,39 @@ function setupEventListeners() {
             }
         }
         if (ctrl && k === 'x') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
             cutSelection();
         }
         if (ctrl && k === 'd') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
             deselect();
         }
         if (ctrl && k === 'i') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
             invertSelection();
         }
-        if (k === 'delete') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+        const isDeleteKey = (k === 'delete' || k === 'del' || e.code === 'Delete' || (e.code === 'NumpadDecimal' && !e.shiftKey));
+        if (isDeleteKey) {
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
 
             const replacePanel = document.getElementById('sidePanelExtra');
-            if (replacePanel && !replacePanel.classList.contains('collapsed') && state.replaceSelection.size > 0) {
+            const isFocusInReplace = replacePanel && replacePanel.contains(document.activeElement);
+            if (isFocusInReplace && !state.selection && state.replaceSelection.size > 0) {
+                removeReplacePairs();
+            } else if (state.selection) {
+                deleteSelection();
+            } else if (replacePanel && !replacePanel.classList.contains('collapsed') && state.replaceSelection.size > 0) {
                 removeReplacePairs();
             } else {
                 deleteSelection();
             }
         }
         if (k === 'backspace') {
-            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+            if (isEditableTextInput(e.target)) return;
             e.preventDefault();
             fillSelection();
         }
@@ -384,7 +401,7 @@ function setupEventListeners() {
             // renameActiveLayer();
         }
 
-        if (['input', 'textarea', 'select'].includes(document.activeElement.tagName.toLowerCase())) return;
+        if (isEditableTextInput(document.activeElement) || (document.activeElement && document.activeElement.tagName.toLowerCase() === 'select')) return;
 
         if (k === 'p') setTool('pencil');
         if (k === 'l') setTool('line');
@@ -1011,6 +1028,9 @@ function setupEventListeners() {
 
         const { x, y } = getPos(e);
         setHoveredPaletteIndex(null);
+        if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
         e.preventDefault(); // Prevent text selection/native dragging
 
         // --- NEW: Replace Picking from Canvas ---
@@ -2009,6 +2029,25 @@ function setupEventListeners() {
         };
     }
 
+    // TD/RA1 Shadow Mode Dropdown
+    const selTdRaShadows = document.getElementById('selTdRaShadows');
+    if (selTdRaShadows) {
+        selTdRaShadows.onchange = (e) => {
+            state.tdRaShadowMode = e.target.value;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].tdRaShadowMode = state.tdRaShadowMode;
+            }
+            // Invalidate frame cache
+            state.frames.forEach(f => { f._v = (f._v || 0) + 1; });
+            renderCanvas();
+            renderFramesList();
+            updateLayersList();
+            if (window.renderPreview && typeof window.renderPreview === 'function') {
+                window.renderPreview();
+            }
+        };
+    }
+
     // Relative Index Toggle (Main Toolbar)
     const cbMainRelIndex = document.getElementById('cbMainRelIndex');
     if (cbMainRelIndex) {
@@ -2031,6 +2070,7 @@ function setupEventListeners() {
         cbShowShadowOverlay.onchange = (e) => {
             state.showShadowOverlay = e.target.checked;
             renderCanvas();
+            if (typeof syncMenuToggles === 'function') syncMenuToggles();
         };
     }
 }
@@ -2202,6 +2242,7 @@ export function openNewShpDialog() {
     if (document.getElementById('inpNewShpW')) document.getElementById('inpNewShpW').value = startW;
     if (document.getElementById('inpNewShpH')) document.getElementById('inpNewShpH').value = startH;
     if (document.getElementById('inpNewShpF')) document.getElementById('inpNewShpF').value = 1;
+    if (document.getElementById('selNewShpFormat')) document.getElementById('selNewShpFormat').value = "ts_ra2";
     if (document.getElementById('selNewShpComp')) document.getElementById('selNewShpComp').value = "3";
     if (document.getElementById('cbNewShpSolid')) document.getElementById('cbNewShpSolid').checked = true;
 
@@ -2322,7 +2363,9 @@ function initNewShpDialog() {
 
             if (confirmed) {
                 const finalPal = window.tempNewShpPalette || tempNewShpPalette;
-                createNewProject(w, h, f, useShadows, finalPal, comp, solidStart);
+                const formatEl = document.getElementById('selNewShpFormat');
+                const shpFormat = formatEl ? formatEl.value : 'ts_ra2';
+                createNewProject(w, h, f, useShadows, finalPal, comp, solidStart, shpFormat);
 
                 if (window._tempNewShpPaletteId) {
                     setActivePaletteId(window._tempNewShpPaletteId);
@@ -2503,21 +2546,25 @@ function detectFileType(buffer) {
         }
     } catch (e) {}
     
-    if (buffer.byteLength >= 8) {
-        try {
-            const type = dv.getUint16(0, true);
-            const width = dv.getUint16(2, true);
-            const height = dv.getUint16(4, true);
-            const numImages = dv.getUint16(6, true);
-            
-            if (width > 0 && height > 0 && numImages > 0 && buffer.byteLength >= 8 + numImages * 24) {
-                return 'shp';
-            }
-        } catch (e) {}
+        if (typeof ShpTdRaFormat !== 'undefined' && ShpTdRaFormat.isTdRaShp(buffer)) {
+            return 'shp';
+        }
+
+        if (buffer.byteLength >= 8) {
+            try {
+                const type = dv.getUint16(0, true);
+                const width = dv.getUint16(2, true);
+                const height = dv.getUint16(4, true);
+                const numImages = dv.getUint16(6, true);
+                
+                if (width > 0 && height > 0 && numImages > 0 && buffer.byteLength >= 8 + numImages * 24) {
+                    return 'shp';
+                }
+            } catch (e) {}
+        }
+        
+        return 'unknown';
     }
-    
-    return 'unknown';
-}
 
 let dragCounter = 0;
 

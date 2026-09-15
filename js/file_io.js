@@ -94,7 +94,12 @@ export function loadShpData(shp) {
         };
     });
 
-    // Set Compression Default
+    // Set SHP Format and Compression Default
+    state.shpFormat = shp.formatType || 'ts_ra2';
+    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+        state.tabs[state.activeTabIndex].shpFormat = state.shpFormat;
+    }
+
     if (state.frames.length > 0) {
         const comp = state.frames[0].compression;
         const normalizedComp = (comp === 1 || comp === 0) ? 1 : 3;
@@ -209,15 +214,29 @@ export function showExportDialog() {
 
         // Default compression to project setting
         if (elements.selExpShpType) {
-            elements.selExpShpType.value = state.compression !== undefined ? String(state.compression) : "3";
-
-            if (state.isAlphaImageMode) {
-                elements.selExpShpType.value = "1";
+            let optTd = elements.selExpShpType.querySelector('option[value="td_ra"]');
+            if (state.shpFormat === 'td_ra') {
+                if (!optTd) {
+                    optTd = document.createElement('option');
+                    optTd.value = "td_ra";
+                    optTd.textContent = "TD / RA1 (Format 80)";
+                    elements.selExpShpType.appendChild(optTd);
+                }
+                elements.selExpShpType.value = "td_ra";
                 elements.selExpShpType.disabled = true;
-                elements.selExpShpType.title = "Alpha Image Mode requires Compression 1";
+                elements.selExpShpType.title = "TD/RA1 uses native Westwood compression (Format 80)";
             } else {
-                elements.selExpShpType.disabled = false;
-                elements.selExpShpType.title = "";
+                if (optTd) optTd.remove();
+                elements.selExpShpType.value = state.compression !== undefined ? String(state.compression) : "3";
+
+                if (state.isAlphaImageMode) {
+                    elements.selExpShpType.value = "1";
+                    elements.selExpShpType.disabled = true;
+                    elements.selExpShpType.title = "Alpha Image Mode requires Compression 1";
+                } else {
+                    elements.selExpShpType.disabled = false;
+                    elements.selExpShpType.title = "";
+                }
             }
         }
     }
@@ -1491,18 +1510,6 @@ export function loadTmpData(buffer, filename, skipPaletteAutoselect = false) {
             });
         }
 
-        // --- Damaged data (diamond → rect) ---
-        if (th.has_damaged_data && tile.damagedData) {
-            const damagedRect = TmpTsFile.decodeTileDiamond(tile.damagedData, cx, cy, 0);
-            const damagedData = new Uint16Array(cx * cy);
-            for (let k = 0; k < damagedRect.length; k++) damagedData[k] = damagedRect[k];
-            frames.push({
-                id: generateId(),
-                width: cx, height: cy, duration: 100, _v: 0,
-                tmpMeta: { tileSlot: i, component: 'damaged' },
-                layers: [{ type: 'layer', id: generateId(), name: 'Damaged', data: damagedData, visible: true, width: cx, height: cy }]
-            });
-        }
 
         // --- Extra image (already rectangular) ---
         if (th.has_extra_data && tile.extraImageData && th.cx_extra > 0 && th.cy_extra > 0) {
@@ -1607,8 +1614,7 @@ export function getCurrentEditedTiles() {
             data: t.data ? new Uint8Array(t.data) : null,
             zData: t.zData ? new Uint8Array(t.zData) : null,
             extraImageData: t.extraImageData ? new Uint8Array(t.extraImageData) : null,
-            extraZData: t.extraZData ? new Uint8Array(t.extraZData) : null,
-            damagedData: t.damagedData ? new Uint8Array(t.damagedData) : null,
+            extraZData: t.extraZData ? new Uint8Array(t.extraZData) : null
         };
     });
 
@@ -1641,8 +1647,6 @@ export function getCurrentEditedTiles() {
             tile.data = TmpTsFile.encodeTileRectangle(composite, cx, cy);
         } else if (component === 'zdata') {
             tile.zData = TmpTsFile.encodeTileRectangle(composite, cx, cy);
-        } else if (component === 'damaged') {
-            tile.damagedData = TmpTsFile.encodeTileRectangle(composite, cx, cy);
         } else if (component === 'extra') {
             tile.extraImageData = composite;
         } else if (component === 'extrazdata') {

@@ -5,9 +5,9 @@ import {
     SVG_PLAY_MODERN,
     SVG_PAUSE_MODERN,
     SVG_STEP_BACK_MODERN,
-    SVG_STEP_FWD_MODERN,
-    parsePaletteBuffer
+    SVG_STEP_FWD_MODERN
 } from './utils.js';
+import { parsePaletteBuffer } from './file_io.js';
 import {
     renderPaletteSimple,
     commitSelection,
