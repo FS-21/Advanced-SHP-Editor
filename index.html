@@ -4,16 +4,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v2.3';</script>
+    <script>const APP_VERSION = 'v3.0';</script>
     <script>
-        let CnCReloadedMode = true;
-        document.addEventListener("DOMContentLoaded", () => {
-            if (!CnCReloadedMode) {
-                const opt = document.querySelector('option[value="reloaded_ra2"]');
-                if (opt) opt.remove();
-                const mnu = document.getElementById('palMenuCnCReloadedContainer');
-                if (mnu) mnu.remove();
+        // CnCReloadedMode: Defaults to true (standard on web), user-toggleable via Preferences
+        const _savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
+        window.CnCReloadedMode = _savedReloaded !== '0';
+        let CnCReloadedMode = window.CnCReloadedMode;
+
+        function isCnCReloadedEnabled() {
+            if (typeof window.CnCReloadedMode !== 'undefined') {
+                return !!window.CnCReloadedMode;
             }
+            const saved = localStorage.getItem('ase_pref_show_cncreloaded');
+            return saved === null ? true : saved === '1';
+        }
+        window.isCnCReloadedEnabled = isCnCReloadedEnabled;
+
+        function setCnCReloadedMode(enabled) {
+            window.CnCReloadedMode = !!enabled;
+            CnCReloadedMode = !!enabled;
+            localStorage.setItem('ase_pref_show_cncreloaded', enabled ? '1' : '0');
+
+            const sel = document.getElementById('selResizeMethod');
+            let opt = document.querySelector('option[value="reloaded_ra2"]') || window._reloadedResizeOption;
+            if (opt) {
+                window._reloadedResizeOption = opt;
+                if (!enabled) {
+                    if (sel && sel.value === 'reloaded_ra2') {
+                        sel.value = 'nearest';
+                    }
+                    if (opt.parentNode) {
+                        opt.parentNode.removeChild(opt);
+                    }
+                } else {
+                    if (sel && !opt.parentNode) {
+                        sel.appendChild(opt);
+                    }
+                }
+            }
+
+            const mnu = document.getElementById('palMenuCnCReloadedContainer');
+            if (mnu) {
+                if (!enabled) {
+                    mnu.style.setProperty('display', 'none', 'important');
+                    const sub = document.getElementById('palCnCReloadedSubmenu');
+                    if (sub) sub.innerHTML = '';
+                } else {
+                    mnu.style.removeProperty('display');
+                }
+            }
+
+            if (typeof window.populateStartupPaletteOptions === 'function') {
+                try { window.populateStartupPaletteOptions(); } catch (_) {}
+            }
+            if (typeof window.refreshAllPaletteMenus === 'function') {
+                try { window.refreshAllPaletteMenus(); } catch (_) {}
+            }
+        }
+        window.setCnCReloadedMode = setCnCReloadedMode;
+
+        document.addEventListener("DOMContentLoaded", () => {
+            setCnCReloadedMode(window.CnCReloadedMode);
         });
     </script>
     <title>Advanced SHP Editor</title>
@@ -59,10 +110,26 @@
         }
     </script>
     <script>
+        const isDesktopEnv = (typeof location !== 'undefined' && (location.protocol === 'tauri:' || location.hostname.includes('tauri.localhost'))) ||
+                             (typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__ || window.IS_DESKTOP_EXE));
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
-            });
+            if (isDesktopEnv) {
+                // In native desktop mode, unregister any service worker and wipe caches so local assets are always fresh
+                navigator.serviceWorker.getRegistrations().then(registrations => {
+                    for (const reg of registrations) {
+                        reg.unregister();
+                    }
+                });
+                if ('caches' in window) {
+                    caches.keys().then(keys => {
+                        keys.forEach(k => caches.delete(k));
+                    });
+                }
+            } else {
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
+                });
+            }
         }
     </script>
 </head>
@@ -226,6 +293,7 @@
             <div class="context-menu-item" id="ctxReopenTab" data-i18n="ctx_reopen_tab">Reopen last closed tab</div>
             <div class="context-menu-divider"></div>
             <div class="context-menu-item" id="ctxCloseOthers" data-i18n="ctx_close_others">Close other tabs</div>
+            <div class="context-menu-item" id="ctxCloseAll" data-i18n="ctx_close_all">Close all tabs</div>
             <div class="context-menu-item" id="ctxCloseTab" data-i18n="ctx_close_tab">Close tab</div>
         </div>
 
@@ -344,6 +412,9 @@
                                 Manager...</span>
                         </div>
                         <div class="menu-divider"></div>
+                        <div id="menuCloseAllShp" class="menu-action" data-i18n-title="tt_menu_close_all" style="display: none;">
+                            <span class="menu-icon icon-close-all"></span><span data-i18n="menu_close_all">Close All</span>
+                        </div>
                         <div id="menuCloseShp" class="menu-action" data-i18n-tooltip="tt_menu_close">
                             <span class="menu-icon icon-close-shp"></span><span data-i18n="menu_close">Close SHP</span>
                         </div>
@@ -417,6 +488,10 @@
                         <div id="menuInvertSelection" class="menu-action" data-i18n-title="tt_menu_invert_sel">
                             <span class="menu-icon icon-invert"></span><span data-i18n="menu_invert_sel">Invert
                                 Selection</span><span class="shortcut">Ctrl+I</span>
+                        </div>
+                        <div id="menuPreferencesDivider" class="menu-divider" style="display: none;"></div>
+                        <div id="menuPreferences" class="menu-action" data-i18n-title="tt_menu_preferences" style="display: none;">
+                            <span class="menu-icon icon-preferences"></span><span data-i18n="menu_preferences">Preferences...</span>
                         </div>
                     </div>
                 </div>
@@ -807,6 +882,23 @@
                         </div>
                     </div> <!-- End of menu-dropdown -->
                 </div> <!-- End of menuItemTools -->
+
+                <div class="menu-item" id="menuItemAbout">
+                    <button class="menu-btn" data-i18n="menu_about">About</button>
+                    <div class="menu-dropdown">
+                        <div id="menuAbout" class="menu-action" data-i18n-title="tt_menu_about">
+                            <span class="menu-icon"
+                                style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">ℹ️</span><span
+                                data-i18n="menu_about_dialog">About Advanced SHP Editor...</span>
+                        </div>
+                        <div class="menu-divider"></div>
+                        <div id="menuGitHub" class="menu-action" data-i18n-title="tt_menu_github">
+                            <span class="menu-icon"
+                                style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🌐</span><span
+                                data-i18n="menu_github_repo">Official GitHub Repository...</span>
+                        </div>
+                    </div>
+                </div>
             </div> <!-- End of mainMenu -->
 
             <div class="toolbar-sep"></div>
@@ -2867,6 +2959,190 @@
             <button id="btnChoice2" class="btn btn-primary" style="padding: 8px 15px; flex: 1;">OPTION
                 2</button>
             <button id="btnChoiceCancel" class="btn-cancel" style="padding: 8px 15px; flex: 1;">CANCEL</button>
+        </div>
+    </dialog>
+
+    <!-- Desktop Preferences Dialog (Tauri Native) -->
+    <dialog id="preferencesDialog" class="dialog-modal"
+        style="width: 720px; min-width: 500px; max-width: 95vw; padding: 24px; text-align: left; background: #141722; border: 1px solid var(--accent); box-shadow: 0 16px 40px rgba(0,0,0,0.8); border-radius: 8px;">
+        <h3 id="prefDialogTitle"
+            style="color: var(--accent); margin-bottom: 6px; font-size: 16px; letter-spacing: 1px; font-family: monospace; display: flex; align-items: center; gap: 10px;"
+            data-i18n="dlg_preferences_title">
+            <span style="font-size:18px;">⚙️</span> PREFERENCES</h3>
+        <p style="font-size: 12px; color: #a0aec0; margin-bottom: 18px; line-height: 1.5; font-family: monospace;"
+            data-i18n="lbl_pref_desc">
+            Configure desktop integration, file associations, and editor default settings.
+        </p>
+
+        <!-- Section: File Associations -->
+        <div style="margin-bottom: 18px; background: #1a202c; padding: 16px 18px; border-radius: 6px; border: 1px solid #2d3748;">
+            <div style="font-family: monospace; font-size: 13px; color: #cbd5e0; font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+                <span data-i18n="lbl_pref_associations">🔗 Windows File Associations</span>
+                <span id="assocStatusBadge" style="font-size: 11px; padding: 2px 10px; border-radius: 4px; background: #2d3748; color: #a0aec0;" data-i18n="lbl_pref_assoc_ready">Ready</span>
+            </div>
+            <p style="font-size: 11px; color: #a0aec0; margin-bottom: 14px; line-height: 1.4;" data-i18n="lbl_pref_assoc_desc">
+                Associate file extensions so double-clicking them in Windows Explorer opens Advanced SHP Editor directly.
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="cbAssocShp" checked style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);">
+                    <span data-i18n-html="lbl_pref_assoc_shp"><strong>.shp</strong> - Command &amp; Conquer Sprite (Format 80)</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="cbAssocSha" checked style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);">
+                    <span data-i18n-html="lbl_pref_assoc_sha"><strong>.sha</strong> - Cursor SHP used in Red Alert 2</span>
+                </label>
+
+                <!-- TMP Terrain Tiles -->
+                <div style="margin-top: 6px; border-top: 1px solid #2d3748; padding-top: 10px;">
+                    <div style="font-size: 11px; color: #a0aec0; margin-bottom: 8px; font-family: monospace;" data-i18n="lbl_pref_assoc_tmp_header">
+                        Terrain Tiles (Westwood TMP Format):
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 16px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="cbAssocTem" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent);">
+                            <span data-i18n-html="lbl_pref_assoc_tem"><strong>.tem</strong> (Temperate)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="cbAssocSno" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent);">
+                            <span data-i18n-html="lbl_pref_assoc_sno"><strong>.sno</strong> (Snow)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="cbAssocUrb" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent);">
+                            <span data-i18n-html="lbl_pref_assoc_urb"><strong>.urb</strong> (Urban)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="cbAssocUbn" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent);">
+                            <span data-i18n-html="lbl_pref_assoc_ubn"><strong>.ubn</strong> (New Urban)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="cbAssocDes" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent);">
+                            <span data-i18n-html="lbl_pref_assoc_des"><strong>.des</strong> (Desert)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="cbAssocLun" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent);">
+                            <span data-i18n-html="lbl_pref_assoc_lun"><strong>.lun</strong> (Lunar)</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <button id="btnApplyAssociations" class="btn btn-download" style="padding: 8px 18px; font-size: 12px;" data-i18n="btn_apply_associations">
+                    🔗 ASSOCIATE EXTENSIONS
+                </button>
+                <button id="btnRemoveAssociations" class="btn btn-cancel" style="padding: 8px 18px; font-size: 12px;" data-i18n="btn_remove_associations">
+                    UNREGISTER
+                </button>
+            </div>
+        </div>
+
+        <!-- Section: General Preferences -->
+        <div style="margin-bottom: 22px; background: #1a202c; padding: 16px 18px; border-radius: 6px; border: 1px solid #2d3748;">
+            <div style="font-family: monospace; font-size: 13px; color: #cbd5e0; font-weight: bold; margin-bottom: 14px;" data-i18n="lbl_pref_general">
+                🎨 General Editor Defaults
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+                <div>
+                    <label for="selPrefLanguage" style="min-height: 26px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_language">Language:</label>
+                    <select id="selPrefLanguage" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
+                    </select>
+                </div>
+                <div>
+                    <label for="selPrefDefaultCompression" style="min-height: 26px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_default_compression">Default Compression (New Project):</label>
+                    <select id="selPrefDefaultCompression" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
+                        <option value="3" data-i18n="opt_compression_3">Type 3 (RLE)</option>
+                        <option value="1" data-i18n="opt_compression_1">Type 1 (Uncompressed)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="selPrefStartupPalette" style="min-height: 26px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_startup_palette">Startup Palette:</label>
+                    <select id="selPrefStartupPalette" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
+                        <option value="remember" data-i18n="lbl_pref_remember_palette">Remember last palette</option>
+                        <option value="none" data-i18n="lbl_pref_palette_none">None (Blank palette)</option>
+                        <option value="game_ts_unittem">TS Temperate (Unit)</option>
+                        <option value="game_ra2_unittem">RA2 Temperate (Unit)</option>
+                    </select>
+                </div>
+            </div>
+            <div style="border-top: 1px solid #2d3748; margin-top: 16px; padding-top: 14px; display: flex; flex-direction: column; gap: 10px;">
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #e2e8f0; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="cbPrefShowGrid" style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);">
+                    <span data-i18n="lbl_pref_show_grid">Show pixel grid automatically on opening files</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #e2e8f0; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="cbPrefShowCnCReloaded" style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);" checked>
+                    <span data-i18n="lbl_pref_show_cncreloaded">Show C&amp;C Reloaded palette group</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="dialog-footer" style="justify-content: flex-end; gap: 12px; margin-top: 0;">
+            <button id="btnClosePreferences" class="btn-download" style="padding: 8px 28px; min-width: 110px; font-weight: bold; letter-spacing: 0.5px;" data-i18n="btn_save_preferences">
+                CLOSE
+            </button>
+        </div>
+    </dialog>
+
+    <!-- About Advanced SHP Editor Dialog -->
+    <dialog id="aboutDialog" class="dialog-modal"
+        style="width: 560px; min-width: 400px; max-width: 95vw; padding: 24px; text-align: left; background: #141722; border: 1px solid var(--accent); box-shadow: 0 12px 35px rgba(0,0,0,0.85); border-radius: 8px;">
+        
+        <!-- Header with logo and title -->
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px; border-bottom: 1px solid #2d3748; padding-bottom: 14px;">
+            <div style="width: 48px; height: 48px; min-width: 48px; background: #0b0c10; border: 1.5px solid #00ff9d; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-family: Verdana, sans-serif; font-size: 17px; color: #fff; box-shadow: 0 0 12px rgba(0,255,157,0.35);">
+                ASE
+            </div>
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <h3 style="color: var(--accent); margin: 0; font-size: 16px; letter-spacing: 1px; font-family: monospace;" data-i18n="dlg_about_title">
+                        ABOUT ADVANCED SHP EDITOR
+                    </h3>
+                    <span style="background: rgba(0, 255, 157, 0.15); color: #00ff9d; border: 1px solid #00ff9d; font-size: 11px; font-family: monospace; padding: 1px 7px; border-radius: 4px; font-weight: bold;">v3.0</span>
+                </div>
+                <div style="font-size: 12px; color: #a0aec0; margin-top: 4px; font-family: monospace;" data-i18n="lbl_about_subtitle">
+                    A 2D graphics editor &amp; basic Terrain editor for Tiberian Sun &amp; Red Alert 2
+                </div>
+            </div>
+        </div>
+
+        <!-- Author / Credits -->
+        <div style="margin-bottom: 14px; background: #1a202c; padding: 12px 14px; border-radius: 6px; border: 1px solid #2d3748; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <span style="font-size: 11px; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.5px; font-family: monospace;" data-i18n="lbl_about_author">Created &amp; Developed by:</span>
+                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-top: 3px;">
+                    FS-21 <span style="font-size: 11px; font-weight: normal; color: #718096;">(Modder &amp; Lead Dev of C&amp;C Reloaded)</span>
+                </div>
+            </div>
+            <div style="font-size: 24px;">🎖️</div>
+        </div>
+
+        <!-- Description -->
+        <p style="font-size: 12px; color: #cbd5e0; line-height: 1.55; margin-bottom: 16px;" data-i18n="lbl_about_desc">
+            Advanced SHP Editor is an ultra-fast, feature-complete sprite and terrain editor designed for Command &amp; Conquer: Tiberian Sun and Red Alert 2. It supports Format 80 SHP, SHA, and TMP formats with multi-layer painting, game palette conversion, frame sequences, isometric grids, and high-performance desktop execution.
+        </p>
+
+        <!-- Official GitHub Box -->
+        <div style="margin-bottom: 18px; background: #0f111a; padding: 14px; border-radius: 6px; border: 1px solid rgba(0, 255, 157, 0.35);">
+            <div style="font-size: 12px; color: #a0aec0; margin-bottom: 10px; line-height: 1.4;" data-i18n="lbl_about_github_desc">
+                Check out the official GitHub repository for source code, latest updates, issue reporting, and releases:
+            </div>
+            <a id="btnAboutGitHub" href="https://github.com/FS-21/Advanced-SHP-Editor" target="_blank" rel="noopener noreferrer"
+                class="btn btn-download" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 10px; font-size: 13px; font-weight: bold; text-decoration: none; box-sizing: border-box; cursor: pointer; text-align: center; border-radius: 4px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                </svg>
+                <span data-i18n="btn_about_github">🌐 View on GitHub / Download Latest Version</span>
+            </a>
+        </div>
+
+        <!-- Footer -->
+        <div class="dialog-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+            <span style="font-size: 11px; color: #718096; font-family: monospace;" data-i18n="lbl_about_copyright">
+                Copyright &copy; 2026 FS-21. All rights reserved.
+            </span>
+            <button id="btnCloseAbout" class="btn btn-cancel" style="padding: 7px 22px; font-size: 12px;" data-i18n="btn_close_about">
+                CLOSE
+            </button>
         </div>
     </dialog>
 

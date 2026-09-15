@@ -67,7 +67,7 @@ export class Tab {
         this.scaleHandleIdx = null;
         this.history = [];
         this.historyPtr = -1;
-        this.showGrid = false;
+        this.showGrid = localStorage.getItem('ase_pref_show_grid') === '1';
         this.gridColor = 'light';
         this.showSidePanel = false;
         this.paletteVersion = 0;

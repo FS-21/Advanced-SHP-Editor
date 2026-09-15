@@ -5,7 +5,7 @@ import { state, Tab, generateId } from './state.js';
 import { updateUIState } from './main.js';
 import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, syncStatusCompressionUI, renderReplaceGrid } from './ui.js';
 import { renderHistory } from './history.js';
-import { handleSaveShp, saveTmpData } from './file_io.js';
+import { handleSaveShp, handleSaveAll, saveTmpData } from './file_io.js';
 import { t } from './translations.js';
 
 export function initTabs() {
@@ -72,6 +72,13 @@ export function initTabs() {
         closeOtherTabs(currentContextTabIndex);
         ctxMenu.classList.remove('active');
     };
+    const ctxCloseAll = document.getElementById('ctxCloseAll');
+    if (ctxCloseAll) {
+        ctxCloseAll.onclick = () => {
+            closeAllTabs();
+            ctxMenu.classList.remove('active');
+        };
+    }
     document.getElementById('ctxReopenTab').onclick = () => {
         reopenLastTab();
         ctxMenu.classList.remove('active');
@@ -114,6 +121,7 @@ export function initTabs() {
     window.renderTabs = renderTabs;
     window.updateCurrentTabName = updateCurrentTabName;
     window.closeTab = closeTab;
+    window.closeAllTabs = closeAllTabs;
     renderTabs();
 }
 
@@ -123,12 +131,28 @@ export function createNewTab(fileName = null, blankPalette = false) {
 
 function createNewTabAt(index, fileName = null, blankPalette = false) {
     const id = generateId();
-    const name = fileName || "";
+    let name = fileName;
+    let isNewProject = false;
+
+    if (!name) {
+        if (state.tabs.length === 0) {
+            name = "";
+            isNewProject = false;
+        } else {
+            state.newFileCounter = (state.newFileCounter || 0) + 1;
+            name = `New File ${state.newFileCounter}`;
+            isNewProject = true;
+        }
+    }
+
     // Inherit the palette and palette selector state from the currently active tab
     const sourceTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : state;
     const tab = new Tab(id, fileName, blankPalette ? null : sourceTab);
     tab.idName = name;
+    tab.fileName = fileName;
+    tab.isNewProject = isNewProject;
     tab.zoom = 1; // Always start new tab with default 100% zoom
+    tab.compression = parseInt(localStorage.getItem('ase_pref_default_comp')) || 3;
 
     state.tabs.splice(index, 0, tab);
     switchTab(index);
@@ -141,16 +165,17 @@ function duplicateTabAt(index) {
 
     const clone = structuredClone(source);
     clone.id = generateId();
+    clone.fileName = null;
+    clone.fileHandle = null;
+    clone.hasChanges = true;
+    clone.isNewProject = true;
+    clone.idName = source.idName ? `${source.idName} (Copy)` : `New File ${++state.newFileCounter}`;
 
     state.tabs.splice(index + 1, 0, clone);
     switchTab(index + 1);
 }
 
 async function closeOtherTabs(keptIndex) {
-    // Iterate other tabs and process each one individually. We always ask
-    // the user (Save / Don't Save / Cancel) for any dirty tab — we never
-    // auto-save, because that would silently trigger native file pickers or
-    // overwrite prompts and bypass the user's intent.
     const others = state.tabs
         .map((tab, idx) => ({ tab, idx }))
         .filter(({ idx }) => idx !== keptIndex);
@@ -160,19 +185,17 @@ async function closeOtherTabs(keptIndex) {
 
         const tabName = tab.fileName || tab.idName || `Tab ${idx + 1}`;
         const answer = await showChoice(
-            t('dlg_confirm_title'),
-            t('msg_unsaved_changes_tab', { name: tabName }),
-            t('btn_save'),
-            t('btn_dont_save')
+            t('dlg_close_tab_title'),
+            t('msg_confirm_close_single_unsaved').replace('{name}', tabName),
+            t('btn_save_and_close'),
+            t('btn_discard_and_close'),
+            'btn btn-download',
+            'btn btn-danger'
         );
         if (answer === 'cancel') {
-            // Abort: do not close any more tabs.
             return;
         }
         if (answer === 'opt1') {
-            // Save the tab. Make it active, invoke save, then capture back.
-            // If the user cancels the Save As picker, treat as "don't save"
-            // and continue closing the other tabs.
             try {
                 const previousActive = state.activeTabIndex;
                 state.activeTabIndex = idx;
@@ -183,26 +206,21 @@ async function closeOtherTabs(keptIndex) {
                     await saveTmpData(false);
                     saveOk = !state.hasChanges;
                 } else {
-                    await handleSaveShp();
-                    saveOk = !state.hasChanges;
+                    saveOk = await handleSaveShp();
                 }
-                // Capture the saved snapshot back into the tab.
                 state.saveToTab(tab);
                 if (previousActive !== idx) {
                     state.activeTabIndex = previousActive;
                 }
-                // If the user dismissed the Save As dialog, state.hasChanges
-                // is still true; in that case the file wasn't saved, so we
-                // close it anyway (user's intent was to discard by clicking
-                // Save and then cancelling the picker).
                 if (!saveOk) {
                     console.warn('[closeOtherTabs] Save was cancelled for', tabName);
+                    return;
                 }
             } catch (e) {
                 console.warn('[closeOtherTabs] Save failed for', tabName, e);
+                return;
             }
         }
-        // 'discard' -> fall through and close
     }
 
     const kept = state.tabs[keptIndex];
@@ -305,81 +323,173 @@ export function switchTab(index) {
     }, 50);
 }
 
-export async function closeTab(index, e) {
-    if (e) e.stopPropagation();
+function resetToCleanDefaultTab(preservePaletteFromTab = null) {
+    const startupPalPref = localStorage.getItem('ase_pref_startup_pal');
+    const defaultComp = parseInt(localStorage.getItem('ase_pref_default_comp')) || 3;
+    const refTab = (startupPalPref === 'none') ? null : (preservePaletteFromTab || state.tabs[0] || null);
+    const cleanTab = new Tab(generateId(), null, refTab);
+    state.newFileCounter = 1;
+    cleanTab.idName = 'New File 1';
+    cleanTab.fileName = null;
+    cleanTab.isNewProject = true;
+    cleanTab.hasChanges = false;
+    cleanTab.frames = [];
+    cleanTab.fileHandle = null;
+    cleanTab.history = [];
+    cleanTab.historyPtr = -1;
+    cleanTab.savedHistoryPtr = -1;
+    cleanTab.compression = defaultComp;
 
-    const tab = state.tabs[index];
-    if (tab.hasChanges) {
+    state.tabs = [cleanTab];
+    state.activeTabIndex = 0;
+
+    // Reset global state explicitly
+    state.fileHandle = null;
+    window._lastShpFileHandle = null;
+    window._lastShpFilename = null;
+    state.isTmpMode = false;
+    state.tmpHeader = null;
+    state.originalTmpTiles = null;
+    state.tmpFilename = null;
+    window._lastTmpFileHandle = null;
+    window._lastTmpFilename = null;
+    state.frames = [];
+    state.currentFrameIdx = 0;
+    state.selection = null;
+    state.floatingSelection = null;
+    state.history = [];
+    state.historyPtr = -1;
+    state.savedHistoryPtr = -1;
+    state.hasChanges = false;
+    state.compression = defaultComp;
+
+    document.body.classList.remove('tmp-mode');
+    document.body.classList.remove('picking-mode');
+    const btnPickReplaceSrc = document.getElementById('btnPickReplaceSrc');
+    const btnPickReplaceTgt = document.getElementById('btnPickReplaceTgt');
+    if (btnPickReplaceSrc) btnPickReplaceSrc.classList.remove('picker-active');
+    if (btnPickReplaceTgt) btnPickReplaceTgt.classList.remove('picker-active');
+
+    // Load cleanTab directly into state (do NOT call switchTab which would call saveToTab)
+    state.loadFromTab(cleanTab);
+
+    renderTabs();
+    updateUIState();
+    updateCanvasSize();
+    syncZoomUI();
+    renderCanvas();
+    renderOverlay();
+    renderFramesList();
+    updateLayersList();
+    renderPalette();
+    renderReplaceGrid();
+    if (typeof window.syncPaletteSelector === 'function') window.syncPaletteSelector();
+    if (typeof renderHistory === 'function') renderHistory();
+}
+
+export async function closeAllTabs() {
+    // Sync active tab state
+    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+        state.saveToTab(state.tabs[state.activeTabIndex]);
+    }
+
+    const totalCount = state.tabs.length;
+    const firstTab = state.tabs[0];
+    const hasFirstData = (state.activeTabIndex === 0)
+        ? (!!(state.isTmpMode ? state.originalTmpTiles : state.frames.length > 0))
+        : (!!firstTab.isTmpMode ? !!firstTab.originalTmpTiles : firstTab.frames.length > 0);
+
+    // If only one empty and unmodified tab, nothing to close
+    if (totalCount === 1 && !hasFirstData && !firstTab.hasChanges && !firstTab.isNewProject) {
+        return;
+    }
+
+    const unsavedTabs = state.tabs.filter(t => t.hasChanges);
+
+    if (unsavedTabs.length > 0) {
+        const choice = await showChoice(
+            t('dlg_close_all_title'),
+            t('msg_confirm_close_all_unsaved').replace('{count}', totalCount).replace('{unsaved}', unsavedTabs.length),
+            t('btn_save_and_close'),
+            t('btn_discard_and_close'),
+            'btn btn-download',
+            'btn btn-danger'
+        );
+
+        if (choice === 'cancel') return;
+
+        if (choice === 'opt1') {
+            if (typeof handleSaveAll === 'function') {
+                await handleSaveAll();
+                const remainingUnsaved = state.tabs.filter(t => t.hasChanges);
+                if (remainingUnsaved.length > 0) {
+                    return; // User cancelled saving
+                }
+            }
+        }
+    } else {
         const confirmed = await showConfirm(
-            t('dlg_confirm_title'),
-            t('msg_confirm_close_tab')
+            t('dlg_close_all_title'),
+            t('msg_confirm_close_all_clean').replace('{count}', totalCount)
         );
         if (!confirmed) return;
     }
 
+    resetToCleanDefaultTab();
+}
+
+export async function closeTab(index, e) {
+    if (e) e.stopPropagation();
+
+    // Ensure current tab state is saved
+    if (index === state.activeTabIndex && state.tabs[index]) {
+        state.saveToTab(state.tabs[index]);
+    }
+
+    const tab = state.tabs[index];
+    if (!tab) return;
+
+    if (tab.hasChanges) {
+        const tabName = tab.fileName || tab.idName || `Tab ${index + 1}`;
+        const choice = await showChoice(
+            t('dlg_close_tab_title'),
+            t('msg_confirm_close_single_unsaved').replace('{name}', tabName),
+            t('btn_save_and_close'),
+            t('btn_discard_and_close'),
+            'btn btn-download',
+            'btn btn-danger'
+        );
+        if (choice === 'cancel') return;
+
+        if (choice === 'opt1') {
+            const previousActive = state.activeTabIndex;
+            if (state.activeTabIndex !== index) {
+                state.activeTabIndex = index;
+                state.loadFromTab(tab);
+            }
+            let saveOk = false;
+            if (tab.isTmpMode) {
+                await saveTmpData(false);
+                saveOk = !state.hasChanges;
+            } else {
+                saveOk = await handleSaveShp();
+            }
+            state.saveToTab(tab);
+            if (!saveOk) {
+                if (previousActive !== index) {
+                    state.activeTabIndex = previousActive;
+                    state.loadFromTab(state.tabs[previousActive]);
+                }
+                return;
+            }
+        }
+    }
+
     // Save for reopen logic
-    if (index === state.activeTabIndex) state.saveToTab(tab);
     lastClosedTab = structuredClone(tab);
 
     if (state.tabs.length <= 1) {
-        // Reset single remaining tab state, preserving current palette
-        const cleanTab = new Tab(generateId(), null, tab);
-        state.newFileCounter = 1;
-        cleanTab.idName = 'New File 1';
-        cleanTab.fileName = null;
-        cleanTab.isNewProject = true;
-        cleanTab.hasChanges = false;
-        cleanTab.frames = [];
-        cleanTab.fileHandle = null;
-        cleanTab.history = [];
-        cleanTab.historyPtr = -1;
-        cleanTab.savedHistoryPtr = -1;
-        cleanTab.compression = 3;
-
-        state.tabs[0] = cleanTab;
-        state.activeTabIndex = 0;
-
-        // Reset global state explicitly
-        state.fileHandle = null;
-        window._lastShpFileHandle = null;
-        window._lastShpFilename = null;
-        state.isTmpMode = false;
-        state.tmpHeader = null;
-        state.originalTmpTiles = null;
-        state.tmpFilename = null;
-        window._lastTmpFileHandle = null;
-        window._lastTmpFilename = null;
-        state.frames = [];
-        state.currentFrameIdx = 0;
-        state.selection = null;
-        state.floatingSelection = null;
-        state.history = [];
-        state.historyPtr = -1;
-        state.savedHistoryPtr = -1;
-        state.hasChanges = false;
-        state.compression = 3;
-
-        document.body.classList.remove('tmp-mode');
-        document.body.classList.remove('picking-mode');
-        const btnPickReplaceSrc = document.getElementById('btnPickReplaceSrc');
-        const btnPickReplaceTgt = document.getElementById('btnPickReplaceTgt');
-        if (btnPickReplaceSrc) btnPickReplaceSrc.classList.remove('picker-active');
-        if (btnPickReplaceTgt) btnPickReplaceTgt.classList.remove('picker-active');
-
-        // Load cleanTab directly into state (do NOT call switchTab which would call saveToTab)
-        state.loadFromTab(cleanTab);
-
-        renderTabs();
-        updateUIState();
-        updateCanvasSize();
-        syncZoomUI();
-        renderCanvas();
-        renderOverlay();
-        renderFramesList();
-        updateLayersList();
-        renderPalette();
-        renderReplaceGrid();
-        if (typeof renderHistory === 'function') renderHistory();
+        resetToCleanDefaultTab(tab);
         return;
     }
 
@@ -435,6 +545,12 @@ function renderTabs() {
         menuSaveAll.style.display = canClose ? 'flex' : 'none';
     }
 
+    // Toggle Close All visibility when multiple tabs are open
+    const menuCloseAllShp = document.getElementById('menuCloseAllShp');
+    if (menuCloseAllShp) {
+        menuCloseAllShp.style.display = canClose ? 'flex' : 'none';
+    }
+
     // Toggle Replace All Tabs button visibility when multiple tabs are open
     const btnProcessReplaceAll = document.getElementById('btnProcessReplaceAll');
     if (btnProcessReplaceAll) {
@@ -467,9 +583,9 @@ function renderTabs() {
 
         const gType = isActive ? state.gameType : tab.gameType;
         const isTmp = isActive ? state.isTmpMode : tab.isTmpMode;
-        const displayName = tab.idName;
+        const displayName = tab.idName || (tab.isTmpMode ? 'Untitled TMP' : `New File ${index + 1}`);
         const suffix = isTmp ? (gType === 'ts' ? ' (TS)' : ' (RA2)') : '';
-        const finalDisplayName = (hasData || isNew) ? `${displayName}${suffix}` : '';
+        const finalDisplayName = `${displayName}${suffix}`;
         tabEl.title = finalDisplayName;
 
         tabEl.innerHTML = `

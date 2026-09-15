@@ -228,8 +228,17 @@ function clearRecentUsage() {
 // MENU RENDERING — Dynamic sections (recently + most used)
 // ─────────────────────────────────────────────────────────────
 // Helper to create inline SVG game icons
-const _GAME_ICON_COLORS = { ts: '#4ade80', ra2: '#f87171', yr: '#a78bfa', cncreloaded: '#f6ad55' };
-const _GAME_ICON_LABELS = { ts: 'TS', ra2: 'RA2', yr: 'YR', cncreloaded: 'RL' };
+const _GAME_ICON_COLORS = { ts: '#4ade80', ra2: '#f87171', yr: '#a78bfa', cncreloaded: '#38bdf8' };
+const _GAME_ICON_LABELS = { ts: 'TS', ra2: 'RA2', yr: 'YR', cncreloaded: 'R' };
+
+export function isCnCReloadedEnabled() {
+    if (typeof window.CnCReloadedMode !== 'undefined') {
+        return !!window.CnCReloadedMode;
+    }
+    const saved = localStorage.getItem('ase_pref_show_cncreloaded');
+    return saved === null ? true : saved === '1';
+}
+window.isCnCReloadedEnabled = isCnCReloadedEnabled;
 
 function _createPaletteSvg(size) {
     const NS = 'http://www.w3.org/2000/svg';
@@ -543,8 +552,11 @@ function refreshPalettesMenuDynamic() {
             const container = document.getElementById(cat.container);
             const triggerEl = document.getElementById(cat.trigger);
             if (container) {
-                if (GAME_PALETTES[cat.key] && GAME_PALETTES[cat.key].length > 0) {
-                    container.style.display = '';
+                const showCat = (cat.key === 'cncreloaded')
+                    ? isCnCReloadedEnabled()
+                    : true;
+                if (showCat && GAME_PALETTES[cat.key] && GAME_PALETTES[cat.key].length > 0) {
+                    container.style.removeProperty('display');
                     renderGameSubmenu(cat.id, GAME_PALETTES[cat.key]);
                     
                     // Inject professional SVG icon into trigger if missing or incorrect
@@ -564,7 +576,9 @@ function refreshPalettesMenuDynamic() {
                         }
                     }
                 } else {
-                    container.style.display = 'none';
+                    container.style.setProperty('display', 'none', 'important');
+                    const subEl = document.getElementById(cat.id);
+                    if (subEl) subEl.innerHTML = '';
                 }
             }
         });
@@ -1352,6 +1366,53 @@ function refreshAllPaletteMenus() {
     });
 }
 
+export function setCnCReloadedMode(enabled) {
+    window.CnCReloadedMode = !!enabled;
+    localStorage.setItem('ase_pref_show_cncreloaded', enabled ? '1' : '0');
+
+    // 1. Hide or show top-level palette submenu
+    const mnu = document.getElementById('palMenuCnCReloadedContainer');
+    if (mnu) {
+        if (!enabled) {
+            mnu.style.setProperty('display', 'none', 'important');
+            const sub = document.getElementById('palCnCReloadedSubmenu');
+            if (sub) sub.innerHTML = '';
+        } else {
+            mnu.style.removeProperty('display');
+        }
+    }
+
+    // 2. Hide or show resize preset (Physically remove/restore from DOM for Chromium select reliability)
+    const sel = document.getElementById('selResizeMethod');
+    let opt = document.querySelector('option[value="reloaded_ra2"]') || window._reloadedResizeOption;
+    if (opt) {
+        window._reloadedResizeOption = opt;
+        if (!enabled) {
+            if (sel && sel.value === 'reloaded_ra2') {
+                sel.value = 'nearest';
+            }
+            if (opt.parentNode) {
+                opt.parentNode.removeChild(opt);
+            }
+        } else {
+            if (sel && !opt.parentNode) {
+                sel.appendChild(opt);
+            }
+        }
+    }
+
+    // 3. Update Preferences Startup Palette dropdown if present
+    if (typeof window.populateStartupPaletteOptions === 'function') {
+        try { window.populateStartupPaletteOptions(); } catch (_) {}
+    }
+
+    // 4. Refresh all dynamic menus (top bar + all dialogs)
+    try { refreshAllPaletteMenus(); } catch (_) {}
+}
+window.setCnCReloadedMode = setCnCReloadedMode;
+window.refreshAllPaletteMenus = refreshAllPaletteMenus;
+window.refreshPalettesMenuDynamic = refreshPalettesMenuDynamic;
+
 function _createPaletteSearchFilter(dropdownId) {
     const searchText = _palMenuFilters.get(dropdownId) || '';
     const container = document.createElement('div');
@@ -1438,8 +1499,13 @@ function _cleanupEmptySections(container) {
         i++;
     }
 
+    const reloadedEnabled = isCnCReloadedEnabled();
     const submenus = container.querySelectorAll('.menu-item-submenu');
     submenus.forEach(sub => {
+        if (sub.id === 'palMenuCnCReloadedContainer' && !reloadedEnabled) {
+            sub.style.setProperty('display', 'none', 'important');
+            return;
+        }
         const palItems = sub.querySelectorAll('.pal-menu-item');
         if (palItems.length > 0) {
             const allHidden = Array.from(palItems).every(item => item.classList.contains('filter-hidden'));
@@ -1519,7 +1585,7 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
         { id: 'YR', name: 'Yuri\'s Revenge', subId: 'palYrSubmenu_dlg_' + dropdownId, nodes: GAME_PALETTES.yr }
     ];
 
-    const showCnCReloaded = (typeof CnCReloadedMode !== 'undefined' ? CnCReloadedMode : (typeof window.CnCReloadedMode !== 'undefined' ? window.CnCReloadedMode : true));
+    const showCnCReloaded = isCnCReloadedEnabled();
     if (showCnCReloaded && GAME_PALETTES.cncreloaded && GAME_PALETTES.cncreloaded.length > 0) {
         games.push({ id: 'CnCReloaded', name: 'C&C Reloaded', subId: 'palCnCReloadedSubmenu_dlg_' + dropdownId, nodes: GAME_PALETTES.cncreloaded });
     }
@@ -1756,10 +1822,26 @@ export function setupPaletteMenu() {
 
     // Initial render
     refreshAllPaletteMenus();
+    setCnCReloadedMode(isCnCReloadedEnabled());
 
-    // Start with the most recently used palette if available
-    const lastId = getMostRecentPaletteId();
-    if (lastId) applyPaletteById(lastId, false);
+    // Palette at startup according to user preference
+    const startupPalPref = localStorage.getItem('ase_pref_startup_pal');
+    if (startupPalPref === 'none') {
+        // User explicitly wants to start without any loaded palette (blank palette)
+        renderPalette();
+        syncPaletteSelector();
+    } else if (startupPalPref && startupPalPref !== 'remember') {
+        const applied = applyPaletteById(startupPalPref, false);
+        if (!applied) {
+            const lastId = getMostRecentPaletteId();
+            if (lastId) applyPaletteById(lastId, false);
+            else renderPalette();
+        }
+    } else {
+        const lastId = getMostRecentPaletteId();
+        if (lastId) applyPaletteById(lastId, false);
+        else renderPalette();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

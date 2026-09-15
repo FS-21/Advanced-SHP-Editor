@@ -17,7 +17,7 @@ SUSPICIOUS_PATTERNS = [
 ]
 
 # Directories to skip
-EXCLUDE_DIRS = ['node_modules', '.git', 'worldalteringeditor-master']
+EXCLUDE_DIRS = ['node_modules', '.git', 'worldalteringeditor-master', 'src-tauri', 'target', 'wxtools']
 
 # File extensions to check (only source code)
 ALLOWED_EXTENSIONS = ['.js', '.html', '.css']

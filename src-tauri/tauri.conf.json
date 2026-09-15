@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Advanced-SHP-Editor",
+  "version": "3.0.0",
+  "identifier": "com.fs-21.advancedshpeditor",
+  "build": {
+    "beforeBuildCommand": "",
+    "frontendDist": "../Build/PWA"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Advanced SHP Editor v3.0",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 650,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "publisher": "FS-21",
+    "copyright": "Copyright (C) 2026 FS-21",
+    "targets": ["nsis", "appimage", "deb"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["shp"],
+        "name": "Command & Conquer SHP File",
+        "description": "Command & Conquer SHP Sprite File",
+        "role": "Editor"
+      },
+      {
+        "ext": ["sha"],
+        "name": "Command & Conquer SHA File",
+        "description": "Red Alert 2 Cursor SHP File",
+        "role": "Editor"
+      },
+      {
+        "ext": ["tem", "sno", "urb", "ubn", "des", "lun"],
+        "name": "Command & Conquer TMP File",
+        "description": "Westwood Studios Theater Terrain Tile",
+        "role": "Editor"
+      }
+    ]
+  }
+}

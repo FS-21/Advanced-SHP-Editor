@@ -15,7 +15,8 @@ import { ShpFormat80 } from './shp_format.js';
 import { PcxLoader } from './pcx_loader.js';
 import { findNearestPaletteIndex, setupAutoRepeat, compositeFrame } from './utils.js';
 import { t, applyTranslations } from './translations.js';
-import { closeAllPaletteMenus, getActivePaletteId, applyPaletteById, getMostRecentPaletteId, getPaletteName, findNodeById, applyPaletteFromEntry } from './palette_menu.js';
+import { GAME_PALETTES } from './game_palettes.js';
+import { closeAllPaletteMenus, getActivePaletteId, applyPaletteById, getMostRecentPaletteId, getPaletteName, findNodeById, applyPaletteFromEntry, getLib } from './palette_menu.js';
 import { undo, redo, pushHistory, resetHistoryForFreshOpen } from './history.js';
 import { deselect, deleteSelection, fillSelection } from './tools.js';
 import { renderPaletteSimple } from './ui.js';
@@ -44,7 +45,7 @@ export function updateMenuState(hasProject) {
     const actions = [
 
         'menuSave', 'menuSaveAs', 'menuExpSpriteSheet', 'menuExpRange', 'menuExpCurrent',
-        'menuFrameMgr', 'menuCloseShp'
+        'menuFrameMgr', 'menuCloseAllShp', 'menuCloseShp'
     ];
     actions.forEach(id => {
         const el = document.getElementById(id);
@@ -470,6 +471,10 @@ export function initMenu() {
     setupImportFromImageHandlers();
     setupSteppers();
     setupModalButtons();
+    setupPreferencesDialog();
+    setupAboutDialog();
+    setupAboutMenu();
+    checkDesktopIntegration();
 }
 
 function setupMenuInteractions() {
@@ -584,6 +589,17 @@ function setupFileMenu() {
         };
     }
 
+
+    // Close All SHP / TMP
+    const menuCloseAllShp = document.getElementById('menuCloseAllShp');
+    if (menuCloseAllShp) {
+        menuCloseAllShp.onclick = async () => {
+            closeAllMenus();
+            if (typeof window.closeAllTabs === 'function') {
+                await window.closeAllTabs();
+            }
+        };
+    }
 
     // Close SHP / Close TMP — closes the active tab (delegates to closeTab so
     // the unsaved-changes prompt only fires when state.hasChanges is true).
@@ -1481,7 +1497,8 @@ function setupEditMenu() {
         'menuDelete': () => deleteSelection(),
         'menuSelectAll': () => selectAll(),
         'menuDeselect': () => deselect(),
-        'menuInvertSelection': () => invertSelection()
+        'menuInvertSelection': () => invertSelection(),
+        'menuPreferences': () => openPreferencesDialog()
     };
 
     Object.entries(handlers).forEach(([id, fn]) => {
@@ -1495,6 +1512,339 @@ function setupEditMenu() {
             };
         }
     });
+}
+
+export function isDesktopApp() {
+    return Boolean(
+        (typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__ || window.__TAURI_IPC__ || window.IS_DESKTOP_EXE)) ||
+        (typeof location !== 'undefined' && (location.protocol === 'tauri:' || location.hostname.includes('tauri.localhost'))) ||
+        (typeof localStorage !== 'undefined' && localStorage.getItem('force_desktop_ui') === '1')
+    );
+}
+
+export function checkDesktopIntegration() {
+    if (isDesktopApp()) {
+        const prefDivider = document.getElementById('menuPreferencesDivider');
+        const prefItem = document.getElementById('menuPreferences');
+        if (prefDivider) prefDivider.style.display = 'block';
+        if (prefItem) prefItem.style.display = 'flex';
+
+        // Hide top-right language selector in desktop app (managed in Preferences)
+        const topLangSelector = document.getElementById('langSelector');
+        if (topLangSelector) topLangSelector.style.display = 'none';
+    }
+}
+
+async function invokeTauri(cmd, args = {}) {
+    if (typeof window === 'undefined') return null;
+    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+        return await window.__TAURI__.core.invoke(cmd, args);
+    }
+    if (window.__TAURI__ && typeof window.__TAURI__.invoke === 'function') {
+        return await window.__TAURI__.invoke(cmd, args);
+    }
+    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+        return await window.__TAURI_INTERNALS__.invoke(cmd, args);
+    }
+    return null;
+}
+
+export function populateStartupPaletteOptions() {
+    window.populateStartupPaletteOptions = populateStartupPaletteOptions;
+    const selPal = document.getElementById('selPrefStartupPalette');
+    if (!selPal) return;
+
+    const currentVal = localStorage.getItem('ase_pref_startup_pal') || selPal.value || 'remember';
+    selPal.innerHTML = '';
+
+    const optRemember = document.createElement('option');
+    optRemember.value = 'remember';
+    optRemember.setAttribute('data-i18n', 'lbl_pref_remember_palette');
+    optRemember.textContent = t('lbl_pref_remember_palette') || 'Remember last palette';
+    selPal.appendChild(optRemember);
+
+    const optNone = document.createElement('option');
+    optNone.value = 'none';
+    optNone.setAttribute('data-i18n', 'lbl_pref_palette_none');
+    optNone.textContent = t('lbl_pref_palette_none') || 'None (Blank palette)';
+    selPal.appendChild(optNone);
+
+    if (typeof GAME_PALETTES !== 'undefined') {
+        const showReloaded = (typeof window.isCnCReloadedEnabled === 'function')
+            ? window.isCnCReloadedEnabled()
+            : (typeof window.CnCReloadedMode !== 'undefined' ? window.CnCReloadedMode : (localStorage.getItem('ase_pref_show_cncreloaded') !== '0'));
+        const gameDefs = [
+            { key: 'ts', label: 'Tiberian Sun' },
+            { key: 'ra2', label: 'Red Alert 2' },
+            { key: 'yr', label: "Yuri's Revenge" }
+        ];
+        if (showReloaded) {
+            gameDefs.push({ key: 'cncreloaded', label: 'C&C Reloaded' });
+        }
+
+        gameDefs.forEach(g => {
+            const list = GAME_PALETTES[g.key];
+            if (Array.isArray(list) && list.length > 0) {
+                const grp = document.createElement('optgroup');
+                grp.label = g.label;
+                list.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = `${p.name} (${g.label})`;
+                    grp.appendChild(opt);
+                });
+                selPal.appendChild(grp);
+            }
+        });
+    }
+
+    try {
+        const lib = getLib();
+        if (lib && Array.isArray(lib.custom) && lib.custom.length > 0) {
+            const customGrp = document.createElement('optgroup');
+            customGrp.label = t('menu_custom_palettes') || 'Custom Palettes';
+            function addCustomPalettes(nodes) {
+                for (const node of nodes) {
+                    if (node.type === 'palette' && node.b64) {
+                        const opt = document.createElement('option');
+                        opt.value = node.id;
+                        opt.textContent = node.name;
+                        customGrp.appendChild(opt);
+                    } else if (node.children) {
+                        addCustomPalettes(node.children);
+                    }
+                }
+            }
+            addCustomPalettes(lib.custom);
+            if (customGrp.children.length > 0) {
+                selPal.appendChild(customGrp);
+            }
+        }
+    } catch (e) {
+        console.warn('Could not populate custom palettes in preferences:', e);
+    }
+
+    if (currentVal && selPal.querySelector(`option[value="${currentVal}"]`)) {
+        selPal.value = currentVal;
+    } else {
+        selPal.value = 'remember';
+    }
+}
+window.populateStartupPaletteOptions = populateStartupPaletteOptions;
+
+const ALL_ASSOC_EXTS = ['shp', 'sha', 'tem', 'sno', 'urb', 'ubn', 'des', 'lun'];
+
+export function openPreferencesDialog() {
+    const dlg = document.getElementById('preferencesDialog');
+    if (!dlg) return;
+
+    populateStartupPaletteOptions();
+
+    const savedComp = localStorage.getItem('ase_pref_default_comp');
+    const selComp = document.getElementById('selPrefDefaultCompression');
+    if (selComp && savedComp) selComp.value = savedComp;
+
+    const savedPal = localStorage.getItem('ase_pref_startup_pal');
+    const selPal = document.getElementById('selPrefStartupPalette');
+    if (selPal && savedPal) selPal.value = savedPal;
+
+    const savedGrid = localStorage.getItem('ase_pref_show_grid');
+    const cbGrid = document.getElementById('cbPrefShowGrid');
+    if (cbGrid && savedGrid !== null) cbGrid.checked = savedGrid === '1';
+
+    const savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
+    const cbReloaded = document.getElementById('cbPrefShowCnCReloaded');
+    if (cbReloaded) cbReloaded.checked = savedReloaded === null ? true : savedReloaded === '1';
+
+    if (isDesktopApp()) {
+        invokeTauri('check_file_associations').then(assocExts => {
+            if (Array.isArray(assocExts)) {
+                ALL_ASSOC_EXTS.forEach(ext => {
+                    const cap = ext.charAt(0).toUpperCase() + ext.slice(1);
+                    const cb = document.getElementById(`cbAssoc${cap}`);
+                    if (cb) cb.checked = assocExts.includes(ext);
+                });
+                const badge = document.getElementById('assocStatusBadge');
+                if (badge) {
+                    if (assocExts.length > 0) {
+                        badge.textContent = `${assocExts.length} ${t('lbl_pref_assoc_active')}`;
+                        badge.style.background = 'var(--accent)';
+                        badge.style.color = '#0d0e12';
+                    } else {
+                        badge.textContent = t('lbl_pref_assoc_ready');
+                        badge.style.background = '#2d3748';
+                        badge.style.color = '#a0aec0';
+                    }
+                }
+            }
+        }).catch(() => {});
+    }
+
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+}
+
+export function setupPreferencesDialog() {
+    const dlg = document.getElementById('preferencesDialog');
+    if (!dlg) return;
+
+    dlg.addEventListener('close', () => {
+        const cbReloaded = document.getElementById('cbPrefShowCnCReloaded');
+        if (cbReloaded) {
+            const isEnabled = cbReloaded.checked;
+            localStorage.setItem('ase_pref_show_cncreloaded', isEnabled ? '1' : '0');
+            if (typeof window.setCnCReloadedMode === 'function') {
+                window.setCnCReloadedMode(isEnabled);
+            }
+        }
+    });
+
+    const btnClose = document.getElementById('btnClosePreferences');
+    if (btnClose) {
+        btnClose.onclick = () => {
+            const selComp = document.getElementById('selPrefDefaultCompression');
+            if (selComp) localStorage.setItem('ase_pref_default_comp', selComp.value);
+
+            const selPal = document.getElementById('selPrefStartupPalette');
+            if (selPal) localStorage.setItem('ase_pref_startup_pal', selPal.value);
+
+            const cbGrid = document.getElementById('cbPrefShowGrid');
+            if (cbGrid) localStorage.setItem('ase_pref_show_grid', cbGrid.checked ? '1' : '0');
+
+            const cbReloaded = document.getElementById('cbPrefShowCnCReloaded');
+            if (cbReloaded) {
+                const isEnabled = cbReloaded.checked;
+                localStorage.setItem('ase_pref_show_cncreloaded', isEnabled ? '1' : '0');
+                if (typeof window.setCnCReloadedMode === 'function') {
+                    window.setCnCReloadedMode(isEnabled);
+                }
+            }
+
+            if (typeof dlg.close === 'function') dlg.close();
+            else dlg.removeAttribute('open');
+        };
+    }
+
+    const cbReloaded = document.getElementById('cbPrefShowCnCReloaded');
+    if (cbReloaded) {
+        cbReloaded.onchange = () => {
+            const isEnabled = cbReloaded.checked;
+            localStorage.setItem('ase_pref_show_cncreloaded', isEnabled ? '1' : '0');
+            if (typeof window.setCnCReloadedMode === 'function') {
+                window.setCnCReloadedMode(isEnabled);
+            }
+        };
+    }
+
+    const btnApply = document.getElementById('btnApplyAssociations');
+    if (btnApply) {
+        btnApply.onclick = async () => {
+            const exts = [];
+            ALL_ASSOC_EXTS.forEach(ext => {
+                const cap = ext.charAt(0).toUpperCase() + ext.slice(1);
+                const cb = document.getElementById(`cbAssoc${cap}`);
+                if (cb && cb.checked) exts.push(ext);
+            });
+
+            if (exts.length === 0) return;
+
+            try {
+                await invokeTauri('register_file_associations', { extensions: exts });
+                const badge = document.getElementById('assocStatusBadge');
+                if (badge) {
+                    badge.textContent = `${exts.length} ${t('lbl_pref_assoc_active')}`;
+                    badge.style.background = 'var(--accent)';
+                    badge.style.color = '#0d0e12';
+                }
+                showPasteNotification(t('msg_assoc_success'), 'success', 3000);
+            } catch (err) {
+                console.warn('[Preferences] register_file_associations error or web fallback:', err);
+                showPasteNotification(t('msg_assoc_success'), 'info', 3000);
+            }
+        };
+    }
+
+    const btnRemove = document.getElementById('btnRemoveAssociations');
+    if (btnRemove) {
+        btnRemove.onclick = async () => {
+            try {
+                await invokeTauri('unregister_file_associations', { extensions: ALL_ASSOC_EXTS });
+                ALL_ASSOC_EXTS.forEach(ext => {
+                    const cap = ext.charAt(0).toUpperCase() + ext.slice(1);
+                    const cb = document.getElementById(`cbAssoc${cap}`);
+                    if (cb) cb.checked = false;
+                });
+                const badge = document.getElementById('assocStatusBadge');
+                if (badge) {
+                    badge.textContent = t('lbl_pref_assoc_ready');
+                    badge.style.background = '#2d3748';
+                    badge.style.color = '#a0aec0';
+                }
+                showPasteNotification(t('msg_assoc_removed'), 'info', 3000);
+            } catch (err) {
+                console.warn('[Preferences] unregister_file_associations error or web fallback:', err);
+                showPasteNotification(t('msg_assoc_removed'), 'info', 3000);
+            }
+        };
+    }
+}
+
+export function openExternalUrl(url) {
+    if (isDesktopApp()) {
+        invokeTauri('open_url', { url }).catch(() => {
+            window.open(url, '_blank');
+        });
+    } else {
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+}
+
+export function openAboutDialog() {
+    const dlg = document.getElementById('aboutDialog');
+    if (!dlg) return;
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+}
+
+export function setupAboutDialog() {
+    const dlg = document.getElementById('aboutDialog');
+    if (!dlg) return;
+
+    const btnClose = document.getElementById('btnCloseAbout');
+    if (btnClose) {
+        btnClose.onclick = () => {
+            if (typeof dlg.close === 'function') dlg.close();
+            else dlg.removeAttribute('open');
+        };
+    }
+
+    const btnGitHub = document.getElementById('btnAboutGitHub');
+    if (btnGitHub) {
+        btnGitHub.onclick = (e) => {
+            e.preventDefault();
+            openExternalUrl('https://github.com/FS-21/Advanced-SHP-Editor');
+        };
+    }
+}
+
+function setupAboutMenu() {
+    const menuAbout = document.getElementById('menuAbout');
+    if (menuAbout) {
+        menuAbout.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            openAboutDialog();
+        };
+    }
+
+    const menuGitHub = document.getElementById('menuGitHub');
+    if (menuGitHub) {
+        menuGitHub.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            openExternalUrl('https://github.com/FS-21/Advanced-SHP-Editor');
+        };
+    }
 }
 
 function setupViewMenu() {

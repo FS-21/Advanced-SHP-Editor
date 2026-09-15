@@ -1934,6 +1934,9 @@ function setupEventListeners() {
     }
 
     if (elements.btnToggleGrid) {
+        if (localStorage.getItem('ase_pref_show_grid') === '1') {
+            state.showGrid = true;
+        }
         elements.btnToggleGrid.onclick = () => {
             state.showGrid = !state.showGrid;
             elements.btnToggleGrid.classList.toggle('active', state.showGrid);
@@ -2327,9 +2330,14 @@ function initNewShpDialog() {
                 }
 
                 // Update tab name
-                state.newFileCounter++;
+                const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+                const isExistingNewTab = curTab && curTab.idName && !curTab.fileName && curTab.isNewProject;
+                if (!isExistingNewTab) {
+                    state.newFileCounter = (state.newFileCounter || 0) + 1;
+                }
+                const tabName = (isExistingNewTab && curTab.idName) ? curTab.idName : `New File ${state.newFileCounter}`;
                 if (typeof updateCurrentTabName === 'function') {
-                    updateCurrentTabName(`New File ${state.newFileCounter}`, true);
+                    updateCurrentTabName(tabName, true);
                 }
 
                 // Sync toolbar checkbox
@@ -2685,7 +2693,7 @@ export async function openFilesBatch(files, fileHandles = []) {
 
     // Determine if the current tab can be reused (only if completely empty and untouched)
     const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
-    const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName && !curTab.isNewProject;
+    const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName;
 
     let firstOpenedTabIndex = -1;
 

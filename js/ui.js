@@ -3181,7 +3181,7 @@ export async function showConfirm(title, message = "") {
 /**
  * Custom Choice Dialog (3 options: btn1, btn2, cancel)
  */
-export async function showChoice(title, message, label1, label2) {
+export async function showChoice(title, message, label1, label2, cls1 = null, cls2 = null) {
     const dialog = document.getElementById('choiceDialog');
     const msgEl = document.getElementById('choiceMessage');
     const titleEl = document.getElementById('choiceTitle');
@@ -3199,6 +3199,8 @@ export async function showChoice(title, message, label1, label2) {
     msgEl.innerHTML = message || "";
     btn1.textContent = label1;
     btn2.textContent = label2;
+    btn1.className = cls1 || 'btn';
+    btn2.className = cls2 || 'btn btn-primary';
 
     return new Promise((resolve) => {
         const cleanup = (val) => {

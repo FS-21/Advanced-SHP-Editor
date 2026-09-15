@@ -55,7 +55,26 @@ The editor is fully localized and supports multiple languages, making it accessi
 - **Chinese** (Simplified & Traditional)
 
 ## 🔨 How to Build
-Run `python build.py` to generate the latest standalone version.
+
+Run the automated build script:
+```bash
+python build.py
+```
+
+This single command generates:
+- **`Build/advanced_shp_editor.html`**: The complete, standalone single-file editor (100% portable and offline).
+- **`Build/PWA/`**: Progressive Web App deployment files (index.html, manifest.json, sw.js).
+- **`Build/Advanced-SHP-Editor.exe`**: Native portable Windows desktop executable (~2.9 MB) powered by Tauri v2.
+
+### 🖥️ Desktop Executable Prerequisites (Optional)
+To build the native desktop `.exe` locally, you need the **Rust & Cargo** toolchain installed on your machine:
+- **Official Rust installer site:** [https://rustup.rs/](https://rustup.rs/) (or [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install))
+- **Direct download:** [rustup-init.exe (Windows 64-bit)](https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe)
+
+> **Note:** If Rust/Cargo is not installed on your system, `build.py` automatically detects it, prints an informative message with download instructions, and proceeds seamlessly to generate the standalone HTML and PWA bundles without errors. You can also explicitly skip desktop compilation at any time with:
+> ```bash
+> python build.py --no-desktop
+> ```
 
 ---
 *Created for the C&C Modding community.*

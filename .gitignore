@@ -7,6 +7,15 @@
 # Build outputs
 Build/
 
+# Tauri & Rust build artifacts
+src-tauri/target/
+src-tauri/WixTools/
+*.exe
+*.msi
+*.AppImage
+*.deb
+*.rpm
+
 # OS files
 Thumbs.db
 .DS_Store
