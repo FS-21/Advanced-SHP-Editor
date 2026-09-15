@@ -41,6 +41,32 @@ export function renderHistory() {
 }
 
 /**
+ * Emergency memory trim to release history states when memory pressure is detected.
+ */
+export function trimHistoryEmergency() {
+    console.warn("[History] Emergency memory trim triggered!");
+    clearThumbCaches();
+
+    if (state.history && state.history.length > 5) {
+        const keepCount = Math.min(5, state.historyPtr + 1);
+        const startIdx = Math.max(0, state.historyPtr - keepCount + 1);
+        state.history = state.history.slice(startIdx, state.historyPtr + 1);
+        state.historyPtr = state.history.length - 1;
+        state.savedHistoryPtr = -1;
+    }
+
+    if (state.tabs && state.tabs.length > 1) {
+        state.tabs.forEach((tab, idx) => {
+            if (idx !== state.activeTabIndex && tab.history && tab.history.length > 1) {
+                tab.history = tab.history.slice(Math.max(0, tab.history.length - 1));
+                tab.historyPtr = tab.history.length - 1;
+                tab.savedHistoryPtr = -1;
+            }
+        });
+    }
+}
+
+/**
  * Deep clones a layer/group node recursively.
  */
 export function cloneLayerNode(node) {
@@ -73,7 +99,14 @@ export function cloneLayerNode(node) {
         cloned.extFilename = node.extFilename;
 
         if (node.extShpFrameData) {
-            cloned.extShpFrameData = new Uint8Array(node.extShpFrameData);
+            try {
+                cloned.extShpFrameData = new Uint8Array(node.extShpFrameData);
+            } catch (err) {
+                if (err instanceof RangeError) {
+                    trimHistoryEmergency();
+                    cloned.extShpFrameData = new Uint8Array(node.extShpFrameData);
+                } else throw err;
+            }
         }
         if (node.extShpPalette) {
             cloned.extShpPalette = JSON.parse(JSON.stringify(node.extShpPalette));
@@ -86,13 +119,28 @@ export function cloneLayerNode(node) {
     if (node.data) {
         // High Performance Copy for Typed Arrays
         if (node.data instanceof Uint8Array || node.data instanceof Uint16Array) {
-            cloned.data = new node.data.constructor(node.data);
+            try {
+                cloned.data = new node.data.constructor(node.data);
+            } catch (err) {
+                if (err instanceof RangeError) {
+                    console.warn("[History] RangeError allocating layer data, trimming history...", err);
+                    trimHistoryEmergency();
+                    cloned.data = new node.data.constructor(node.data);
+                } else throw err;
+            }
         } else {
             cloned.data = node.data.slice();
         }
     }
     if (node.mask) {
-        cloned.mask = new Uint8Array(node.mask);
+        try {
+            cloned.mask = new Uint8Array(node.mask);
+        } catch (err) {
+            if (err instanceof RangeError) {
+                trimHistoryEmergency();
+                cloned.mask = new Uint8Array(node.mask);
+            } else throw err;
+        }
     }
     if (node.layers) {
         cloned.layers = node.layers.map(c => cloneLayerNode(c));
@@ -224,13 +272,60 @@ export function pushHistory(modifiedFrameIndices = null) {
             if (!f.id) f.id = Math.random().toString(36).substr(2, 9);
         });
 
-        // ALWAYS deep-clone every frame. This is slower but guarantees
-        // that undo correctly restores previous states — the COW path
-        // could leak the previous snapshot's layers into the live frame
-        // after a draw → undo → draw cycle, breaking the oldest undo entry.
+        // Determine which frames actually changed and need deep cloning
+        let framesToClone = null; // null means ALL frames
+        if (modifiedFrameIndices === 'all') {
+            framesToClone = null;
+        } else if (modifiedFrameIndices === 'reorder') {
+            framesToClone = new Set(); // no layer data changed, just ordering
+        } else if (typeof modifiedFrameIndices === 'number') {
+            framesToClone = new Set([modifiedFrameIndices]);
+        } else if (Array.isArray(modifiedFrameIndices)) {
+            framesToClone = new Set(modifiedFrameIndices);
+        } else if (modifiedFrameIndices === null) {
+            // Default from continuous tool drawing (mouseup): only active frame changed
+            if (state.currentFrameIdx >= 0 && state.currentFrameIdx < state.frames.length) {
+                framesToClone = new Set([state.currentFrameIdx]);
+            }
+        }
+
+        const prevFrameMap = new Map();
+        if (prevSnapshot && prevSnapshot.frames && prevSnapshot.frames.length === state.frames.length) {
+            prevSnapshot.frames.forEach(f => {
+                if (f && f.id) prevFrameMap.set(f.id, f);
+            });
+        }
+
         framesSnapshot = state.frames.map((f, i) => {
+            const shouldClone = !prevSnapshot ||
+                framesToClone === null ||
+                framesToClone.has(i) ||
+                !prevFrameMap.has(f.id);
+
+            if (shouldClone) {
+                const newV = (f._v || 0) + 1;
+                f._v = newV; // bump version on live frame
+                return {
+                    id: f.id,
+                    width: f.width,
+                    height: f.height,
+                    duration: f.duration,
+                    lastSelectedIdx: f.lastSelectedIdx,
+                    _v: newV,
+                    tmpMeta: f.tmpMeta ? { ...f.tmpMeta } : undefined,
+                    layers: f.layers.map(l => cloneLayerNode(l))
+                };
+            }
+
+            // Frame-level structural sharing: reuse immutable snapshot frame reference from previous history entry
+            const prevFrame = prevFrameMap.get(f.id);
+            if (prevFrame && prevFrame.width === f.width && prevFrame.height === f.height) {
+                return prevFrame;
+            }
+
+            // Fallback if dimensions differed
             const newV = (f._v || 0) + 1;
-            f._v = newV; // bump version on live frame
+            f._v = newV;
             return {
                 id: f.id,
                 width: f.width,
@@ -285,31 +380,22 @@ export function pushHistory(modifiedFrameIndices = null) {
     const projectSize = state.frames.length * state.canvasW * state.canvasH;
     let historyLimit;
 
-    // Each snapshot deep-clones every frame's layers, so memory grows linearly
-    // with the limit × frames × pixels. The limit is kept conservative for
-    // large projects and generous for small ones.
-    if (projectSize > 500000000) {
-        historyLimit = 100;
-    } else if (projectSize > 200000000) {
-        historyLimit = 200;
-    } else if (projectSize > 50000000) {
-        historyLimit = 300;
+    if (projectSize > 10000000) {
+        historyLimit = 30;
+    } else if (projectSize > 2000000) {
+        historyLimit = 40;
+    } else if (projectSize > 500000) {
+        historyLimit = 60;
     } else {
-        historyLimit = 1500;
+        historyLimit = 80;
     }
 
-    // Log warning if history limit was reduced
-    if (historyLimit < 50 && !state.historyLimitNotified) {
-        state.historyLimitNotified = true;
-        console.warn(`History limit reduced to ${historyLimit} entries due to large project size (${state.frames.length} frames, ${state.canvasW}x${state.canvasH})`);
-    }
-
-    if (state.history.length > historyLimit) {
+    while (state.history.length > historyLimit) {
         state.history.shift();
-        state.historyPtr = state.history.length - 1;
-    } else {
-        state.historyPtr++;
+        if (state.savedHistoryPtr > 0) state.savedHistoryPtr--;
+        else if (state.savedHistoryPtr === 0) state.savedHistoryPtr = -1;
     }
+    state.historyPtr = state.history.length - 1;
 
     // Update "hasChanges" and Tab visual state
     // Don't mark as dirty for non-modifying operations (selection/navigation/reorder)

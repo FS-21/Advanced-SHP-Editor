@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v2.2';</script>
+    <script>const APP_VERSION = 'v2.3';</script>
     <script>
         let CnCReloadedMode = true;
         document.addEventListener("DOMContentLoaded", () => {
@@ -800,13 +800,18 @@
                                 style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🎨</span><span
                                 data-i18n="menu_convert_palette">Convert Image Palette...</span>
                         </div>
+                        <div id="menuBatchCompression" class="menu-action" data-i18n-title="tt_menu_batch_compression">
+                            <span class="menu-icon"
+                                style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">📦</span><span
+                                data-i18n="menu_batch_compression">Batch Change Compression...</span>
+                        </div>
                     </div> <!-- End of menu-dropdown -->
                 </div> <!-- End of menuItemTools -->
             </div> <!-- End of mainMenu -->
 
             <div class="toolbar-sep"></div>
 
-            <input type="file" id="fileInShp" accept=".shp,.sha" hidden>
+            <input type="file" id="fileInShp" accept=".shp,.sha,.tem" multiple hidden>
 
             <div id="topBarControls" style="display:flex; align-items:center;">
                 <!-- Undo/Redo -->
@@ -1370,6 +1375,19 @@
                         <!-- STATUS BAR -->
                         <div id="statusBar" class="status-bar">
                             <div class="status-bar-left">
+                                <div class="status-item" id="statusCompressionItem" title="Compression Type" data-i18n-title="tooltip_compression">
+                                    <svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                                        <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                                    </svg>
+                                    <select id="selStatusCompression" class="status-select">
+                                        <option value="1" data-i18n="opt_compression_1">Type 1 (Uncompressed)</option>
+                                        <option value="3" data-i18n="opt_compression_3">Type 3 (RLE)</option>
+                                    </select>
+                                </div>
+                                <div class="status-sep" id="statusCompressionSep"></div>
                                 <div class="status-item" title="Image Resolution" data-i18n-title="tooltip_res">
                                     <svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2565,6 +2583,17 @@
             The following open files will be saved. Are you sure you want to proceed?
         </p>
 
+        <!-- Progress Bar & Status for continuous save -->
+        <div id="saveAllProgressContainer" style="display: none; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span id="saveAllProgressText" style="font-size: 11px; color: var(--accent); font-family: monospace; font-weight: bold;"></span>
+                <span id="saveAllProgressPercent" style="font-size: 11px; color: #a0aec0; font-family: monospace;"></span>
+            </div>
+            <div class="save-all-progress-bar">
+                <div id="saveAllProgressFill" class="save-all-progress-fill" style="width: 0%;"></div>
+            </div>
+        </div>
+
         <div id="saveAllFileList" class="save-all-list">
             <!-- Dynamically populated rows -->
         </div>
@@ -2575,11 +2604,83 @@
             Are you sure you want to save all files?
         </p>
 
+        <div class="dialog-footer" style="justify-content: space-between; align-items: center; gap: 10px; margin-top: 0; flex-wrap: wrap;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button id="btnSaveAllZip" class="btn-save-all-secondary" title="Export all modified files to a single ZIP archive"
+                    data-i18n="btn_save_all_zip">📦 ZIP</button>
+                <button id="btnSaveAllToFolder" class="btn-save-all-secondary" title="Save all modified files to a selected folder with a single permission prompt"
+                    data-i18n="btn_save_all_folder">📁 Save to Folder...</button>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="btnCancelSaveAll" class="btn-cancel" style="padding: 8px 20px; min-width: 80px;"
+                    data-i18n="btn_cancel">CANCEL</button>
+                <button id="btnConfirmSaveAll" class="btn-download" style="padding: 8px 24px; min-width: 120px;"
+                    data-i18n="btn_save_all">SAVE ALL</button>
+            </div>
+        </div>
+    </dialog>
+
+
+    <!-- Batch Change Compression Dialog -->
+    <dialog id="batchCompressionDialog" class="dialog-modal"
+        style="width: 580px; min-width: 420px; max-width: 95vw; padding: 22px; text-align: left; background: #141722; border: 1px solid var(--accent); box-shadow: 0 12px 35px rgba(0,0,0,0.75);">
+        <h3 id="batchCompTitle"
+            style="color: var(--accent); margin-bottom: 8px; font-size: 15px; letter-spacing: 1px; font-family: monospace; display: flex; align-items: center; gap: 8px;"
+            data-i18n="dlg_batch_compression_title">
+            <span style="font-size:16px;">📦</span> BATCH CHANGE COMPRESSION</h3>
+        <p id="batchCompDesc"
+            style="font-size: 12px; color: #a0aec0; margin-bottom: 14px; line-height: 1.4; font-family: monospace;"
+            data-i18n="dlg_batch_compression_desc">
+            Select the compression format to apply to all open SHP files:
+        </p>
+
+        <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; background: #1a202c; padding: 10px 14px; border-radius: 6px; border: 1px solid #2d3748;">
+            <label for="selBatchCompressionType" style="font-family: monospace; font-size: 12px; color: #cbd5e0; font-weight: bold;" data-i18n="lbl_new_compression">New Compression:</label>
+            <select id="selBatchCompressionType" class="input-dark" style="flex: 1; height: 30px; font-size: 12px;">
+                <option value="1" data-i18n="opt_compression_1">Type 1 (Uncompressed)</option>
+                <option value="3" data-i18n="opt_compression_3">Type 3 (RLE)</option>
+            </select>
+        </div>
+
+        <div id="batchCompFileList" class="save-all-list" style="max-height: 200px;">
+            <!-- Dynamically populated rows -->
+        </div>
+
+        <p id="batchCompConfirmQuestion"
+            style="font-size: 12px; color: #fff; margin-bottom: 18px; font-weight: bold; font-family: monospace;"
+            data-i18n="msg_confirm_batch_compression_question">
+            Are you sure you want to apply this compression type to all open files?
+        </p>
+
         <div class="dialog-footer" style="justify-content: flex-end; gap: 12px; margin-top: 0;">
-            <button id="btnCancelSaveAll" class="btn-cancel" style="padding: 8px 22px; min-width: 85px;"
+            <button id="btnCancelBatchComp" class="btn-cancel" style="padding: 8px 22px; min-width: 85px;"
                 data-i18n="btn_cancel">CANCEL</button>
-            <button id="btnConfirmSaveAll" class="btn-download" style="padding: 8px 25px; min-width: 110px;"
-                data-i18n="btn_save_all">SAVE ALL</button>
+            <button id="btnConfirmBatchComp" class="btn-download" style="padding: 8px 25px; min-width: 120px;"
+                data-i18n="btn_apply_all">APPLY TO ALL</button>
+        </div>
+    </dialog>
+
+
+    <!-- Batch File Loading Progress Modal -->
+    <dialog id="batchLoadingDialog" class="dialog-modal"
+        style="width: 480px; min-width: 320px; max-width: 90vw; padding: 22px; text-align: left; background: #141722; border: 1px solid var(--accent); box-shadow: 0 16px 45px rgba(0,0,0,0.85); border-radius: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <h3 id="batchLoadingTitle"
+                style="color: var(--accent); margin: 0; font-size: 14px; letter-spacing: 1px; font-family: monospace; display: flex; align-items: center; gap: 10px;"
+                data-i18n="dlg_batch_loading_title">
+                <span class="loading-spinner-inline"></span> OPENING FILES...
+            </h3>
+            <span id="batchLoadingCount" style="font-family: monospace; font-size: 12px; color: #00ffaa; font-weight: bold;">0 / 0</span>
+        </div>
+        <p id="batchLoadingCurrentFile"
+            style="font-size: 12px; color: #cbd5e0; margin-bottom: 14px; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            Preparing files...
+        </p>
+        <div class="save-all-progress-bar" style="height: 8px; margin-bottom: 8px;">
+            <div id="batchLoadingProgressFill" class="save-all-progress-fill" style="width: 0%;"></div>
+        </div>
+        <div style="display: flex; justify-content: flex-end;">
+            <span id="batchLoadingPercent" style="font-family: monospace; font-size: 11px; color: #a0aec0;">0%</span>
         </div>
     </dialog>
 

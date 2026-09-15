@@ -383,7 +383,7 @@ function onConfirm() {
         refreshPalettesMenuDynamic();
     }
 
-    state.hasChanges = true;
+    pushHistory('all');
     renderPalette();
     renderCanvas();
     renderFramesList();

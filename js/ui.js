@@ -1,6 +1,6 @@
 import { state, generateId, TRANSPARENT_COLOR } from './state.js';
 import { elements } from './constants.js';
-import { pushHistory, cloneLayerNode } from './history.js';
+import { pushHistory, cloneLayerNode, trimHistoryEmergency } from './history.js';
 import { bresenham, findNearestPaletteIndex, findNearestPaletteIndexInRange, setupAutoRepeat, compositeFrame, getZdataPalette, getActivePalette } from './utils.js';
 import { updateUIState } from './main.js';
 import { updateMenuState } from './menu_handlers.js';
@@ -79,6 +79,8 @@ export function updateCanvasSize() {
         elements.resDisplay.innerText = `${state.canvasW} x ${state.canvasH}`;
     }
 
+    syncStatusCompressionUI();
+
     if (elements.statusBar) {
         elements.statusBar.style.display = state.frames.length > 0 ? 'flex' : 'none';
     }
@@ -155,7 +157,15 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
 
     // Handle external SHP layers separately
     if (layer && layer.type === 'external_shp' && layer.extShpFrameData && layer.extShpPalette) {
-        const imgData = ctx.createImageData(w, h);
+        let imgData;
+        try {
+            imgData = ctx.createImageData(w, h);
+        } catch (err) {
+            if (err instanceof RangeError) {
+                trimHistoryEmergency();
+                imgData = ctx.createImageData(w, h);
+            } else throw err;
+        }
         const d = imgData.data;
         const extPal = layer.extShpPalette;
         const shpW = layer.extShpWidth || layer.extWidth;
@@ -205,7 +215,15 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
 
     if (!layer || !layer.data) return;
 
-    const id = ctx.createImageData(w, h);
+    let id;
+    try {
+        id = ctx.createImageData(w, h);
+    } catch (err) {
+        if (err instanceof RangeError) {
+            trimHistoryEmergency();
+            id = ctx.createImageData(w, h);
+        } else throw err;
+    }
     const d32 = new Uint32Array(id.data.buffer);
 
     if (!skipBG) {
@@ -716,9 +734,25 @@ export function renderCanvas() {
     const w = state.canvasW;
     const h = state.canvasH;
 
-    const imgData = ctx.createImageData(w, h);
+    let imgData;
+    try {
+        imgData = ctx.createImageData(w, h);
+    } catch (err) {
+        if (err instanceof RangeError) {
+            trimHistoryEmergency();
+            imgData = ctx.createImageData(w, h);
+        } else throw err;
+    }
     const d = imgData.data;
-    const isContent = new Uint8Array(w * h);
+    let isContent;
+    try {
+        isContent = new Uint8Array(w * h);
+    } catch (err) {
+        if (err instanceof RangeError) {
+            trimHistoryEmergency();
+            isContent = new Uint8Array(w * h);
+        } else throw err;
+    }
 
     // Background Fill
     if (state.showBackground) {
@@ -2467,6 +2501,63 @@ export function setupZoomOptions() {
 
     // Initialize UI
     syncZoomUI();
+}
+
+export function syncStatusCompressionUI() {
+    const item = elements.statusCompressionItem || document.getElementById('statusCompressionItem');
+    const sep = elements.statusCompressionSep || document.getElementById('statusCompressionSep');
+    const sel = elements.selStatusCompression || document.getElementById('selStatusCompression');
+    if (!item || !sel) return;
+
+    if (state.frames.length === 0 || state.isTmpMode) {
+        item.style.display = 'none';
+        if (sep) sep.style.display = 'none';
+        return;
+    }
+
+    item.style.display = 'flex';
+    if (sep) sep.style.display = '';
+
+    if (state.isAlphaImageMode) {
+        sel.value = "1";
+        sel.disabled = true;
+        const msg = t('tooltip_compression_alpha_locked');
+        item.setAttribute('data-title', msg);
+        item.title = msg;
+    } else {
+        sel.disabled = false;
+        const curComp = (state.compression === 1 || state.compression === 0) ? "1" : "3";
+        sel.value = curComp;
+        const msg = t('tooltip_compression');
+        item.setAttribute('data-title', msg);
+        item.title = msg;
+    }
+}
+
+export function setupStatusCompression() {
+    const sel = elements.selStatusCompression || document.getElementById('selStatusCompression');
+    if (!sel) return;
+
+    sel.onchange = () => {
+        const newComp = parseInt(sel.value, 10);
+        if (newComp === 1 || newComp === 3) {
+            if (state.compression !== newComp) {
+                state.compression = newComp;
+                if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                    state.tabs[state.activeTabIndex].compression = newComp;
+                    state.tabs[state.activeTabIndex].hasChanges = true;
+                }
+                state.hasChanges = true;
+                if (elements.selExpShpType) {
+                    elements.selExpShpType.value = String(newComp);
+                }
+                if (window.renderTabs) {
+                    window.renderTabs();
+                }
+            }
+        }
+    };
+    syncStatusCompressionUI();
 }
 
 export function renderPaletteSimple(palette, container) {

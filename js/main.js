@@ -25,7 +25,7 @@ import { initHistoryHooks, undo, redo, pushHistory, resetHistoryForFreshOpen } f
 import {
     updateCanvasSize, renderCanvas, renderOverlay,
     updateLayersList, renderFramesList, renderPalette,
-    setupZoomOptions, createNewProject, addFrame,
+    setupZoomOptions, setupStatusCompression, syncStatusCompressionUI, createNewProject, addFrame,
     addLayer, deleteLayer, moveLayerUp, moveLayerDown, mergeLayerDown,
     applyColorReplace, getActiveLayer, addGroup, triggerSelectionFlash,
     copySelection, cutSelection, pasteClipboard, selectAll, invertSelection,
@@ -88,6 +88,8 @@ export function updateUIState() {
         statusBar.style.display = hasProject ? 'flex' : 'none';
     }
 
+    syncStatusCompressionUI();
+
     // Update menu state (enabled/disabled actions)
     updateMenuState(hasProject);
 
@@ -131,6 +133,7 @@ function init() {
 
         renderPalette();
         setupZoomOptions();
+        setupStatusCompression();
         setupEventListeners();
         initMenu();
         setupImageMenuHandlers();
@@ -455,12 +458,9 @@ function setupEventListeners() {
 
     elements.fileInShp.onchange = async (e) => {
         if (!e.target.files.length) return;
-        const file = e.target.files[0];
-        const buf = await file.arrayBuffer();
+        const files = Array.from(e.target.files);
         try {
-            const shp = ShpFormat80.parse(buf);
-            loadShpData(shp);
-            window._lastShpFilename = file.name;
+            await openFilesBatch(files);
         } catch (err) {
             console.error(err);
             alert("Error loading file: " + err.message);
@@ -2612,6 +2612,137 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
     }
 }
 
+export async function openFilesBatch(files, fileHandles = []) {
+    if (!files || files.length === 0) return;
+
+    const batchDialog = document.getElementById('batchLoadingDialog');
+    const batchCount = document.getElementById('batchLoadingCount');
+    const batchCurrentFile = document.getElementById('batchLoadingCurrentFile');
+    const batchProgressFill = document.getElementById('batchLoadingProgressFill');
+    const batchPercent = document.getElementById('batchLoadingPercent');
+    const t = state.translations || {};
+
+    const isBatch = files.length >= 2;
+    if (isBatch && batchDialog) {
+        if (batchProgressFill) batchProgressFill.style.width = '0%';
+        if (batchPercent) batchPercent.textContent = '0%';
+        if (batchCount) batchCount.textContent = `0 / ${files.length}`;
+        if (batchCurrentFile) {
+            batchCurrentFile.textContent = (t.lbl_batch_reading_file || 'Reading {current} of {total}: {filename}')
+                .replace('{current}', '1')
+                .replace('{total}', String(files.length))
+                .replace('{filename}', files[0].name);
+        }
+        if (typeof batchDialog.showModal === 'function') {
+            if (!batchDialog.open) batchDialog.showModal();
+        } else {
+            batchDialog.setAttribute('open', '');
+        }
+        // Immediate yield to let browser paint modal instantly
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    // 1. Scan the files and collect ALL valid SHP or TMP files with live progress
+    const validEntries = [];
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const handle = (fileHandles && fileHandles[i]) || null;
+
+        if (isBatch && batchDialog) {
+            const currentNum = i + 1;
+            const pct = Math.round((currentNum / (files.length * 2)) * 100);
+            if (batchCount) batchCount.textContent = `${currentNum} / ${files.length}`;
+            if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
+            if (batchPercent) batchPercent.textContent = `${pct}%`;
+            if (batchCurrentFile) {
+                batchCurrentFile.textContent = (t.lbl_batch_reading_file || 'Reading {current} of {total}: {filename}')
+                    .replace('{current}', String(currentNum))
+                    .replace('{total}', String(files.length))
+                    .replace('{filename}', file.name);
+            }
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const type = detectFileType(buffer);
+            if (type === 'shp' || type === 'tmp') {
+                validEntries.push({ file, handle, buffer, type });
+            }
+        } catch (err) {
+            console.error("Error reading file in selection:", file.name, err);
+        }
+    }
+
+    if (validEntries.length === 0) {
+        if (isBatch && batchDialog) {
+            if (typeof batchDialog.close === 'function') batchDialog.close();
+            else batchDialog.removeAttribute('open');
+        }
+        alert("No se detectó ningún archivo SHP o TMP válido entre los elementos seleccionados. Asegúrese de que sean archivos SHP o TMP válidos.");
+        return;
+    }
+
+    // Determine if the current tab can be reused (only if completely empty and untouched)
+    const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+    const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName && !curTab.isNewProject;
+
+    let firstOpenedTabIndex = -1;
+
+    for (let i = 0; i < validEntries.length; i++) {
+        const { file, handle, buffer } = validEntries[i];
+        const currentNum = i + 1;
+
+        if (isBatch && batchDialog) {
+            // Processing phase: 50% to 100%
+            const pct = Math.round(50 + (currentNum / validEntries.length) * 50);
+            if (batchCount) batchCount.textContent = `${currentNum} / ${validEntries.length}`;
+            if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
+            if (batchPercent) batchPercent.textContent = `${pct}%`;
+            if (batchCurrentFile) {
+                batchCurrentFile.textContent = (t.lbl_batch_loading_file || 'Opening {current} of {total}: {filename}')
+                    .replace('{current}', String(currentNum))
+                    .replace('{total}', String(validEntries.length))
+                    .replace('{filename}', file.name);
+            }
+            // CRITICAL: Yield to browser event loop so it paints frame and keeps UI fully responsive!
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        if (i === 0 && isCurrentTabEmpty) {
+            // First file reuses the current empty tab
+            const success = await processSystemFileOpen(file, handle, buffer);
+            if (success && firstOpenedTabIndex === -1) {
+                firstOpenedTabIndex = state.activeTabIndex;
+            }
+        } else {
+            // Open in a new tab (inheriting palette from current active tab)
+            createNewTab(file.name, false);
+            const success = await processSystemFileOpen(file, handle, buffer);
+            if (success && firstOpenedTabIndex === -1) {
+                firstOpenedTabIndex = state.activeTabIndex;
+            }
+        }
+    }
+
+    // Switch to the first loaded file so the user sees the first tab
+    if (firstOpenedTabIndex >= 0 && firstOpenedTabIndex !== state.activeTabIndex) {
+        switchTab(firstOpenedTabIndex);
+    }
+
+    if (isBatch && batchDialog) {
+        if (batchProgressFill) batchProgressFill.style.width = '100%';
+        if (batchPercent) batchPercent.textContent = '100%';
+        await new Promise(resolve => setTimeout(resolve, 150));
+        if (typeof batchDialog.close === 'function') batchDialog.close();
+        else batchDialog.removeAttribute('open');
+
+        const successMsg = (t.msg_batch_loading_success || '✅ Opened {count} file(s) successfully')
+            .replace('{count}', String(validEntries.length));
+        showPasteNotification(successMsg, 'success', 2500);
+    }
+}
+
 document.addEventListener('drop', async (e) => {
     e.preventDefault();
     dragCounter = 0;
@@ -2654,53 +2785,5 @@ document.addEventListener('drop', async (e) => {
         return;
     }
 
-    // Scan the files and collect ALL valid SHP or TMP files
-    const validEntries = [];
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const handle = fileHandles[i] || null;
-        try {
-            const buffer = await file.arrayBuffer();
-            const type = detectFileType(buffer);
-            if (type === 'shp' || type === 'tmp') {
-                validEntries.push({ file, handle, buffer, type });
-            }
-        } catch (err) {
-            console.error("Error reading file in selection:", file.name, err);
-        }
-    }
-
-    if (validEntries.length === 0) {
-        alert(`No se detectó ningún archivo SHP o TMP válido entre los elementos arrastrados. Asegúrese de que sea un archivo SHP o TMP válido, o imágenes PNG/PCX si tiene un proyecto activo.`);
-        return;
-    }
-
-    // Determine if the current tab can be reused (only if completely empty and untouched)
-    const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
-    const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName && !curTab.isNewProject;
-
-    let firstOpenedTabIndex = -1;
-
-    for (let i = 0; i < validEntries.length; i++) {
-        const { file, handle, buffer } = validEntries[i];
-        if (i === 0 && isCurrentTabEmpty) {
-            // First file reuses the current empty tab
-            const success = await processSystemFileOpen(file, handle, buffer);
-            if (success && firstOpenedTabIndex === -1) {
-                firstOpenedTabIndex = state.activeTabIndex;
-            }
-        } else {
-            // Open in a new tab (inheriting palette from current active tab)
-            createNewTab(file.name, false);
-            const success = await processSystemFileOpen(file, handle, buffer);
-            if (success && firstOpenedTabIndex === -1) {
-                firstOpenedTabIndex = state.activeTabIndex;
-            }
-        }
-    }
-
-    // Switch to the first loaded file so the user sees the first tab
-    if (firstOpenedTabIndex >= 0 && firstOpenedTabIndex !== state.activeTabIndex) {
-        switchTab(firstOpenedTabIndex);
-    }
+    await openFilesBatch(files, fileHandles);
 });

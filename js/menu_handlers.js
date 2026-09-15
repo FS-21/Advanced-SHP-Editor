@@ -5,7 +5,7 @@ import {
     renderFramesList, updateLayersList, showEditorInterface,
     updateCanvasSize, addFrame, createNewProject, openFrameManager,
     selectAll, invertSelection, copySelection, cutSelection, pasteClipboard, pasteAsNewFrame, zoomToSelection, openPasteRangeDialog, removeColorZeroFromEntireShp, fillColorZeroInEntireShp,
-    updatePixelGrid, renderLayerThumbnail, setupTooltips, updatePaletteUsedMarks
+    updatePixelGrid, renderLayerThumbnail, setupTooltips, updatePaletteUsedMarks, syncStatusCompressionUI, showPasteNotification
 } from './ui.js';
 import { openNewShpDialog, updateUIState } from './main.js';
 import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, handleSaveAsShp, handleSaveAll, loadTmpData, saveTmpData } from './file_io.js';
@@ -205,7 +205,7 @@ export function updateMenuState(hasProject) {
     const hasPalette = state.palette && state.palette.some(c => c !== null);
 
     // Tools enabled just with a project
-    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation', 'menuRemoveColorZero', 'menuFillColorZero', 'menuConvertPalette'];
+    const projectToolActions = ['menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation', 'menuRemoveColorZero', 'menuFillColorZero', 'menuConvertPalette', 'menuBatchCompression'];
     projectToolActions.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -990,6 +990,9 @@ async function toggleAlphaImageMode() {
 
         // Force compression 1
         state.compression = 1;
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].compression = 1;
+        }
 
     } else {
         // Restore settings
@@ -1002,6 +1005,9 @@ async function toggleAlphaImageMode() {
             if (cbShadows) cbShadows.checked = state.useShadows;
 
             state.compression = savedAlphaSettings.compression;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].compression = savedAlphaSettings.compression;
+            }
         }
     }
 
@@ -1009,6 +1015,7 @@ async function toggleAlphaImageMode() {
     updateMenuState(state.frames.length > 0);
     renderCanvas();
     if (typeof renderFramesList === 'function') renderFramesList();
+    syncStatusCompressionUI();
 }
 
 function setupModalButtons() {
@@ -3309,10 +3316,161 @@ export function setupToolsMenu() {
         };
     }
 
+    const batchCompEl = document.getElementById('menuBatchCompression');
+    if (batchCompEl) {
+        batchCompEl.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            openBatchCompressionDialog();
+        };
+    }
+
     // Init sequence editor events (once)
     initSequenceEditor();
     initVehicleSequenceEditor();
     initAresFoundation();
+}
+
+export function openBatchCompressionDialog() {
+    const dialog = elements.batchCompressionDialog || document.getElementById('batchCompressionDialog');
+    const selComp = elements.selBatchCompressionType || document.getElementById('selBatchCompressionType');
+    const fileListEl = elements.batchCompFileList || document.getElementById('batchCompFileList');
+    const btnCancel = elements.btnCancelBatchComp || document.getElementById('btnCancelBatchComp');
+    const btnConfirm = elements.btnConfirmBatchComp || document.getElementById('btnConfirmBatchComp');
+    if (!dialog || !selComp || !fileListEl) return;
+
+    // Filter open valid tabs
+    const validTabs = state.tabs.filter(tab => !tab.isTmpMode && tab.frames && tab.frames.length > 0);
+    if (validTabs.length === 0) {
+        showPasteNotification(t('msg_batch_compression_no_files') || "No SHP files are currently open.", "warning", 3000);
+        return;
+    }
+
+    // Default to active tab's compression or state.compression
+    const initialComp = (state.compression === 1 || state.compression === 0) ? "1" : "3";
+    selComp.value = initialComp;
+
+    function renderList() {
+        fileListEl.innerHTML = '';
+        const targetType = parseInt(selComp.value, 10);
+
+        validTabs.forEach((tab, index) => {
+            const row = document.createElement('div');
+            row.className = 'save-all-item';
+
+            const left = document.createElement('div');
+            left.className = 'save-all-item-left';
+
+            const tag = document.createElement('span');
+            tag.className = 'save-all-type-tag';
+            tag.textContent = `SHP [${tab.canvasW}x${tab.canvasH}]`;
+
+            const name = document.createElement('span');
+            name.className = 'save-all-filename';
+            name.textContent = tab.fileName || tab.idName || `File ${index + 1}`;
+            name.title = tab.fileName || tab.idName || '';
+
+            left.appendChild(tag);
+            left.appendChild(name);
+
+            const right = document.createElement('div');
+            right.className = 'save-all-item-right';
+
+            if (tab.isAlphaImageMode) {
+                const alphaTag = document.createElement('span');
+                alphaTag.className = 'save-all-badge badge-clean';
+                alphaTag.textContent = t('lbl_locked_alpha_mode') || "Locked (Alpha Mode)";
+                alphaTag.style.color = '#ff99cc';
+                alphaTag.style.borderColor = 'rgba(255, 153, 204, 0.4)';
+                right.appendChild(alphaTag);
+            } else {
+                const curComp = (tab.compression === 1 || tab.compression === 0) ? 1 : 3;
+                const curBadge = document.createElement('span');
+                curBadge.className = 'save-all-badge badge-clean';
+                curBadge.textContent = `Type ${curComp}`;
+
+                const arrow = document.createElement('span');
+                arrow.textContent = '➔';
+                arrow.style.color = '#718096';
+                arrow.style.fontSize = '11px';
+
+                const newBadge = document.createElement('span');
+                if (curComp === targetType) {
+                    newBadge.className = 'save-all-badge badge-clean';
+                    newBadge.textContent = `Type ${targetType}`;
+                } else {
+                    newBadge.className = 'save-all-badge badge-modified';
+                    newBadge.textContent = `Type ${targetType}`;
+                    newBadge.style.fontWeight = 'bold';
+                }
+
+                right.appendChild(curBadge);
+                right.appendChild(arrow);
+                right.appendChild(newBadge);
+            }
+
+            row.appendChild(left);
+            row.appendChild(right);
+            fileListEl.appendChild(row);
+        });
+    }
+
+    renderList();
+    selComp.onchange = renderList;
+
+    btnCancel.onclick = () => {
+        dialog.close();
+    };
+
+    btnConfirm.onclick = () => {
+        const targetComp = parseInt(selComp.value, 10);
+        let changedCount = 0;
+
+        for (let i = 0; i < state.tabs.length; i++) {
+            const tab = state.tabs[i];
+            if (tab.isTmpMode || !tab.frames || tab.frames.length === 0) continue;
+            if (tab.isAlphaImageMode && targetComp !== 1) continue;
+
+            const oldComp = (tab.compression === 1 || tab.compression === 0) ? 1 : 3;
+            if (oldComp !== targetComp) {
+                tab.compression = targetComp;
+                tab.hasChanges = true;
+                changedCount++;
+            }
+        }
+
+        // Sync active tab & global state
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            const activeTab = state.tabs[state.activeTabIndex];
+            if (!activeTab.isTmpMode) {
+                state.compression = activeTab.compression;
+            }
+        } else {
+            state.compression = targetComp;
+        }
+
+        syncStatusCompressionUI();
+        if (elements.selExpShpType) {
+            elements.selExpShpType.value = String(state.compression);
+        }
+        if (window.renderTabs) {
+            window.renderTabs();
+        }
+
+        dialog.close();
+
+        if (changedCount === 0) {
+            const noChangeTemplate = t('msg_batch_compression_no_changes') || "ℹ️ All open files already use Compression Type {type}.";
+            const msg = noChangeTemplate.replace('{type}', String(targetComp));
+            showPasteNotification(msg, 'info', 3000);
+        } else {
+            const msgTemplate = t('msg_batch_compression_applied') || "✅ Compression changed to Type {type} across {count} file(s)";
+            const msg = msgTemplate.replace('{count}', String(changedCount)).replace('{type}', String(targetComp));
+            showPasteNotification(msg, 'success', 3000);
+        }
+    };
+
+    dialog.showModal();
 }
 
 // ============================================================

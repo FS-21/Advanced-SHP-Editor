@@ -246,6 +246,9 @@ export const elements = {
 
     // Status Bar
     get statusBar() { return document.getElementById('statusBar'); },
+    get statusCompressionItem() { return document.getElementById('statusCompressionItem'); },
+    get statusCompressionSep() { return document.getElementById('statusCompressionSep'); },
+    get selStatusCompression() { return document.getElementById('selStatusCompression'); },
     get resDisplay() { return document.getElementById('resDisplay'); },
     get statusSelectionInfo() { return document.getElementById('statusSelectionInfo'); },
     get selectionDisplay() { return document.getElementById('selectionDisplay'); },
@@ -263,6 +266,34 @@ export const elements = {
     get menuGridShowLight() { return document.getElementById('menuGridShowLight'); },
     get menuGridShowDark() { return document.getElementById('menuGridShowDark'); },
     get pixelGridOverlay() { return document.getElementById('pixelGridOverlay'); },
+
+    // Batch Change Compression Dialog
+    get menuBatchCompression() { return document.getElementById('menuBatchCompression'); },
+    get batchCompressionDialog() { return document.getElementById('batchCompressionDialog'); },
+    get selBatchCompressionType() { return document.getElementById('selBatchCompressionType'); },
+    get batchCompFileList() { return document.getElementById('batchCompFileList'); },
+    get btnCancelBatchComp() { return document.getElementById('btnCancelBatchComp'); },
+    get btnConfirmBatchComp() { return document.getElementById('btnConfirmBatchComp'); },
+
+    // Save All Dialog
+    get saveAllDialog() { return document.getElementById('saveAllDialog'); },
+    get saveAllFileList() { return document.getElementById('saveAllFileList'); },
+    get btnCancelSaveAll() { return document.getElementById('btnCancelSaveAll'); },
+    get btnConfirmSaveAll() { return document.getElementById('btnConfirmSaveAll'); },
+    get btnSaveAllZip() { return document.getElementById('btnSaveAllZip'); },
+    get btnSaveAllToFolder() { return document.getElementById('btnSaveAllToFolder'); },
+    get saveAllProgressContainer() { return document.getElementById('saveAllProgressContainer'); },
+    get saveAllProgressFill() { return document.getElementById('saveAllProgressFill'); },
+    get saveAllProgressText() { return document.getElementById('saveAllProgressText'); },
+    get saveAllProgressPercent() { return document.getElementById('saveAllProgressPercent'); },
+
+    // Batch File Loading Progress Dialog
+    get batchLoadingDialog() { return document.getElementById('batchLoadingDialog'); },
+    get batchLoadingTitle() { return document.getElementById('batchLoadingTitle'); },
+    get batchLoadingCount() { return document.getElementById('batchLoadingCount'); },
+    get batchLoadingCurrentFile() { return document.getElementById('batchLoadingCurrentFile'); },
+    get batchLoadingProgressFill() { return document.getElementById('batchLoadingProgressFill'); },
+    get batchLoadingPercent() { return document.getElementById('batchLoadingPercent'); },
 
     // Confirm Dialog
     get confirmDialog() { return document.getElementById('confirmDialog'); },

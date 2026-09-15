@@ -276,6 +276,41 @@ body {
     background: #444;
 }
 
+.status-select {
+    background: #111827;
+    color: #cbd5e0;
+    border: 1px solid #374151;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: inherit;
+    font-size: 11px;
+    height: 22px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+.status-select:hover {
+    border-color: #4b5563;
+    background: #1f2937;
+}
+
+.status-select:focus {
+    border-color: #00ffaa;
+    box-shadow: 0 0 0 1px rgba(0, 255, 170, 0.3);
+}
+
+.status-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    border-color: #2d3748;
+}
+
+.status-select option {
+    background: #1a2332;
+    color: #cbd5e0;
+}
+
 /* --- STATUS ZOOM GROUP --- */
 .status-zoom-group {
     display: flex;
@@ -5877,4 +5912,72 @@ body:not(.tmp-mode) #menuItemExportTmp { display: none !important; }
 .save-all-btn-action.download-btn:hover {
     background: #4a5568;
     color: #fff;
+}
+
+/* Save All Progress Bar & Secondary Actions */
+.save-all-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #0b0d14;
+    border: 1px solid #232738;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.save-all-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00ccff, #00ff9d);
+    width: 0%;
+    transition: width 0.25s ease;
+    box-shadow: 0 0 8px rgba(0, 255, 157, 0.4);
+}
+
+.btn-save-all-secondary {
+    padding: 7px 12px;
+    font-size: 11px;
+    font-family: monospace;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    background: #171c28;
+    color: #cbd5e0;
+    border: 1px solid #2d3748;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s ease;
+}
+
+.btn-save-all-secondary:hover {
+    background: #222a3d;
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.btn-continue-pulse {
+    background: linear-gradient(135deg, #2b6cb0, #3182ce) !important;
+    border-color: #63b3ed !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 14px rgba(66, 153, 225, 0.6) !important;
+    animation: saveAllPulse 1.4s infinite alternate ease-in-out;
+}
+
+@keyframes saveAllPulse {
+    0% { transform: scale(1); box-shadow: 0 0 8px rgba(66, 153, 225, 0.4); }
+    100% { transform: scale(1.03); box-shadow: 0 0 16px rgba(66, 153, 225, 0.85); }
+}
+
+.loading-spinner-inline {
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(0, 255, 157, 0.25);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spinInline 0.75s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+@keyframes spinInline {
+    to { transform: rotate(360deg); }
 }

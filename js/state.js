@@ -27,7 +27,7 @@ export class Tab {
         this.playTimer = null;
         this.canvasW = 60;
         this.canvasH = 48;
-        this.compression = 3;
+        this.compression = (initialState && initialState.compression !== undefined) ? initialState.compression : 3;
         this.copyClipboard = null;
         this.showBackground = true;
         this.showCenter = false;

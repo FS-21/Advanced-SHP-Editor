@@ -3,7 +3,7 @@ let currentContextTabIndex = -1;
 
 import { state, Tab, generateId } from './state.js';
 import { updateUIState } from './main.js';
-import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, renderReplaceGrid } from './ui.js';
+import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, syncStatusCompressionUI, renderReplaceGrid } from './ui.js';
 import { renderHistory } from './history.js';
 import { handleSaveShp, saveTmpData } from './file_io.js';
 import { t } from './translations.js';
@@ -270,6 +270,7 @@ export function switchTab(index) {
     updateUIState();
     updateCanvasSize();
     syncZoomUI();
+    syncStatusCompressionUI();
     renderCanvas();
     renderOverlay();
     renderFramesList();
@@ -333,6 +334,7 @@ export async function closeTab(index, e) {
         cleanTab.history = [];
         cleanTab.historyPtr = -1;
         cleanTab.savedHistoryPtr = -1;
+        cleanTab.compression = 3;
 
         state.tabs[0] = cleanTab;
         state.activeTabIndex = 0;
@@ -355,6 +357,7 @@ export async function closeTab(index, e) {
         state.historyPtr = -1;
         state.savedHistoryPtr = -1;
         state.hasChanges = false;
+        state.compression = 3;
 
         document.body.classList.remove('tmp-mode');
         document.body.classList.remove('picking-mode');

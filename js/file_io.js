@@ -2,7 +2,7 @@ import { state, generateId, TRANSPARENT_COLOR } from './state.js';
 import { elements } from './constants.js';
 import { ShpFormat80 } from './shp_format.js';
 import { TmpTsFile } from './tmp_format.js';
-import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection } from './ui.js';
+import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection, syncStatusCompressionUI } from './ui.js';
 import { pushHistory } from './history.js';
 import { findNearestPaletteIndex, getActivePalette } from './utils.js';
 import { PcxLoader } from './pcx_loader.js';
@@ -100,6 +100,10 @@ export function loadShpData(shp) {
         const normalizedComp = (comp === 1 || comp === 0) ? 1 : 3;
         state.compression = normalizedComp;
         if (elements.selExpShpType) elements.selExpShpType.value = normalizedComp.toString();
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].compression = normalizedComp;
+        }
+        syncStatusCompressionUI();
     }
 
     state.canvasW = sw;
@@ -404,7 +408,38 @@ export async function handleSaveAll() {
     const fileListEl = document.getElementById('saveAllFileList');
     const btnCancel = document.getElementById('btnCancelSaveAll');
     const btnConfirm = document.getElementById('btnConfirmSaveAll');
+    const btnSaveAllZip = document.getElementById('btnSaveAllZip');
+    const btnSaveAllToFolder = document.getElementById('btnSaveAllToFolder');
+    const progressContainer = document.getElementById('saveAllProgressContainer');
+    const progressFill = document.getElementById('saveAllProgressFill');
+    const progressText = document.getElementById('saveAllProgressText');
+    const progressPercent = document.getElementById('saveAllProgressPercent');
     const t = state.translations || {};
+
+    // Helper to encode a tab (SHP or TMP) into a Uint8Array
+    function encodeTabToBuffer(tab, index) {
+        if (tab.isTmpMode) {
+            state.activeTabIndex = index;
+            state.loadFromTab(tab);
+            const tiles = getCurrentEditedTiles();
+            if (!tiles || !state.tmpHeader) return null;
+            return TmpTsFile.encode({ header: state.tmpHeader, tiles });
+        } else {
+            const compression = tab.compression !== undefined ? tab.compression : (state.compression || 3);
+            return encodeFramesToShpBuffer(tab.frames, compression, tab.isAlphaImageMode);
+        }
+    }
+
+    function updateProgress(current, total) {
+        if (!progressContainer || !progressFill || !progressText || !progressPercent) return;
+        progressContainer.style.display = 'block';
+        const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 100;
+        progressFill.style.width = pct + '%';
+        progressText.textContent = (t.lbl_save_all_progress || 'Saving {current} of {total}...')
+            .replace('{current}', String(current))
+            .replace('{total}', String(total));
+        progressPercent.textContent = pct + '%';
+    }
 
     // Fallback if DOM dialog is missing
     if (!dialog || !fileListEl || !btnConfirm || !btnCancel) {
@@ -426,14 +461,18 @@ export async function handleSaveAll() {
         return;
     }
 
+    // Reset progress UI
+    if (progressContainer) progressContainer.style.display = 'none';
+    if (progressFill) progressFill.style.width = '0%';
+
     // Build the list of open files
     fileListEl.innerHTML = '';
-    let anyNeedSaving = false;
+    const modifiedIndices = [];
 
     state.tabs.forEach((tab, i) => {
         const filename = tab.fileName || tab.idName || (tab.isTmpMode ? 'Untitled.tem' : 'Untitled.shp');
         const isModified = Boolean(tab.hasChanges || (!tab.fileHandle && (tab.isTmpMode ? tab.originalTmpTiles : (tab.frames && tab.frames.length > 0))));
-        if (isModified) anyNeedSaving = true;
+        if (isModified) modifiedIndices.push(i);
 
         let badgeClass = 'badge-clean';
         let badgeText = t.lbl_file_status_clean || 'Up to date';
@@ -464,7 +503,19 @@ export async function handleSaveAll() {
 
     btnConfirm.disabled = false;
     btnCancel.disabled = false;
+    btnConfirm.classList.remove('btn-continue-pulse');
     btnConfirm.textContent = t.btn_save_all || 'SAVE ALL';
+
+    if (btnSaveAllZip) {
+        btnSaveAllZip.disabled = false;
+        btnSaveAllZip.textContent = t.btn_save_all_zip || '📦 ZIP';
+    }
+
+    if (btnSaveAllToFolder) {
+        btnSaveAllToFolder.disabled = false;
+        btnSaveAllToFolder.textContent = t.btn_save_all_folder || '📁 Save to Folder...';
+        btnSaveAllToFolder.style.display = window.showDirectoryPicker ? 'inline-flex' : 'none';
+    }
 
     // Show dialog
     if (typeof dialog.showModal === 'function') {
@@ -477,6 +528,10 @@ export async function handleSaveAll() {
         const cleanup = () => {
             btnCancel.onclick = null;
             btnConfirm.onclick = null;
+            btnConfirm.classList.remove('btn-continue-pulse');
+            if (btnSaveAllZip) btnSaveAllZip.onclick = null;
+            if (btnSaveAllToFolder) btnSaveAllToFolder.onclick = null;
+
             if (typeof dialog.close === 'function') dialog.close();
             else dialog.removeAttribute('open');
 
@@ -498,140 +553,252 @@ export async function handleSaveAll() {
             resolve(false);
         };
 
-        btnConfirm.onclick = async () => {
-            btnConfirm.disabled = true;
-            btnCancel.disabled = true;
-            btnConfirm.textContent = '⏳ ...';
+        // --- Option 1: Save All to a Single Selected Folder ---
+        if (btnSaveAllToFolder) {
+            btnSaveAllToFolder.onclick = async () => {
+                try {
+                    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    if (!dirHandle) return;
 
-            let savedCount = 0;
-            let hasPendingActions = false;
+                    btnConfirm.disabled = true;
+                    btnCancel.disabled = true;
+                    btnSaveAllZip.disabled = true;
+                    btnSaveAllToFolder.disabled = true;
+                    btnSaveAllToFolder.textContent = '⏳ ...';
 
-            for (let i = 0; i < state.tabs.length; i++) {
-                const tab = state.tabs[i];
-                const isModified = Boolean(tab.hasChanges || (!tab.fileHandle && (tab.isTmpMode ? tab.originalTmpTiles : (tab.frames && tab.frames.length > 0))));
+                    const tabsToSave = modifiedIndices.length > 0 ? modifiedIndices : state.tabs.map((_, idx) => idx);
+                    let folderSaved = 0;
 
-                // If not modified and has a handle, already saved
-                if (!isModified && tab.fileHandle) {
-                    continue;
-                }
+                    for (const idx of tabsToSave) {
+                        const tab = state.tabs[idx];
+                        const filename = tab.fileName || tab.idName || (tab.isTmpMode ? `file_${idx + 1}.tem` : `file_${idx + 1}.shp`);
+                        const badge = document.getElementById(`saveAllBadge_${idx}`);
 
-                const badge = document.getElementById(`saveAllBadge_${i}`);
-                const actionSlot = document.getElementById(`saveAllActionSlot_${i}`);
-
-                if (badge) {
-                    badge.className = 'save-all-badge badge-saving';
-                    badge.textContent = '⏳ ...';
-                }
-
-                // Check permission beforehand
-                let perm = 'prompt';
-                if (tab.fileHandle && typeof tab.fileHandle.queryPermission === 'function') {
-                    try {
-                        perm = await tab.fileHandle.queryPermission({ mode: 'readwrite' });
-                    } catch (e) {}
-                }
-
-                // If handle exists and permission is not granted yet, attempt requestPermission
-                if (tab.fileHandle && perm !== 'granted') {
-                    try {
-                        const req = await tab.fileHandle.requestPermission({ mode: 'readwrite' });
-                        perm = req;
-                    } catch (pErr) {
-                        console.warn(`[handleSaveAll] requestPermission failed on tab ${i}:`, pErr.message);
-                        perm = 'user-activation-required';
-                    }
-                }
-
-                // If permission is granted on handle: direct silent write!
-                if (tab.fileHandle && perm === 'granted') {
-                    state.activeTabIndex = i;
-                    state.loadFromTab(tab);
-                    state.fileHandle = tab.fileHandle;
-                    window._lastShpFileHandle = tab.fileHandle;
-                    window._lastShpFilename = tab.fileName || tab.fileHandle.name;
-
-                    let writeSuccess = false;
-                    try {
-                        if (tab.isTmpMode) {
-                            await saveTmpData(false);
-                            writeSuccess = !state.hasChanges;
-                        } else {
-                            const compression = state.compression !== undefined ? state.compression : 3;
-                            const newHandle = await exportFrameList(tab.fileHandle.name, state.frames, compression, tab.fileHandle);
-                            writeSuccess = Boolean(newHandle);
+                        if (badge) {
+                            badge.className = 'save-all-badge badge-saving';
+                            badge.textContent = '⏳ ...';
                         }
-                    } catch (wErr) {
-                        console.warn(`[handleSaveAll] write error on tab ${i}:`, wErr);
-                        writeSuccess = false;
-                    }
 
-                    state.saveToTab(tab);
+                        const u8 = encodeTabToBuffer(tab, idx);
+                        if (u8) {
+                            const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+                            const writable = await fileHandle.createWritable();
+                            const blob = new Blob([u8], { type: 'application/octet-stream' });
+                            await writable.write(blob);
+                            await writable.close();
 
-                    if (writeSuccess) {
-                        savedCount++;
+                            tab.fileHandle = fileHandle;
+                            tab.fileName = filename;
+                            tab.hasChanges = false;
+                            folderSaved++;
+                        }
+
                         if (badge) {
                             badge.className = 'save-all-badge badge-saved';
                             badge.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
                         }
-                        if (actionSlot) actionSlot.innerHTML = '';
-                        continue;
+                        updateProgress(folderSaved, tabsToSave.length);
+                    }
+
+                    setTimeout(() => {
+                        cleanup();
+                        const msg = (t.msg_save_all_folder_success || '✅ Saved {count} file(s) to folder successfully').replace('{count}', String(folderSaved));
+                        showPasteNotification(msg, 'success', 3000);
+                        resolve(true);
+                    }, 500);
+                } catch (dErr) {
+                    if (dErr.name !== 'AbortError') {
+                        console.error('Save to folder error:', dErr);
+                        showPasteNotification('Folder save error: ' + dErr.message, 'error', 3000);
+                    }
+                    btnConfirm.disabled = false;
+                    btnCancel.disabled = false;
+                    if (btnSaveAllZip) btnSaveAllZip.disabled = false;
+                    btnSaveAllToFolder.disabled = false;
+                    btnSaveAllToFolder.textContent = t.btn_save_all_folder || '📁 Save to Folder...';
+                }
+            };
+        }
+
+        // --- Option 2: Download All Modified Files as a single ZIP ---
+        if (btnSaveAllZip) {
+            btnSaveAllZip.onclick = async () => {
+                try {
+                    const ZipClass = (typeof MiniZip !== 'undefined') ? MiniZip : (window.MiniZip || null);
+                    if (!ZipClass) {
+                        showPasteNotification('ZIP utility unavailable', 'error', 2500);
+                        return;
+                    }
+
+                    btnConfirm.disabled = true;
+                    btnCancel.disabled = true;
+                    btnSaveAllZip.disabled = true;
+                    if (btnSaveAllToFolder) btnSaveAllToFolder.disabled = true;
+                    btnSaveAllZip.textContent = '⏳ ...';
+
+                    const tabsToSave = modifiedIndices.length > 0 ? modifiedIndices : state.tabs.map((_, idx) => idx);
+                    const zip = new ZipClass();
+
+                    for (const idx of tabsToSave) {
+                        const tab = state.tabs[idx];
+                        const filename = tab.fileName || tab.idName || (tab.isTmpMode ? `file_${idx + 1}.tem` : `file_${idx + 1}.shp`);
+                        const u8 = encodeTabToBuffer(tab, idx);
+                        if (u8) zip.add(filename, u8);
+
+                        tab.hasChanges = false;
+                        const badge = document.getElementById(`saveAllBadge_${idx}`);
+                        if (badge) {
+                            badge.className = 'save-all-badge badge-saved';
+                            badge.textContent = '📦 ' + (t.lbl_save_status_saved || 'Saved');
+                        }
+                    }
+
+                    const dateStr = new Date().toISOString().slice(0, 10);
+                    const zipBlob = zip.generate();
+                    const zipU8 = new Uint8Array(await zipBlob.arrayBuffer());
+                    downloadFileAsBlob(`shp_backup_${dateStr}.zip`, zipU8);
+
+                    setTimeout(() => {
+                        cleanup();
+                        const msg = (t.msg_save_all_zip_success || '📦 Packaged and downloaded {count} file(s) in ZIP').replace('{count}', String(tabsToSave.length));
+                        showPasteNotification(msg, 'success', 3000);
+                        resolve(true);
+                    }, 600);
+                } catch (zErr) {
+                    console.error('ZIP packaging failed:', zErr);
+                    showPasteNotification('ZIP failed: ' + zErr.message, 'error', 3000);
+                    btnConfirm.disabled = false;
+                    btnCancel.disabled = false;
+                    btnSaveAllZip.disabled = false;
+                    if (btnSaveAllToFolder) btnSaveAllToFolder.disabled = false;
+                    btnSaveAllZip.textContent = t.btn_save_all_zip || '📦 ZIP';
+                }
+            };
+        }
+
+        // --- Option 3: Continuous Overwrite to Original Disk Files ---
+        let savedCount = 0;
+        const totalToSave = modifiedIndices.length;
+
+        async function runContinuousSave() {
+            btnConfirm.disabled = true;
+            btnCancel.disabled = true;
+            btnConfirm.classList.remove('btn-continue-pulse');
+            btnConfirm.textContent = '⏳ ...';
+            if (btnSaveAllZip) btnSaveAllZip.disabled = true;
+            if (btnSaveAllToFolder) btnSaveAllToFolder.disabled = true;
+
+            if (totalToSave > 0) {
+                updateProgress(savedCount, totalToSave);
+            }
+
+            // 1. Silent Fast Pass: direct save any tab that ALREADY has 'granted' permission
+            for (const idx of modifiedIndices) {
+                const tab = state.tabs[idx];
+                if (!tab.hasChanges && tab.fileHandle) continue; // already saved in this session
+
+                if (tab.fileHandle && typeof tab.fileHandle.queryPermission === 'function') {
+                    try {
+                        const qPerm = await tab.fileHandle.queryPermission({ mode: 'readwrite' });
+                        if (qPerm === 'granted') {
+                            const u8 = encodeTabToBuffer(tab, idx);
+                            if (u8) {
+                                const writable = await tab.fileHandle.createWritable();
+                                const blob = new Blob([u8], { type: 'application/octet-stream' });
+                                await writable.write(blob);
+                                await writable.close();
+
+                                tab.hasChanges = false;
+                                savedCount++;
+                                const badge = document.getElementById(`saveAllBadge_${idx}`);
+                                if (badge) {
+                                    badge.className = 'save-all-badge badge-saved';
+                                    badge.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
+                                }
+                                updateProgress(savedCount, totalToSave);
+                            }
+                        }
+                    } catch (qErr) {
+                        console.warn('[handleSaveAll] Silent pass query error on tab', idx, qErr);
                     }
                 }
+            }
 
-                // If not saved (needs user activation, permission denied, or new file without handle)
-                hasPendingActions = true;
-                if (badge) {
-                    badge.className = 'save-all-badge badge-modified';
-                    badge.textContent = tab.fileHandle ? '⚠️ ' + (t.lbl_file_status_modified || 'Modified') : '✚ ' + (t.lbl_file_status_new || 'New');
-                }
+            // 2. Interactive Loop: Request permission and save remaining files
+            for (let k = 0; k < modifiedIndices.length; k++) {
+                const idx = modifiedIndices[k];
+                const tab = state.tabs[idx];
+                if (!tab.hasChanges && tab.fileHandle) continue; // already saved!
 
-                if (actionSlot) {
-                    actionSlot.innerHTML = '';
-                    if (tab.fileHandle) {
-                        const btnAuth = document.createElement('button');
-                        btnAuth.className = 'save-all-btn-action';
-                        btnAuth.textContent = t.btn_authorize_save || 'Authorize & Save';
-                        btnAuth.onclick = async () => {
-                            btnAuth.disabled = true;
-                            btnAuth.textContent = '⏳ ...';
-                            try {
-                                const req = await tab.fileHandle.requestPermission({ mode: 'readwrite' });
-                                if (req === 'granted') {
-                                    state.activeTabIndex = i;
-                                    state.loadFromTab(tab);
-                                    if (tab.isTmpMode) {
-                                        await saveTmpData(false);
-                                    } else {
-                                        const compression = state.compression !== undefined ? state.compression : 3;
-                                        await exportFrameList(tab.fileHandle.name, state.frames, compression, tab.fileHandle);
-                                    }
-                                    state.saveToTab(tab);
-                                    tab.hasChanges = false;
-                                    savedCount++;
-                                    if (badge) {
-                                        badge.className = 'save-all-badge badge-saved';
-                                        badge.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
-                                    }
-                                    actionSlot.innerHTML = '';
-                                    checkAllDone();
-                                    return;
+                const badge = document.getElementById(`saveAllBadge_${idx}`);
+                const actionSlot = document.getElementById(`saveAllActionSlot_${idx}`);
+
+                if (tab.fileHandle) {
+                    if (badge) {
+                        badge.className = 'save-all-badge badge-saving';
+                        badge.textContent = '⏳ ...';
+                    }
+
+                    try {
+                        const perm = await tab.fileHandle.requestPermission({ mode: 'readwrite' });
+                        if (perm === 'granted') {
+                            const u8 = encodeTabToBuffer(tab, idx);
+                            if (u8) {
+                                const writable = await tab.fileHandle.createWritable();
+                                const blob = new Blob([u8], { type: 'application/octet-stream' });
+                                await writable.write(blob);
+                                await writable.close();
+
+                                tab.hasChanges = false;
+                                savedCount++;
+                                if (badge) {
+                                    badge.className = 'save-all-badge badge-saved';
+                                    badge.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
                                 }
-                            } catch (err) {
-                                console.warn('Interactive auth save failed:', err);
+                                if (actionSlot) actionSlot.innerHTML = '';
+                                updateProgress(savedCount, totalToSave);
                             }
-                            btnAuth.disabled = false;
-                            btnAuth.textContent = t.btn_authorize_save || 'Authorize & Save';
-                        };
-                        actionSlot.appendChild(btnAuth);
-                    } else {
-                        // New file without handle: Save As button
+                        } else {
+                            // User cancelled native prompt
+                            if (badge) {
+                                badge.className = 'save-all-badge badge-modified';
+                                badge.textContent = '⚠️ ' + (t.lbl_file_status_modified || 'Modified');
+                            }
+                        }
+                    } catch (reqErr) {
+                        console.warn(`[handleSaveAll] Chrome activation expired at tab ${idx}:`, reqErr.message);
+                        // Transient user activation expired in Chrome!
+                        // PAUSE CLEANLY AND TRANSFORM BUTTON TO CONTINUATION
+                        if (badge) {
+                            badge.className = 'save-all-badge badge-modified';
+                            badge.textContent = '⚠️ ' + (t.lbl_file_status_modified || 'Modified');
+                        }
+
+                        const remaining = totalToSave - savedCount;
+                        btnConfirm.disabled = false;
+                        btnCancel.disabled = false;
+                        if (btnSaveAllZip) btnSaveAllZip.disabled = false;
+                        if (btnSaveAllToFolder) btnSaveAllToFolder.disabled = false;
+
+                        btnConfirm.classList.add('btn-continue-pulse');
+                        btnConfirm.textContent = (t.btn_continue_saving || '▶️ Continue Saving ({count} left)').replace('{count}', String(remaining));
+                        btnConfirm.onclick = () => runContinuousSave();
+                        return; // Halt and wait for user's click to resume with fresh activation!
+                    }
+                } else {
+                    // New file without handle: Provide Save As button
+                    if (badge) {
+                        badge.className = 'save-all-badge badge-new';
+                        badge.textContent = '✚ ' + (t.lbl_file_status_new || 'New');
+                    }
+                    if (actionSlot && !actionSlot.hasChildNodes()) {
                         const btnSaveAs = document.createElement('button');
                         btnSaveAs.className = 'save-all-btn-action';
                         btnSaveAs.textContent = t.btn_save_as || 'Save As...';
                         btnSaveAs.onclick = async () => {
                             btnSaveAs.disabled = true;
                             btnSaveAs.textContent = '⏳ ...';
-                            state.activeTabIndex = i;
+                            state.activeTabIndex = idx;
                             state.loadFromTab(tab);
                             let ok = false;
                             if (tab.isTmpMode) {
@@ -648,7 +815,7 @@ export async function handleSaveAll() {
                                     badge.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
                                 }
                                 actionSlot.innerHTML = '';
-                                checkAllDone();
+                                updateProgress(savedCount, totalToSave);
                             } else {
                                 btnSaveAs.disabled = false;
                                 btnSaveAs.textContent = t.btn_save_as || 'Save As...';
@@ -656,68 +823,28 @@ export async function handleSaveAll() {
                         };
                         actionSlot.appendChild(btnSaveAs);
                     }
-
-                    // Fallback download button
-                    const btnDownload = document.createElement('button');
-                    btnDownload.className = 'save-all-btn-action download-btn';
-                    btnDownload.title = t.btn_download_copy || 'Download';
-                    btnDownload.innerHTML = '⬇';
-                    btnDownload.onclick = async () => {
-                        state.activeTabIndex = i;
-                        state.loadFromTab(tab);
-                        const filename = tab.fileName || (tab.isTmpMode ? 'output.tem' : 'output.shp');
-                        if (tab.isTmpMode) {
-                            await saveTmpData(true);
-                        } else {
-                            const compression = state.compression !== undefined ? state.compression : 3;
-                            const buf = encodeFramesToShpBuffer(state.frames, compression, state.isAlphaImageMode);
-                            downloadFileAsBlob(filename, buf);
-                        }
-                        tab.hasChanges = false;
-                        state.hasChanges = false;
-                        state.saveToTab(tab);
-                        savedCount++;
-                        if (badge) {
-                            badge.className = 'save-all-badge badge-saved';
-                            badge.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
-                        }
-                        actionSlot.innerHTML = '';
-                        checkAllDone();
-                    };
-                    actionSlot.appendChild(btnDownload);
                 }
             }
 
-            function checkAllDone() {
-                const remainingSlots = fileListEl.querySelectorAll('.save-all-btn-action');
-                if (remainingSlots.length === 0) {
-                    setTimeout(() => {
-                        cleanup();
-                        const msg = (t.msg_save_all_success || '✅ Saved {count} tab(s) successfully').replace('{count}', String(savedCount));
-                        showPasteNotification(msg, 'success', 2500);
-                        resolve(true);
-                    }, 400);
-                }
-            }
+            // 3. All saved or processed!
+            btnConfirm.classList.remove('btn-continue-pulse');
+            btnConfirm.disabled = true;
+            btnConfirm.textContent = '✅ ' + (t.lbl_save_status_saved || 'Saved');
 
-            if (!hasPendingActions) {
-                setTimeout(() => {
-                    cleanup();
-                    if (savedCount > 0) {
-                        const msg = (t.msg_save_all_success || '✅ Saved {count} tab(s) successfully').replace('{count}', String(savedCount));
-                        showPasteNotification(msg, 'success', 2500);
-                    } else {
-                        const msg = t.msg_save_all_no_changes || 'ℹ️ All tabs are already up to date';
-                        showPasteNotification(msg, 'info', 2000);
-                    }
-                    resolve(true);
-                }, 500);
-            } else {
-                btnCancel.disabled = false;
-                btnConfirm.disabled = false;
-                btnConfirm.textContent = t.btn_save_all || 'SAVE ALL';
-            }
-        };
+            setTimeout(() => {
+                cleanup();
+                if (savedCount > 0) {
+                    const msg = (t.msg_save_all_success || '✅ Saved {count} tab(s) successfully').replace('{count}', String(savedCount));
+                    showPasteNotification(msg, 'success', 2500);
+                } else {
+                    const msg = t.msg_save_all_no_changes || 'ℹ️ All tabs are already up to date';
+                    showPasteNotification(msg, 'info', 2000);
+                }
+                resolve(true);
+            }, 500);
+        }
+
+        btnConfirm.onclick = () => runContinuousSave();
     });
 }
 
@@ -744,7 +871,10 @@ export async function handleExportShp() {
             curTab.fileName = newHandle.name;
             curTab.hasChanges = false;
             curTab.savedHistoryPtr = state.historyPtr;
+            curTab.compression = compression;
         }
+        state.compression = compression;
+        syncStatusCompressionUI();
         window._lastShpFileHandle = newHandle;
         window._lastShpFilename = newHandle.name;
         state.fileHandle = newHandle;
