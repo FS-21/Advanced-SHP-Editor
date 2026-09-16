@@ -8,10 +8,8 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-web:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
     - name: Checkout code
@@ -28,7 +26,7 @@ jobs:
         node-version: '20'
 
     - name: Run build script
-      run: python build.py
+      run: python build.py --no-desktop
 
     - name: Determine Version Name
       id: vars
@@ -51,26 +49,14 @@ jobs:
         zip -r "../../Advanced-SHP-Editor-PWA-${{ steps.vars.outputs.version }}.zip" .
         cd ../..
 
-    - name: Upload Artifacts (Push/PR)
+    - name: Upload Web Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: distribution-files
-        path: |
-          Advanced-SHP-Editor-*.zip
+        name: web-dist
+        path: Advanced-SHP-Editor-*.zip
 
-    - name: Create Release and Upload Web Assets
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          Advanced-SHP-Editor-*.zip
-        generate_release_notes: true
-        draft: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build-tauri:
-    needs: build
+  build-desktop:
+    needs: build-web
     strategy:
       fail-fast: false
       matrix:
@@ -78,8 +64,6 @@ jobs:
           - platform: 'windows-latest'
           - platform: 'ubuntu-22.04'
     runs-on: ${{ matrix.platform }}
-    permissions:
-      contents: write
 
     steps:
     - name: Checkout code
@@ -105,7 +89,7 @@ jobs:
         sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
     - name: Run build script (prepare web bundle)
-      run: python build.py
+      run: python build.py --no-desktop
 
     - name: Install Tauri CLI
       run: cargo install tauri-cli --version "^2.0" --locked
@@ -113,27 +97,49 @@ jobs:
     - name: Build Tauri Desktop App
       run: cargo tauri build
 
+    - name: Prepare Desktop Assets
+      shell: bash
+      run: |
+        mkdir -p desktop-dist
+        if [ "${{ matrix.platform }}" == "windows-latest" ]; then
+          if [ -f "src-tauri/target/release/Advanced-SHP-Editor.exe" ]; then
+            cp "src-tauri/target/release/Advanced-SHP-Editor.exe" desktop-dist/
+          elif [ -f "src-tauri/target/release/advanced-shp-editor.exe" ]; then
+            cp "src-tauri/target/release/advanced-shp-editor.exe" desktop-dist/Advanced-SHP-Editor.exe
+          fi
+        else
+          find src-tauri/target/release/bundle/appimage -name "*.AppImage" -exec cp {} desktop-dist/ \; 2>/dev/null || true
+          find src-tauri/target/release/bundle/deb -name "*.deb" -exec cp {} desktop-dist/ \; 2>/dev/null || true
+        fi
+
     - name: Upload Desktop Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: desktop-bundle-${{ matrix.platform }}
-        path: |
-          src-tauri/target/release/Advanced-SHP-Editor.exe
-          src-tauri/target/release/advanced-shp-editor.exe
-          src-tauri/target/release/advanced-shp-editor
-          src-tauri/target/release/bundle/appimage/*.AppImage
-          src-tauri/target/release/bundle/deb/*.deb
+        name: desktop-${{ matrix.platform }}
+        path: desktop-dist/*
 
-    - name: Upload Desktop Assets to Release
-      if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    needs: [build-web, build-desktop]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+        path: release-assets
+
+    - name: List Release Assets
+      run: ls -la release-assets
+
+    - name: Publish GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          src-tauri/target/release/Advanced-SHP-Editor.exe
-          src-tauri/target/release/advanced-shp-editor.exe
-          src-tauri/target/release/advanced-shp-editor
-          src-tauri/target/release/bundle/appimage/*.AppImage
-          src-tauri/target/release/bundle/deb/*.deb
-        draft: true
+        files: release-assets/*
+        generate_release_notes: true
+        draft: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
