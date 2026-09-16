@@ -43,7 +43,7 @@ export function encodeFramesToShpBuffer(frames, compression = 3, isAlphaImageMod
     const transparentMapping = isAlphaImageMode ? 127 : 0;
     const targetFormat = formatType || state.shpFormat || 'ts_ra2';
     if (targetFormat === 'td_ra') {
-        const u8 = ShpTdRaFormat.encode(flatImages, transparentMapping);
+        const u8 = ShpTdRaFormat.encode(flatImages, transparentMapping, compression);
         return u8.buffer;
     }
     return ShpFormat80.encode(flatImages, true, compression, transparentMapping, { palette: state.palette });

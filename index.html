@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v4.0';</script>
+    <script>const APP_VERSION = 'v4.1';</script>
     <script>
         // CnCReloadedMode: Defaults to true (standard on web), user-toggleable via Preferences
         const _savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
@@ -695,6 +695,24 @@
                         <!-- Game Grid: simple toggle (TMP mode — type auto-detected from tile size) -->
                         <div id="menuGameGridToggle" class="menu-action" data-i18n-title="tt_game_grid">
                             <span class="menu-icon icon-game-grid"></span><span data-i18n="menu_game_grid">Game Grid</span>
+                        </div>
+                        <!-- Shadows: submenu (TD/RA1 mode) -->
+                        <div class="menu-item-submenu" id="menuTdRaShadowSubmenu" style="display: none;">
+                            <div id="triggerTdRaShadows" class="menu-action submenu-trigger"
+                                data-i18n-title="tt_td_ra_shadows">
+                                <span class="menu-icon icon-shadows"></span><span data-i18n="menu_shadows">Shadows</span><span class="arrow">▶</span>
+                            </div>
+                            <div class="menu-dropdown submenu">
+                                <div id="menuTdRaShadowRaw" class="menu-action" data-i18n-title="tt_td_ra_shadows">
+                                    <span data-i18n="opt_td_ra_shadow_raw">Raw (Palette)</span>
+                                </div>
+                                <div id="menuTdRaShadowIngame" class="menu-action" data-i18n-title="tt_td_ra_shadows">
+                                    <span data-i18n="opt_td_ra_shadow_ingame">In-Game Filter</span>
+                                </div>
+                                <div id="menuTdRaShadowHidden" class="menu-action" data-i18n-title="tt_td_ra_shadows">
+                                    <span data-i18n="opt_td_ra_shadow_hidden">Hidden</span>
+                                </div>
+                            </div>
                         </div>
                         <div id="menuToggleShadows" class="menu-action" data-i18n-title="tt_menu_shadows">
                             <span class="menu-icon icon-shadows"></span><span data-i18n="menu_shadows">Shadows</span>

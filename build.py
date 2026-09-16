@@ -36,6 +36,7 @@ import json
 JS_ORDER = [
     'constants.js',
     'state.js',
+    'native_bridge.js',
     'translations.js',
     'shp_td_ra_format.js',
     'shp_format.js',

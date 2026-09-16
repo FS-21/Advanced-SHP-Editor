@@ -88,10 +88,14 @@ export class Tab {
         this.showAllFramesColors = false;
         this.shpFormat = initialState ? (initialState.shpFormat || 'ts_ra2') : 'ts_ra2';
         this.tdRaShadowMode = initialState ? (initialState.tdRaShadowMode || 'raw') : 'raw';
+        this.filePath = null;
+        this.fileLastModified = 0;
     }
 }
 
 export const state = {
+    filePath: null,
+    fileLastModified: 0,
     palette: Array.from({ length: 256 }, () => null),
     frames: [],
     currentFrameIdx: 0,
@@ -213,6 +217,7 @@ export const state = {
     newFileCounter: 0,
 
     fileHandle: null,
+    filePath: null,
 
     saveToTab(tab) {
         if (!tab) return;
@@ -222,7 +227,7 @@ export const state = {
             this.scrollTop = wrapper.parentElement.scrollTop;
         }
         const ignoredKeys = [
-            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle',
+            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
             'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard'
         ];
@@ -232,13 +237,18 @@ export const state = {
             if (ignoredKeys.includes(k)) return;
             tab[k] = this[k];
         });
-        tab.fileHandle = this.fileHandle || null;
+        if (this.fileHandle !== undefined && this.fileHandle !== null) tab.fileHandle = this.fileHandle;
+        if (this.filePath !== undefined && this.filePath !== null) tab.filePath = this.filePath;
+        if (this.fileLastModified !== undefined && this.fileLastModified !== 0) tab.fileLastModified = this.fileLastModified;
+        if (tab.filePath || tab.fileHandle || this.filePath || this.fileHandle) {
+            tab.isNewProject = false;
+        }
     },
 
     loadFromTab(tab) {
         if (!tab) return;
         const ignoredKeys = [
-            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle',
+            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
             'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard'
         ];
@@ -249,13 +259,18 @@ export const state = {
             this[k] = tab[k];
         });
         this.fileHandle = tab.fileHandle || null;
+        this.filePath = tab.filePath || null;
+        this.fileLastModified = tab.fileLastModified || 0;
         window._lastShpFileHandle = tab.fileHandle || null;
+        window._lastShpFilePath = tab.filePath || null;
         window._lastShpFilename = tab.fileName || null;
         if (tab.isTmpMode) {
             window._lastTmpFileHandle = tab.fileHandle || null;
+            window._lastTmpFilePath = tab.filePath || null;
             window._lastTmpFilename = tab.fileName || null;
         } else {
             window._lastTmpFileHandle = null;
+            window._lastTmpFilePath = null;
             window._lastTmpFilename = null;
         }
         const wrapper = document.getElementById('canvasWrapper');

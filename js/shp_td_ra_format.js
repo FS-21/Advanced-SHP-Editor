@@ -15,10 +15,19 @@ export class ShpTdRaFormat {
      * @returns {boolean}
      */
     static isTdRaShp(buffer) {
+        if (buffer && ArrayBuffer.isView(buffer)) {
+            buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        }
         if (!buffer || buffer.byteLength < 14 + 16) return false;
         const dv = new DataView(buffer);
         const numImages = dv.getUint16(0, true);
         if (numImages === 0 || numImages > 3000) return false;
+
+        // In TD/RA1, bytes 2..5 (X and Y offsets) are always 0.
+        // In TS/RA2, bytes 2..5 are Width and Height, which are non-zero.
+        const hX = dv.getInt16(2, true);
+        const hY = dv.getInt16(4, true);
+        if (hX !== 0 || hY !== 0) return false;
 
         const width = dv.getUint16(6, true);
         const height = dv.getUint16(8, true);
@@ -28,14 +37,22 @@ export class ShpTdRaFormat {
         const expectedTableSize = (numImages + 2) * 8;
         if (tableOffset + expectedTableSize > buffer.byteLength) return false;
 
+        // Validate format nibble of the first entries (must be 0, 2, 4, or 8)
+        const checkCount = Math.min(numImages, 5);
+        for (let i = 0; i < checkCount; i++) {
+            const val1 = dv.getUint32(tableOffset + i * 8, true);
+            const fmt = val1 >>> 28;
+            if (fmt !== 0 && fmt !== 2 && fmt !== 4 && fmt !== 8) return false;
+            const offset = val1 & 0x0fffffff;
+            if (offset < tableOffset + expectedTableSize || offset > buffer.byteLength) return false;
+        }
+
         // Check file size entry in index table at index [numImages]
         const eofOffset = dv.getUint32(tableOffset + numImages * 8, true) & 0x0fffffff;
-        if (eofOffset !== buffer.byteLength) return false;
+        if (eofOffset > buffer.byteLength) return false;
+        if (eofOffset > 0 && eofOffset < tableOffset + expectedTableSize) return false;
 
-        // Check terminator entry at index [numImages + 1]
-        const term1 = dv.getUint32(tableOffset + (numImages + 1) * 8, true);
-        const term2 = dv.getUint32(tableOffset + (numImages + 1) * 8 + 4, true);
-        return term1 === 0 && term2 === 0;
+        return true;
     }
 
     /** Compatibility alias */
@@ -49,6 +66,9 @@ export class ShpTdRaFormat {
      * @returns {{ width: number, height: number, frames: Array, formatType: string }}
      */
     static parse(buffer) {
+        if (buffer && ArrayBuffer.isView(buffer)) {
+            buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        }
         const dv = new DataView(buffer);
         const numImages = dv.getUint16(0, true);
         const width = dv.getUint16(6, true);
@@ -281,12 +301,13 @@ export class ShpTdRaFormat {
     }
 
     /**
-     * Encodes raw image frames into Format 80 (LCW).
+     * Encodes raw image frames into TD/RA1 SHP (Format 80 LCW or Format 0 Uncompressed).
      * @param {Array<{ width: number, height: number, indices: Uint8Array|Uint16Array }>} images 
      * @param {number} transparentMapping 
+     * @param {number} compressionFormat 80 for LCW, 0 for Uncompressed raw
      * @returns {Uint8Array}
      */
-    static encode(images, transparentMapping = 0) {
+    static encode(images, transparentMapping = 0, compressionFormat = 80) {
         if (!images || images.length === 0) {
             throw new Error("Cannot encode empty image list.");
         }
@@ -304,6 +325,7 @@ export class ShpTdRaFormat {
         const encodedFrameBlobs = [];
         const indexEntries = [];
         let curOffset = dataStartOffset;
+        const isRawFormat0 = (compressionFormat === 0);
 
         for (let i = 0; i < numImages; i++) {
             const img = images[i];
@@ -315,16 +337,26 @@ export class ShpTdRaFormat {
                 raw[p] = (idx === TRANSPARENT_COLOR) ? transparentMapping : (idx & 0xff);
             }
 
-            const lcwBlob = ShpTdRaFormat.encodeLCWFrame(raw);
-            encodedFrameBlobs.push(lcwBlob);
+            if (isRawFormat0) {
+                encodedFrameBlobs.push(raw);
+                const formatOffset = (0x00000000 >>> 0) | (curOffset & 0x0fffffff);
+                indexEntries.push({
+                    offset: formatOffset,
+                    refOffset: 0
+                });
+                curOffset += raw.length;
+            } else {
+                const lcwBlob = ShpTdRaFormat.encodeLCWFrame(raw);
+                encodedFrameBlobs.push(lcwBlob);
 
-            // Format 80 flag = 0x80000000
-            const formatOffset = (0x80000000 >>> 0) | (curOffset & 0x0fffffff);
-            indexEntries.push({
-                offset: formatOffset,
-                refOffset: 0
-            });
-            curOffset += lcwBlob.length;
+                // Format 80 flag = 0x80000000
+                const formatOffset = (0x80000000 >>> 0) | (curOffset & 0x0fffffff);
+                indexEntries.push({
+                    offset: formatOffset,
+                    refOffset: 0
+                });
+                curOffset += lcwBlob.length;
+            }
         }
 
         // EOF entry and Terminator entry

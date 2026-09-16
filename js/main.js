@@ -33,7 +33,7 @@ import {
     setupMultiFrameOps, commitSelection, clearSelection, checkIfPixelSelected, startAnts, stopAnts, toggleReplacePanel, renderReplaceGrid, handleReplacePickerInput, addExternalShpLayer,
     setupReplacePreviewListeners, analyzeReplaceConflicts, updatePixelGrid, initPanelResizing,
     showEditorInterface, renderPaletteSimple, initFrameManager,
-    showConfirm, updateActiveLayerPreview, setupSubmenusRecursive,
+    showConfirm, showChoice, setColor, updateActiveLayerPreview, setupSubmenusRecursive,
     openActiveLayerProperties, setupTooltips, getLayerDataSnapshot, setupToolbarOverflow,
     showPasteNotification, initPasteRangeDialog, setHoveredPaletteIndex
 } from './ui.js';
@@ -46,17 +46,23 @@ import {
 } from './tools.js';
 
 import { resampleLayerData, rotateBufferArbitrary, shiftColorIndex } from './image_ops.js';
-import { bresenham, setupAutoRepeat } from './utils.js';
+import { bresenham, setupAutoRepeat, findNearestPaletteIndex, getActivePalette } from './utils.js';
 import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleSaveAsShp, handleSaveAll, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData } from './file_io.js';
-import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile } from './menu_handlers.js';
+import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile, setTdRaShadowMode, getRecentFilePathByName } from './menu_handlers.js';
 import { setupPaletteMenu, setActivePaletteId, getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
-import { initLanguageSelector } from './translations.js';
 import { initTabs, updateCurrentTabName, createNewTab, closeTab, switchTab } from './tabs.js';
+import { t } from './translations.js';
+import {
+    isNativeApp, nativeReadFile, nativeGetCliArgs, nativeListenEvent,
+    nativeExitApp, nativeReadClipboardImage, nativeReadClipboardText, nativeWriteClipboardText,
+    nativeOpenUrl, nativeGetFileModifiedTime, nativeResolveDroppedFiles
+} from './native_bridge.js';
 
 
 // Toggle UI visibility based on whether project is loaded
 export function updateUIState() {
+    document.body.classList.toggle('tmp-mode', !!state.isTmpMode);
 
     const hasProject = state.frames.length > 0;
 
@@ -188,6 +194,21 @@ function init() {
         // Disable native right-click context menu globally
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
+        // Check for CLI arguments on startup (e.g. file association double-click)
+        if (isNativeApp()) {
+            nativeGetCliArgs().then(args => {
+                if (args && args.length > 0) {
+                    const filePaths = args.filter(a => !a.startsWith('-') && !a.startsWith('/'));
+                    if (filePaths.length > 0) {
+                        console.log('[Native CLI] Opening startup files:', filePaths);
+                        openNativePaths(filePaths);
+                    }
+                }
+            }).catch(err => {
+                console.warn('[Native CLI] Error checking startup args:', err);
+            });
+        }
+
 
 
     } catch (err) {
@@ -227,6 +248,35 @@ function setupEventListeners() {
         if (!e.key) return;
         const k = e.key.toLowerCase();
         const ctrl = e.ctrlKey || e.metaKey;
+
+        // Desktop / Reserved Shortcuts: Ctrl+W, Ctrl+Tab, F5 protection
+        if ((ctrl && k === 'w') || (ctrl && (k === 'f4' || e.code === 'F4'))) {
+            e.preventDefault();
+            if (typeof closeTab === 'function') {
+                closeTab(state.activeTabIndex);
+            }
+            return;
+        }
+
+        if (ctrl && k === 'tab') {
+            e.preventDefault();
+            if (state.tabs && state.tabs.length > 1) {
+                const nextIdx = e.shiftKey
+                    ? (state.activeTabIndex - 1 + state.tabs.length) % state.tabs.length
+                    : (state.activeTabIndex + 1) % state.tabs.length;
+                switchTab(nextIdx);
+            }
+            return;
+        }
+
+        if (isNativeApp() && (e.key === 'F5' || (ctrl && k === 'r'))) {
+            const hasUnsaved = state.tabs && state.tabs.some(t => t.hasChanges);
+            if (hasUnsaved) {
+                e.preventDefault();
+                showPasteNotification("Acción bloqueada: guarde sus cambios antes de recargar.", "warning", 3000);
+                return;
+            }
+        }
 
         if (k === 'g' && !ctrl) {
             state.showGrid = !state.showGrid;
@@ -2033,18 +2083,7 @@ function setupEventListeners() {
     const selTdRaShadows = document.getElementById('selTdRaShadows');
     if (selTdRaShadows) {
         selTdRaShadows.onchange = (e) => {
-            state.tdRaShadowMode = e.target.value;
-            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-                state.tabs[state.activeTabIndex].tdRaShadowMode = state.tdRaShadowMode;
-            }
-            // Invalidate frame cache
-            state.frames.forEach(f => { f._v = (f._v || 0) + 1; });
-            renderCanvas();
-            renderFramesList();
-            updateLayersList();
-            if (window.renderPreview && typeof window.renderPreview === 'function') {
-                window.renderPreview();
-            }
+            setTdRaShadowMode(e.target.value);
         };
     }
 
@@ -2144,7 +2183,7 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
     // The tab system already provides explicit "+" / File > New / context
     // menu options for the user to manage tabs as they see fit.
 
-    // 1. Sync Palette
+    // Synchronize Palette
     state.palette = impShpPalette.map(c => c ? { ...c, locked: false } : null);
     renderPalette();
 
@@ -2153,26 +2192,48 @@ function handleConfirmImport(impShpData, impShpPalette, paletteNodeId) {
         setActivePaletteId(paletteNodeId);
     }
 
-    // 2. Use Native Loader for Index Integrity (Loads all frames)
-    loadShpData(impShpData);
-    if (impShpData.filename) {
-        if (typeof updateCurrentTabName === 'function') updateCurrentTabName(impShpData.filename);
-        window._lastShpFilename = impShpData.filename;
-    }
-
-    // 3. Update UI
-    resetHistoryForFreshOpen();
-
-    // 4. Save to Recent Files & bind handle to active tab (if FSAPI handle available)
-    if (window._lastShpFileHandle) {
+    // Bind handle or filePath to active tab BEFORE updating tab name
+    if (window._lastShpFilePath) {
+        state.filePath = window._lastShpFilePath;
+        state.fileHandle = null;
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].filePath = window._lastShpFilePath;
+            state.tabs[state.activeTabIndex].fileHandle = null;
+            state.tabs[state.activeTabIndex].isNewProject = false;
+        }
+        if (impShpData.filename) {
+            saveRecentFile(impShpData.filename, window._lastShpFilePath);
+        }
+        if (typeof nativeGetFileModifiedTime === 'function') {
+            nativeGetFileModifiedTime(window._lastShpFilePath).then(mtime => {
+                state.fileLastModified = mtime;
+                if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                    state.tabs[state.activeTabIndex].fileLastModified = mtime;
+                }
+            }).catch(() => {});
+        }
+    } else if (window._lastShpFileHandle) {
         state.fileHandle = window._lastShpFileHandle;
+        state.filePath = null;
         if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
             state.tabs[state.activeTabIndex].fileHandle = window._lastShpFileHandle;
+            state.tabs[state.activeTabIndex].filePath = null;
+            state.tabs[state.activeTabIndex].isNewProject = false;
         }
         if (impShpData.filename) {
             saveRecentFile(impShpData.filename, window._lastShpFileHandle);
         }
     }
+
+    // Load SHP data via native loader
+    loadShpData(impShpData);
+    if (impShpData.filename) {
+        if (typeof updateCurrentTabName === 'function') updateCurrentTabName(impShpData.filename, false);
+        window._lastShpFilename = impShpData.filename;
+    }
+
+    // Update UI and reset history
+    resetHistoryForFreshOpen();
 
     // Update UI element visibility
     updateUIState();
@@ -2185,7 +2246,7 @@ function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelected
     // The tab system already provides explicit "+" / File > New / context
     // menu options for the user to manage tabs as they see fit.
 
-    // 1. Sync Palette
+    // Synchronize Palette
     state.palette = impTmpPalette.map(c => c ? { ...c, locked: false } : null);
     renderPalette();
 
@@ -2198,26 +2259,48 @@ function handleConfirmImportTmp(buffer, filename, impTmpPalette, paletteSelected
         setActivePaletteId(paletteNodeId);
     }
 
-    // 2. Load TMP Data
-    loadTmpData(buffer, filename, true);
-    if (filename) {
-        if (typeof updateCurrentTabName === 'function') updateCurrentTabName(filename);
-        window._lastTmpFilename = filename;
-    }
-
-    // 3. Update UI
-    resetHistoryForFreshOpen();
-
-    // 4. Save to Recent Files & bind handle to active tab (if FSAPI handle available)
-    if (window._lastTmpFileHandle) {
+    // Bind handle or filePath to active tab BEFORE updating tab name
+    if (window._lastTmpFilePath) {
+        state.filePath = window._lastTmpFilePath;
+        state.fileHandle = null;
+        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+            state.tabs[state.activeTabIndex].filePath = window._lastTmpFilePath;
+            state.tabs[state.activeTabIndex].fileHandle = null;
+            state.tabs[state.activeTabIndex].isNewProject = false;
+        }
+        if (filename) {
+            saveRecentFile(filename, window._lastTmpFilePath);
+        }
+        if (typeof nativeGetFileModifiedTime === 'function') {
+            nativeGetFileModifiedTime(window._lastTmpFilePath).then(mtime => {
+                state.fileLastModified = mtime;
+                if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                    state.tabs[state.activeTabIndex].fileLastModified = mtime;
+                }
+            }).catch(() => {});
+        }
+    } else if (window._lastTmpFileHandle) {
         state.fileHandle = window._lastTmpFileHandle;
+        state.filePath = null;
         if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
             state.tabs[state.activeTabIndex].fileHandle = window._lastTmpFileHandle;
+            state.tabs[state.activeTabIndex].filePath = null;
+            state.tabs[state.activeTabIndex].isNewProject = false;
         }
         if (filename) {
             saveRecentFile(filename, window._lastTmpFileHandle);
         }
     }
+
+    // Load TMP Data
+    loadTmpData(buffer, filename, true);
+    if (filename) {
+        if (typeof updateCurrentTabName === 'function') updateCurrentTabName(filename, false);
+        window._lastTmpFilename = filename;
+    }
+
+    // Update UI and reset history
+    resetHistoryForFreshOpen();
 
     // Update UI element visibility
     updateUIState();
@@ -2415,6 +2498,21 @@ window.addEventListener('paste', (e) => {
  * Bridges the gap when standard onpaste event isn't triggered or is restricted.
  */
 async function systemClipboardInterceptor() {
+    if (isNativeApp()) {
+        const text = await nativeReadClipboardText();
+        if (text === "__SHP_DATA__") {
+            console.log("Internal SHP Sentinel detected via native bridge - Skipping system paste.");
+            return false;
+        }
+        const nativeImg = await nativeReadClipboardImage();
+        if (nativeImg && nativeImg.width && nativeImg.height && nativeImg.rgba) {
+            const imgData = new ImageData(nativeImg.rgba, nativeImg.width, nativeImg.height);
+            await processSystemImagePaste(imgData);
+            return true;
+        }
+        return false;
+    }
+
     if (!navigator.clipboard || !navigator.clipboard.read) {
         return false;
     }
@@ -2528,7 +2626,10 @@ window.addEventListener('keydown', (e) => {
 }, { capture: true, passive: false });
 
 // --- FILE TYPE DETECTION & GLOBAL DRAG AND DROP OVERLAY ---
-function detectFileType(buffer) {
+export function detectFileType(buffer) {
+    if (buffer && ArrayBuffer.isView(buffer)) {
+        buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    }
     if (buffer.byteLength < 16) return 'unknown';
     const dv = new DataView(buffer);
     try {
@@ -2612,17 +2713,43 @@ document.addEventListener('dragleave', (e) => {
     }
 });
 
-export async function processSystemFileOpen(file, handle = null, preloadedBuffer = null) {
+export async function processSystemFileOpen(file, handle = null, preloadedBuffer = null, filePath = null) {
     try {
+        if (!filePath && file && file.path) {
+            filePath = file.path;
+        }
         const buffer = preloadedBuffer || await file.arrayBuffer();
         const type = detectFileType(buffer);
 
-        // Pre-bind handle to current tab and global state
-        if (handle) {
+        // Pre-bind handle or native filePath to current tab and global state
+        if (filePath) {
+            state.filePath = filePath;
+            state.fileHandle = null;
+            window._lastShpFilePath = filePath;
+            window._lastTmpFilePath = filePath;
+            const mtime = await nativeGetFileModifiedTime(filePath);
+            state.fileLastModified = mtime;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].filePath = filePath;
+                state.tabs[state.activeTabIndex].fileHandle = null;
+                state.tabs[state.activeTabIndex].fileLastModified = mtime;
+                state.tabs[state.activeTabIndex].isNewProject = false;
+            }
+            if (typeof saveRecentFile === 'function') {
+                saveRecentFile(file.name, filePath);
+            }
+        } else if (handle) {
             state.fileHandle = handle;
+            state.filePath = null;
             window._lastShpFileHandle = handle;
+            window._lastTmpFileHandle = handle;
             if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
                 state.tabs[state.activeTabIndex].fileHandle = handle;
+                state.tabs[state.activeTabIndex].filePath = null;
+                state.tabs[state.activeTabIndex].isNewProject = false;
+            }
+            if (typeof saveRecentFile === 'function') {
+                saveRecentFile(file.name, handle);
             }
         }
 
@@ -2631,29 +2758,18 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
             if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
             window._lastShpFilename = file.name;
             window._lastTmpFilename = file.name;
-            window._lastTmpFileHandle = handle;
-            window._lastShpFileHandle = handle;
-            state.fileHandle = handle;
-            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-                state.tabs[state.activeTabIndex].fileHandle = handle;
-            }
             resetHistoryForFreshOpen();
             if (typeof updateUIState === 'function') updateUIState();
-            console.log(`[FileOpen] Loaded TMP via Drag&Drop: ${file.name} ${handle ? '(Direct Save Enabled)' : ''}`);
+            console.log(`[FileOpen] Loaded TMP: ${file.name} ${filePath ? '(Native Path Enabled)' : handle ? '(Direct Save Enabled)' : ''}`);
             return true;
         } else if (type === 'shp') {
             const shp = ShpFormat80.parse(buffer);
             loadShpData(shp);
             if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
             window._lastShpFilename = file.name;
-            window._lastShpFileHandle = handle;
-            state.fileHandle = handle;
-            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-                state.tabs[state.activeTabIndex].fileHandle = handle;
-            }
             resetHistoryForFreshOpen();
             if (typeof updateUIState === 'function') updateUIState();
-            console.log(`[FileOpen] Loaded SHP via Drag&Drop: ${file.name} ${handle ? '(Direct Save Enabled)' : ''}`);
+            console.log(`[FileOpen] Loaded SHP: ${file.name} ${filePath ? '(Native Path Enabled)' : handle ? '(Direct Save Enabled)' : ''}`);
             return true;
         } else {
             console.warn(`[FileOpen] Unknown signature for: ${file.name}`);
@@ -2667,7 +2783,7 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
     }
 }
 
-export async function openFilesBatch(files, fileHandles = []) {
+export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
     if (!files || files.length === 0) return;
 
     const batchDialog = document.getElementById('batchLoadingDialog');
@@ -2697,11 +2813,52 @@ export async function openFilesBatch(files, fileHandles = []) {
         await new Promise(resolve => setTimeout(resolve, 0));
     }
 
-    // 1. Scan the files and collect ALL valid SHP or TMP files with live progress
+    // Scan files and collect all valid SHP or TMP files with live progress
     const validEntries = [];
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const handle = (fileHandles && fileHandles[i]) || null;
+        let filePath = (filePaths && filePaths[i]) || (file && file.path) || null;
+
+        if (!filePath && isNativeApp() && file && file.name) {
+            try {
+                const resolved = await nativeResolveDroppedFiles([file]);
+                if (resolved && resolved[0]) {
+                    filePath = resolved[0];
+                }
+            } catch (e) {}
+            if (!filePath) {
+                const recent = await getRecentFilePathByName(file.name);
+                if (recent) {
+                    try {
+                        const checkMtime = await nativeGetFileModifiedTime(recent);
+                        if (checkMtime) {
+                            filePath = recent;
+                        }
+                    } catch (e) {}
+                }
+            }
+            if (!filePath) {
+                const lastDir = window._lastNativeDirectory || localStorage.getItem('last_native_directory');
+                if (lastDir) {
+                    const candidate = lastDir.replace(/[/\\]+$/, '') + '\\' + file.name;
+                    try {
+                        const checkMtime = await nativeGetFileModifiedTime(candidate);
+                        if (checkMtime) {
+                            filePath = candidate;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+
+        if (filePath) {
+            const dir = filePath.substring(0, Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')));
+            if (dir) {
+                window._lastNativeDirectory = dir;
+                try { localStorage.setItem('last_native_directory', dir); } catch (e) {}
+            }
+        }
 
         if (isBatch && batchDialog) {
             const currentNum = i + 1;
@@ -2722,7 +2879,7 @@ export async function openFilesBatch(files, fileHandles = []) {
             const buffer = await file.arrayBuffer();
             const type = detectFileType(buffer);
             if (type === 'shp' || type === 'tmp') {
-                validEntries.push({ file, handle, buffer, type });
+                validEntries.push({ file, handle, filePath, buffer, type });
             }
         } catch (err) {
             console.error("Error reading file in selection:", file.name, err);
@@ -2745,7 +2902,7 @@ export async function openFilesBatch(files, fileHandles = []) {
     let firstOpenedTabIndex = -1;
 
     for (let i = 0; i < validEntries.length; i++) {
-        const { file, handle, buffer } = validEntries[i];
+        const { file, handle, filePath, buffer } = validEntries[i];
         const currentNum = i + 1;
 
         if (isBatch && batchDialog) {
@@ -2766,14 +2923,14 @@ export async function openFilesBatch(files, fileHandles = []) {
 
         if (i === 0 && isCurrentTabEmpty) {
             // First file reuses the current empty tab
-            const success = await processSystemFileOpen(file, handle, buffer);
+            const success = await processSystemFileOpen(file, handle, buffer, filePath);
             if (success && firstOpenedTabIndex === -1) {
                 firstOpenedTabIndex = state.activeTabIndex;
             }
         } else {
             // Open in a new tab (inheriting palette from current active tab)
             createNewTab(file.name, false);
-            const success = await processSystemFileOpen(file, handle, buffer);
+            const success = await processSystemFileOpen(file, handle, buffer, filePath);
             if (success && firstOpenedTabIndex === -1) {
                 firstOpenedTabIndex = state.activeTabIndex;
             }
@@ -2798,14 +2955,116 @@ export async function openFilesBatch(files, fileHandles = []) {
     }
 }
 
+export async function openNativePaths(paths) {
+    if (!paths || paths.length === 0) return;
+    const files = [];
+    const filePaths = [];
+    for (const p of paths) {
+        try {
+            const u8 = await nativeReadFile(p);
+            const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+            const name = p.split(/[/\\]/).pop();
+            files.push({
+                name,
+                path: p,
+                arrayBuffer: async () => buf
+            });
+            filePaths.push(p);
+        } catch (err) {
+            console.error('[Native File Load] Failed to read:', p, err);
+        }
+    }
+    if (files.length > 0) {
+        await openFilesBatch(files, [], filePaths);
+    }
+}
+
+// Listen to native Tauri file drop events if in native desktop app
+if (isNativeApp()) {
+    nativeListenEvent('tauri://drag-drop', async (event) => {
+        const payload = event?.payload;
+        const paths = (payload && Array.isArray(payload.paths)) ? payload.paths
+                    : (Array.isArray(payload)) ? payload
+                    : (payload && typeof payload === 'object' && Array.isArray(payload.files)) ? payload.files
+                    : null;
+        if (Array.isArray(paths) && paths.length > 0) {
+            await openNativePaths(paths);
+        }
+    });
+}
+
+// Web mode unsaved warning before tab/window close
+window.addEventListener('beforeunload', (e) => {
+    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+        state.saveToTab(state.tabs[state.activeTabIndex]);
+    }
+    const hasUnsaved = state.tabs && state.tabs.some(t => t.hasChanges);
+    if (hasUnsaved) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+    }
+});
+
+// Intercept external links so desktop WebView2 doesn't navigate away from editor UI
+document.addEventListener('click', (e) => {
+    const a = e.target.closest('a');
+    if (a && a.href && (a.href.startsWith('http://') || a.href.startsWith('https://') || a.href.startsWith('mailto:'))) {
+        if (isNativeApp()) {
+            e.preventDefault();
+            nativeOpenUrl(a.href);
+        }
+    }
+});
+
+// File Watcher on window focus (detect external file changes on disk)
+window.addEventListener('focus', async () => {
+    if (!isNativeApp()) return;
+    const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+    if (!curTab || !curTab.filePath || !curTab.fileLastModified) return;
+
+    const diskMtime = await nativeGetFileModifiedTime(curTab.filePath);
+    if (diskMtime && diskMtime > curTab.fileLastModified + 2000) {
+        curTab.fileLastModified = diskMtime;
+        const fileName = curTab.fileName || 'archivo';
+        const promptMsg = (t('msg_file_modified_disk') || "El archivo '{file}' ha sido modificado externamente por otro programa. ¿Desea recargarlo desde el disco?")
+            .replace('{file}', fileName);
+        const reloadConfirmed = await showConfirm(
+            t('dlg_reload_file_title') || 'Archivo modificado externamente',
+            promptMsg
+        );
+        if (reloadConfirmed) {
+            try {
+                const fileBytes = await nativeReadFile(curTab.filePath);
+                if (!fileBytes || fileBytes.length < 16) return;
+                const buf = fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength);
+                if (curTab.isTmpMode) {
+                    loadTmpData(buf, fileName, true);
+                } else {
+                    const isTdRa = (typeof ShpTdRaFormat !== 'undefined' && ShpTdRaFormat.isTdRaShp(buf));
+                    const shp = isTdRa ? ShpTdRaFormat.parse(buf) : ShpFormat80.parse(buf);
+                    loadShpData(shp);
+                }
+                curTab.fileLastModified = await nativeGetFileModifiedTime(curTab.filePath);
+                curTab.hasChanges = false;
+                state.hasChanges = false;
+                if (window.renderTabs) window.renderTabs();
+            } catch (err) {
+                console.error('[File Watcher] Failed to reload file:', err);
+            }
+        }
+    }
+});
+
 document.addEventListener('drop', async (e) => {
     e.preventDefault();
     dragCounter = 0;
     hidesDrop();
     
-    const items = Array.from(e.dataTransfer.items || []);
-    const files = Array.from(e.dataTransfer.files || []);
+    const files = Array.from(e.dataTransfer?.files || []);
     if (files.length === 0) return;
+
+    const items = Array.from(e.dataTransfer?.items || []);
 
     // Capture file system handles IMMEDIATELY before any async operations detach DataTransferItems
     const fileHandles = await Promise.all(
@@ -2840,5 +3099,17 @@ document.addEventListener('drop', async (e) => {
         return;
     }
 
-    await openFilesBatch(files, fileHandles);
+    let filePaths = files.map(f => f.path || null);
+    if (isNativeApp()) {
+        try {
+            const lastDir = window._lastNativeDirectory || localStorage.getItem('last_native_directory') || null;
+            const resolved = await nativeResolveDroppedFiles(files, lastDir);
+            if (Array.isArray(resolved) && resolved.length === files.length) {
+                filePaths = resolved.map((p, idx) => p || filePaths[idx] || null);
+            }
+        } catch (err) {
+            console.warn('[Drop] Failed to resolve dropped files:', err);
+        }
+    }
+    await openFilesBatch(files, fileHandles, filePaths);
 });

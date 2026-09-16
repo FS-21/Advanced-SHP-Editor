@@ -4,6 +4,7 @@ import { SVG_PLAY_MODERN as SVG_PLAY, SVG_PAUSE_MODERN as SVG_PAUSE, SVG_STEP_FW
 import { loadTmpData } from './file_io.js';
 import { saveRecentFile } from './menu_handlers.js';
 import { getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
+import { isNativeApp, nativeOpenFileDialog, nativeReadFile } from './native_bridge.js';
 
 let impShpPalette = new Array(256).fill(null);
 let impShpData = null; // { width, height, frames: [] }
@@ -27,6 +28,41 @@ export function initImportShp(onConfirm) {
 
 
     elements.btnImpShpLoadFile.onclick = async () => {
+        if (isNativeApp()) {
+            try {
+                const paths = await nativeOpenFileDialog({
+                    title: 'Open Westwood SHP File',
+                    filters: [
+                        { name: 'Westwood SHP Files (*.shp, *.sha)', extensions: ['shp', 'sha'] },
+                        { name: 'All Files (*.*)', extensions: ['*'] }
+                    ]
+                });
+                if (!paths || paths.length === 0) return;
+                const chosenPath = paths[0];
+                const u8 = await nativeReadFile(chosenPath);
+                const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+                try {
+                    impShpData = ShpFormat80.parse(buf);
+                    window.curImportShpData = impShpData;
+                    const filename = chosenPath.split(/[/\\]/).pop();
+                    impShpData.filename = filename;
+                    window._lastShpFilePath = chosenPath;
+                    window._lastShpFileHandle = null;
+
+                    impShpFrameIdx = 0;
+                    shp_updateFrameLimits();
+                    elements.impShpSlider.value = 0;
+                    shp_renderImportFrame(0);
+                    shp_updateImportUI();
+                } catch (err) {
+                    alert("Error parsing SHP: " + err.message);
+                }
+            } catch (err) {
+                console.error('[Native Import SHP] Error:', err);
+            }
+            return;
+        }
+
         if (window.showOpenFilePicker) {
             // Use File System Access API for handles (Recent Files support)
             try {
@@ -45,6 +81,7 @@ export function initImportShp(onConfirm) {
                     impShpData.filename = file.name;
                     // Store handle for Recent Files
                     window._lastShpFileHandle = handle;
+                    window._lastShpFilePath = null;
 
                     impShpFrameIdx = 0;
                     shp_updateFrameLimits();
@@ -65,6 +102,10 @@ export function initImportShp(onConfirm) {
     elements.inpImpShpFile.onchange = (e) => {
         if (!e.target.files.length) return;
         const file = e.target.files[0];
+        if (file.path) {
+            window._lastShpFilePath = file.path;
+            window._lastShpFileHandle = null;
+        }
         const reader = new FileReader();
         reader.onload = async ev => {
             try {

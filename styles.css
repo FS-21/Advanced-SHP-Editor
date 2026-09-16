@@ -5583,11 +5583,15 @@ body:not(.tmp-mode) #menuGameGridToggle     { display: none !important; }
 body.tmp-mode #gameGridSubmenuWrapper       { display: none !important; }
 body.tmp-mode #menuGameGridToggle           { display: flex !important; }
 
-/* Shadows & Shadow Overlay toolbar: hidden in TMP mode (not just disabled — irrelevant to terrain tiles) */
+/* Shadows & Shadow Overlay toolbar & menu: hidden in TMP mode (not just disabled — irrelevant to terrain tiles) */
 body.tmp-mode #wrapperUseShadows        { display: none !important; }
+body.tmp-mode #wrapperTdRaShadows       { display: none !important; }
 body.tmp-mode #wrapperShowShadowOverlay { display: none !important; }
 body.tmp-mode #sepBeforeShadows         { display: none !important; }
 body.tmp-mode #sepBeforeShadowOverlay   { display: none !important; }
+body.tmp-mode #menuTdRaShadowSubmenu    { display: none !important; }
+body.tmp-mode #menuToggleShadows        { display: none !important; }
+body.tmp-mode #menuToggleShadowOverlay  { display: none !important; }
 
 /* Show/hide Import and Export submenus based on TMP mode */
 body.tmp-mode #menuItemExportShp { display: none !important; }

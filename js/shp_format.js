@@ -8,6 +8,10 @@ export class ShpFormat80 {
     constructor() { }
 
     static parse(buffer) {
+        if (buffer && ArrayBuffer.isView(buffer)) {
+            buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        }
+
         if (ShpTdRaFormat.isTdRaShp(buffer)) {
             return ShpTdRaFormat.parse(buffer);
         }

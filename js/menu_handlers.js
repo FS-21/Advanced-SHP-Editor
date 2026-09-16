@@ -7,11 +7,11 @@ import {
     selectAll, invertSelection, copySelection, cutSelection, pasteClipboard, pasteAsNewFrame, zoomToSelection, openPasteRangeDialog, removeColorZeroFromEntireShp, fillColorZeroInEntireShp,
     updatePixelGrid, renderLayerThumbnail, setupTooltips, updatePaletteUsedMarks, syncStatusCompressionUI, showPasteNotification
 } from './ui.js';
-import { openNewShpDialog, updateUIState } from './main.js';
+import { openNewShpDialog, updateUIState, detectFileType } from './main.js';
 import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, handleSaveAsShp, handleSaveAll, loadTmpData, saveTmpData } from './file_io.js';
 import { resetImportState, syncImporterPalette } from './import_shp.js';
 import { resetTmpImportState, syncTmpImporterPalette } from './import_tmp.js';
-import { ShpFormat80 } from './shp_format.js';
+import { ShpFormat80, ShpTdRaFormat } from './shp_format.js';
 import { PcxLoader } from './pcx_loader.js';
 import { findNearestPaletteIndex, setupAutoRepeat, compositeFrame } from './utils.js';
 import { t, applyTranslations } from './translations.js';
@@ -29,6 +29,7 @@ import { openVehicleSequenceEditor, initVehicleSequenceEditor } from './vehicle_
 import { openAresFoundationEditor, initAresFoundation } from './ares_foundation.js';
 import { openConvertPaletteDialog } from './palette_convert.js';
 import { saveTmpSelectedTilesToFile } from './export_helper.js';
+import { isNativeApp, nativeReadFile, nativeGetFileModifiedTime } from './native_bridge.js';
 
 
 
@@ -143,7 +144,8 @@ export function updateMenuState(hasProject) {
     const viewActions = [
         'menuZoomIn', 'menuZoomOut', 'menuZoomToSelection', 'menuZoom100', 'menuShowCenter',
         'menuToggleGrid', 'menuToggleBg', 'triggerGridOptions', 'triggerGameGrid', 'menuToggleShadows', 'menuPreview',
-        'menuToggleShadowOverlay', 'menuAlphaImageMode', 'menuShowFrameColors', 'menuShowAllFramesColors'
+        'menuToggleShadowOverlay', 'menuAlphaImageMode', 'menuShowFrameColors', 'menuShowAllFramesColors',
+        'triggerTdRaShadows', 'menuTdRaShadowRaw', 'menuTdRaShadowIngame', 'menuTdRaShadowHidden'
     ];
     viewActions.forEach(id => {
         const el = document.getElementById(id);
@@ -154,8 +156,9 @@ export function updateMenuState(hasProject) {
             if (id === 'menuToggleShadows' && state.isAlphaImageMode) enabled = false;
             if (id === 'menuToggleShadows' && state.shpFormat === 'td_ra') enabled = false;
             if (id === 'menuToggleShadowOverlay' && state.shpFormat === 'td_ra') enabled = false;
+            if ((id === 'triggerTdRaShadows' || id === 'menuTdRaShadowRaw' || id === 'menuTdRaShadowIngame' || id === 'menuTdRaShadowHidden') && state.shpFormat !== 'td_ra') enabled = false;
 
-            if (state.isTmpMode && (id === 'menuShowCenter' || id === 'menuPreview' || id === 'menuAlphaImageMode')) {
+            if (state.isTmpMode && (id === 'menuShowCenter' || id === 'menuPreview' || id === 'menuAlphaImageMode' || id.startsWith('menuTdRaShadow') || id === 'triggerTdRaShadows')) {
                 enabled = false;
             }
 
@@ -316,14 +319,14 @@ export function updateMenuState(hasProject) {
 
     if (state.isTmpMode) {
         const tmpDisabled = [
-            'menuFrameMgr', 'menuToggleShadows', 'menuFixShadows', 'menuRemoveUselessShadowPixels',
+            'menuFrameMgr', 'menuToggleShadows', 'triggerTdRaShadows', 'menuTdRaShadowRaw', 'menuTdRaShadowIngame', 'menuTdRaShadowHidden', 'menuFixShadows', 'menuRemoveUselessShadowPixels',
             'menuConvertTStoRA2', 'menuConvertRA2toTS', 'menuInfantrySequence', 'menuVehicleSequence', 'menuAresCustomFoundation',
             'menuResizeImage', 'menuResizeCanvasUnified', 'menuCropSelection',
             // Export: frame-based exports don't apply to TMP structure
             'triggerExport', 'menuExpSpriteSheet', 'menuExpRange', 'menuExpCurrent',
             // Import: importing images would break the TMP tile structure
             'triggerImport', 'menuImpFromImage', 'menuImpSpriteSheet', 'menuImpOtherShp',
-            'cbUseShadows', 'cbShowShadowOverlay'
+            'cbUseShadows', 'cbShowShadowOverlay', 'selTdRaShadows'
         ];
         
         // Disable rotation if NOT square in TMP mode
@@ -361,6 +364,10 @@ export function updateMenuState(hasProject) {
     const sepOverlay = document.getElementById('sepBeforeShadowOverlay');
     const wrapperRel = document.getElementById('wrapperMainRelIndex');
 
+    const menuTdRaShadowSubmenu = document.getElementById('menuTdRaShadowSubmenu');
+    const menuToggleShadows = document.getElementById('menuToggleShadows');
+    const menuToggleShadowOverlay = document.getElementById('menuToggleShadowOverlay');
+
     if (wrapperTdRa) {
         wrapperTdRa.style.display = (hasProject && isTdRa && !state.isTmpMode) ? 'flex' : 'none';
         const selTdRa = document.getElementById('selTdRaShadows');
@@ -371,10 +378,22 @@ export function updateMenuState(hasProject) {
         if (wrapperOverlay) wrapperOverlay.style.display = 'none';
         if (sepOverlay) sepOverlay.style.display = 'none';
         if (wrapperRel) wrapperRel.style.display = 'none';
+
+        if (menuTdRaShadowSubmenu) menuTdRaShadowSubmenu.style.display = (hasProject && !state.isTmpMode) ? '' : 'none';
+        if (menuToggleShadows) menuToggleShadows.style.display = 'none';
+        if (menuToggleShadowOverlay) menuToggleShadowOverlay.style.display = 'none';
     } else if (!state.isTmpMode) {
         if (wrapperTdRa) wrapperTdRa.style.display = 'none';
         if (wrapperShadows) wrapperShadows.style.display = hasProject ? 'flex' : 'none';
         if (sepOverlay) sepOverlay.style.display = hasProject ? '' : 'none';
+
+        if (menuTdRaShadowSubmenu) menuTdRaShadowSubmenu.style.display = 'none';
+        if (menuToggleShadows) menuToggleShadows.style.display = hasProject ? '' : 'none';
+        if (menuToggleShadowOverlay) menuToggleShadowOverlay.style.display = hasProject ? '' : 'none';
+    } else {
+        if (menuTdRaShadowSubmenu) menuTdRaShadowSubmenu.style.display = 'none';
+        if (menuToggleShadows) menuToggleShadows.style.display = 'none';
+        if (menuToggleShadowOverlay) menuToggleShadowOverlay.style.display = 'none';
     }
 
     // Swap data-i18n attributes for TMP mode
@@ -443,7 +462,10 @@ export function syncMenuToggles() {
         'menuToggleShadowOverlay': !!state.showShadowOverlay,
         'menuAlphaImageMode': !!state.isAlphaImageMode,
         'menuShowFrameColors': !!state.showFrameColors,
-        'menuShowAllFramesColors': !!state.showAllFramesColors
+        'menuShowAllFramesColors': !!state.showAllFramesColors,
+        'menuTdRaShadowRaw': state.tdRaShadowMode === 'raw',
+        'menuTdRaShadowIngame': state.tdRaShadowMode === 'ingame',
+        'menuTdRaShadowHidden': state.tdRaShadowMode === 'hidden'
     };
 
     Object.entries(toggles).forEach(([id, active]) => {
@@ -461,6 +483,11 @@ export function syncMenuToggles() {
 
     const cbShadows = document.getElementById('cbUseShadows');
     if (cbShadows) cbShadows.checked = !!state.useShadows;
+
+    const selTdRa = document.getElementById('selTdRaShadows');
+    if (selTdRa && selTdRa.value !== (state.tdRaShadowMode || 'raw')) {
+        selTdRa.value = state.tdRaShadowMode || 'raw';
+    }
 
     const cbOverlay = document.getElementById('cbShowShadowOverlay');
     if (cbOverlay) cbOverlay.checked = !!state.showShadowOverlay;
@@ -1885,6 +1912,25 @@ function setupAboutMenu() {
     }
 }
 
+export function setTdRaShadowMode(mode) {
+    state.tdRaShadowMode = mode;
+    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+        state.tabs[state.activeTabIndex].tdRaShadowMode = state.tdRaShadowMode;
+    }
+    const selTdRa = document.getElementById('selTdRaShadows');
+    if (selTdRa) selTdRa.value = mode;
+
+    // Invalidate frame cache
+    state.frames.forEach(f => { f._v = (f._v || 0) + 1; });
+    renderCanvas();
+    if (typeof renderFramesList === 'function') renderFramesList();
+    if (typeof updateLayersList === 'function') updateLayersList();
+    if (window.renderPreview && typeof window.renderPreview === 'function') {
+        window.renderPreview();
+    }
+    syncMenuToggles();
+}
+
 function setupViewMenu() {
     const handlers = {
         'menuZoomIn': () => {
@@ -1997,6 +2043,15 @@ function setupViewMenu() {
         'menuPreview': () => {
             closeAllMenus();
             openPreview();
+        },
+        'menuTdRaShadowRaw': () => {
+            setTdRaShadowMode('raw');
+        },
+        'menuTdRaShadowIngame': () => {
+            setTdRaShadowMode('ingame');
+        },
+        'menuTdRaShadowHidden': () => {
+            setTdRaShadowMode('hidden');
         },
         'menuToggleShadows': () => {
             state.useShadows = !state.useShadows;
@@ -4000,22 +4055,58 @@ async function clearRecentFiles() {
     }
 }
 
+export async function getRecentFilePathByName(name) {
+    if (!name) return null;
+    try {
+        const db = await openRecentDB();
+        const tx = db.transaction(RECENT_STORE, 'readonly');
+        const store = tx.objectStore(RECENT_STORE);
+        const allItems = await new Promise((resolve, reject) => {
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => reject(req.error);
+        });
+        const target = name.toLowerCase();
+        const match = allItems.find(item => item.name && (item.name === name || item.name.toLowerCase() === target));
+        if (match && typeof match.handle === 'string') {
+            return match.handle;
+        }
+    } catch (e) {
+        console.warn('[Recent Files] getRecentFilePathByName error:', e);
+    }
+    return null;
+}
+window.getRecentFilePathByName = getRecentFilePathByName;
+
 async function openRecentFile(handle, paletteId, openInNewTab = false) {
     try {
-        // Request permission
-        const perm = await handle.requestPermission({ mode: 'read' });
-        if (perm !== 'granted') {
-            console.warn('[Recent Files] Permission denied');
-            return;
+        let buf, fileName;
+        if (typeof handle === 'string') {
+            const u8 = await nativeReadFile(handle);
+            buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+            fileName = handle.split(/[/\\]/).pop();
+        } else {
+            // Request permission
+            const perm = await handle.requestPermission({ mode: 'read' });
+            if (perm !== 'granted') {
+                console.warn('[Recent Files] Permission denied');
+                return;
+            }
+
+            const file = await handle.getFile();
+            buf = await file.arrayBuffer();
+            fileName = file.name;
         }
 
-        const file = await handle.getFile();
-        const buf = await file.arrayBuffer();
+        const ext = fileName.split('.').pop().toLowerCase();
+        const isShpExt = ext === 'shp' || ext === 'sha';
+        const isTmpExt = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'].includes(ext);
 
-        const ext = file.name.split('.').pop().toLowerCase();
-        const isShp = ext === 'shp' || ext === 'sha';
-        const isTmp = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'].includes(ext);
-        if (isShp || isTmp) {
+        const detectedType = (typeof detectFileType === 'function') ? detectFileType(buf) : 'unknown';
+        const effectiveIsTmp = (detectedType === 'tmp') || (detectedType === 'unknown' && isTmpExt);
+        const effectiveIsShp = (detectedType === 'shp') || (detectedType === 'unknown' && isShpExt);
+
+        if (effectiveIsShp || effectiveIsTmp) {
             // SHP Editor: by default load into the current tab. The user can
             // request a new tab explicitly (middle-click on a recent-files entry).
             // Exception: if there is a single empty tab, ignore the new-tab
@@ -4031,7 +4122,15 @@ async function openRecentFile(handle, paletteId, openInNewTab = false) {
                 }
             }
             if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-                state.tabs[state.activeTabIndex].fileHandle = handle;
+                if (typeof handle === 'string') {
+                    state.tabs[state.activeTabIndex].filePath = handle;
+                    state.tabs[state.activeTabIndex].fileHandle = null;
+                    state.tabs[state.activeTabIndex].isNewProject = false;
+                } else {
+                    state.tabs[state.activeTabIndex].fileHandle = handle;
+                    state.tabs[state.activeTabIndex].filePath = null;
+                    state.tabs[state.activeTabIndex].isNewProject = false;
+                }
             }
 
             // Apply palette AFTER tab creation, so it targets the new active tab
@@ -4046,15 +4145,16 @@ async function openRecentFile(handle, paletteId, openInNewTab = false) {
                 }
             }
 
-            if (isTmp) {
-                loadTmpData(buf, file.name);
+            if (effectiveIsTmp) {
+                loadTmpData(buf, fileName);
             } else {
-                const shp = ShpFormat80.parse(buf);
+                const isTdRa = (typeof ShpTdRaFormat !== 'undefined' && ShpTdRaFormat.isTdRaShp(buf));
+                const shp = isTdRa ? ShpTdRaFormat.parse(buf) : ShpFormat80.parse(buf);
                 loadShpData(shp);
             }
 
             // Update tab name
-            if (typeof updateCurrentTabName === 'function') updateCurrentTabName(file.name);
+            if (typeof updateCurrentTabName === 'function') updateCurrentTabName(fileName);
 
             // Reset history so the freshly opened file is the only entry
             // (Ctrl+Z will not erase the file).
@@ -4066,13 +4166,37 @@ async function openRecentFile(handle, paletteId, openInNewTab = false) {
                 state.hasChanges = false;
             }
 
-            // Store handle for Save functionality
-            window._lastShpFileHandle = handle;
-            window._lastShpFilename = file.name;
+            if (typeof handle === 'string') {
+                state.filePath = handle;
+                state.fileHandle = null;
+                const mtime = await nativeGetFileModifiedTime(handle);
+                state.fileLastModified = mtime;
+                if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                    state.tabs[state.activeTabIndex].fileLastModified = mtime;
+                }
+                if (effectiveIsTmp) {
+                    window._lastTmpFilePath = handle;
+                    window._lastTmpFilename = fileName;
+                } else {
+                    window._lastShpFilePath = handle;
+                    window._lastShpFilename = fileName;
+                }
+            } else {
+                state.fileHandle = handle;
+                state.filePath = null;
+                if (effectiveIsTmp) {
+                    window._lastTmpFileHandle = handle;
+                    window._lastTmpFilename = fileName;
+                } else {
+                    window._lastShpFileHandle = handle;
+                    window._lastShpFilename = fileName;
+                }
+            }
 
             // Save updated timestamp
-            saveRecentFile(file.name, handle);
+            saveRecentFile(fileName, handle);
 
+            syncStatusCompressionUI();
             if (typeof window.updateUIState === 'function') window.updateUIState();
             closeAllMenus();
         }

@@ -7,6 +7,7 @@ import { GAME_PALETTES } from './game_palettes.js';
 import { parsePaletteBuffer } from './file_io.js';
 import { updatePaletteSelectorUI, getActivePaletteName, getActivePaletteId, getLib, findNodeById } from './palette_menu.js';
 import { renderPaletteSimple } from './ui.js';
+import { isNativeApp, nativeOpenFileDialog, nativeReadFile } from './native_bridge.js';
 
 let importPaletteSelectedManually = false;
 let _lastImpPaletteNodeId = null;
@@ -30,6 +31,65 @@ export function initImportTmp(onConfirm) {
     if (elements.btnImpTmpStep) elements.btnImpTmpStep.innerHTML = SVG_STEP_FORWARD;
 
     elements.btnImpTmpLoadFile.onclick = async () => {
+        if (isNativeApp()) {
+            try {
+                const paths = await nativeOpenFileDialog({
+                    title: 'Open Westwood TMP File',
+                    filters: [
+                        { name: 'All Westwood TMP Files (*.tem, *.sno, *.urb, *.des, *.ubn, *.lun)', extensions: ['tem', 'sno', 'urb', 'des', 'ubn', 'lun'] },
+                        { name: 'Temperate TMP (*.tem)', extensions: ['tem'] },
+                        { name: 'Snow TMP (*.sno)', extensions: ['sno'] },
+                        { name: 'Urban TMP (*.urb)', extensions: ['urb'] },
+                        { name: 'Desert TMP (*.des)', extensions: ['des'] },
+                        { name: 'Lunar TMP (*.lun)', extensions: ['lun'] },
+                        { name: 'New Urban TMP (*.ubn)', extensions: ['ubn'] },
+                        { name: 'All Files (*.*)', extensions: ['*'] }
+                    ]
+                });
+                if (!paths || paths.length === 0) return;
+                const chosenPath = paths[0];
+
+                resetTmpImportState();
+                const u8 = await nativeReadFile(chosenPath);
+                const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+                const filename = chosenPath.split(/[/\\]/).pop();
+
+                try {
+                    const parsed = TmpTsFile.parse(buf);
+                    if (!parsed) throw new Error("Parser returned empty result");
+
+                    impTmpData = parsed;
+                    impTmpBuffer = buf;
+                    window.curImportTmpData = impTmpData;
+                    impTmpData.filename = filename;
+                    window._lastTmpFilePath = chosenPath;
+                    window._lastTmpFileHandle = null;
+
+                    if (!impTmpPalette || impTmpPalette.every(c => c === null)) {
+                        if (state.palette) impTmpPalette = [...state.palette];
+                    }
+
+                    impTmpFrameIdx = 0;
+                    tmp_updateFrameLimits();
+                    if (elements.impTmpSlider) elements.impTmpSlider.value = 0;
+
+                    autoDetectImportPalette(impTmpData.header.cx, filename);
+                    tmp_renderImportFrame(0);
+                    tmp_updateImportUI();
+                    if (impTmpPalette && impTmpPalette.some(c => c !== null)) {
+                        tmp_renderImportPalette();
+                    }
+                } catch (err) {
+                    console.error("[Native Import TMP] Parse/Render Error:", err);
+                    alert("Error parsing TMP: " + err.message);
+                    resetTmpImportState();
+                }
+            } catch (err) {
+                console.error("[Native Import TMP] Error:", err);
+            }
+            return;
+        }
+
         if (window.showOpenFilePicker) {
             try {
                 const [handle] = await window.showOpenFilePicker({
@@ -54,6 +114,7 @@ export function initImportTmp(onConfirm) {
                     window.curImportTmpData = impTmpData;
                     impTmpData.filename = file.name;
                     window._lastTmpFileHandle = handle;
+                    window._lastTmpFilePath = null;
 
                     // Auto-sync palette from editor if none selected or all transparent
                     if (!impTmpPalette || impTmpPalette.every(c => c === null)) {
@@ -87,6 +148,10 @@ export function initImportTmp(onConfirm) {
     elements.inpImpTmpFile.onchange = (e) => {
         if (!e.target.files.length) return;
         const file = e.target.files[0];
+        if (file.path) {
+            window._lastTmpFilePath = file.path;
+            window._lastTmpFileHandle = null;
+        }
         
         resetTmpImportState(); // Clean before new load
         

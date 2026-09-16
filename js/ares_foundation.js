@@ -4,6 +4,7 @@
 // [Building] Foundation / FoundationOutline entries.
 
 import { setupAutoRepeat } from './utils.js';
+import { isNativeApp, nativeWriteClipboardText, nativeWriteClipboardImage } from './native_bridge.js';
 
 let aresData = new Map();
 let aresInitialized = false;
@@ -486,21 +487,23 @@ function aresGenerateCode() {
     aresCodeArea.value = lines.join('\n');
 }
 
-function aresCopyCode() {
+async function aresCopyCode() {
     if (!aresCodeArea.value) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(aresCodeArea.value).catch(() => {
-            aresCodeArea.select();
-            document.execCommand('copy');
-        });
-    } else {
+    const ok = await nativeWriteClipboardText(aresCodeArea.value);
+    if (!ok) {
         aresCodeArea.select();
         document.execCommand('copy');
     }
 }
 
-function aresCopyDesign() {
+async function aresCopyDesign() {
     if (!aresCanvas) return;
+    if (isNativeApp()) {
+        const ctx = aresCanvas.getContext('2d');
+        const imgData = ctx.getImageData(0, 0, aresCanvas.width, aresCanvas.height);
+        const ok = await nativeWriteClipboardImage(aresCanvas.width, aresCanvas.height, imgData.data);
+        if (ok) return;
+    }
     aresCanvas.toBlob(blob => {
         if (!blob) return;
         if (navigator.clipboard && navigator.clipboard.write) {

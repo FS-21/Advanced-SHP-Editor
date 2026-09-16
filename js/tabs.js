@@ -167,6 +167,8 @@ function duplicateTabAt(index) {
     clone.id = generateId();
     clone.fileName = null;
     clone.fileHandle = null;
+    clone.filePath = null;
+    clone.fileLastModified = 0;
     clone.hasChanges = true;
     clone.isNewProject = true;
     clone.idName = source.idName ? `${source.idName} (Copy)` : `New File ${++state.newFileCounter}`;
@@ -269,12 +271,19 @@ export function switchTab(index) {
     const newTab = state.tabs[index];
     state.loadFromTab(newTab);
 
+    // Sync body class for TMP mode vs SHP mode
+    document.body.classList.toggle('tmp-mode', !!state.isTmpMode);
+
     // Synchronize file handles and filenames with active tab
     state.fileHandle = newTab.fileHandle || null;
+    state.filePath = newTab.filePath || null;
+    state.fileLastModified = newTab.fileLastModified || 0;
     window._lastShpFileHandle = newTab.fileHandle || null;
+    window._lastShpFilePath = newTab.filePath || null;
     window._lastShpFilename = newTab.fileName || null;
     if (newTab.isTmpMode) {
         window._lastTmpFileHandle = newTab.fileHandle || null;
+        window._lastTmpFilePath = newTab.filePath || null;
         window._lastTmpFilename = newTab.fileName || null;
     }
 
@@ -335,6 +344,8 @@ function resetToCleanDefaultTab(preservePaletteFromTab = null) {
     cleanTab.hasChanges = false;
     cleanTab.frames = [];
     cleanTab.fileHandle = null;
+    cleanTab.filePath = null;
+    cleanTab.fileLastModified = 0;
     cleanTab.history = [];
     cleanTab.historyPtr = -1;
     cleanTab.savedHistoryPtr = -1;
@@ -345,13 +356,17 @@ function resetToCleanDefaultTab(preservePaletteFromTab = null) {
 
     // Reset global state explicitly
     state.fileHandle = null;
+    state.filePath = null;
+    state.fileLastModified = 0;
     window._lastShpFileHandle = null;
+    window._lastShpFilePath = null;
     window._lastShpFilename = null;
     state.isTmpMode = false;
     state.tmpHeader = null;
     state.originalTmpTiles = null;
     state.tmpFilename = null;
     window._lastTmpFileHandle = null;
+    window._lastTmpFilePath = null;
     window._lastTmpFilename = null;
     state.frames = [];
     state.currentFrameIdx = 0;
@@ -501,6 +516,7 @@ export async function closeTab(index, e) {
 
     const newActiveTab = state.tabs[state.activeTabIndex];
     state.loadFromTab(newActiveTab);
+    document.body.classList.toggle('tmp-mode', !!state.isTmpMode);
 
     renderTabs();
     updateUIState();
@@ -519,7 +535,7 @@ export function updateCurrentTabName(name, isNewProject = false) {
         const tab = state.tabs[state.activeTabIndex];
         tab.fileName = name;
         tab.idName = name;
-        tab.isNewProject = isNewProject;
+        tab.isNewProject = (tab.filePath || tab.fileHandle || state.filePath || state.fileHandle) ? false : isNewProject;
         tab.hasChanges = false;
 
         state.saveToTab(tab);

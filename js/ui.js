@@ -9,6 +9,7 @@ import { openExternalShpDialog } from './external_shp.js';
 import { t, applyTranslations } from './translations.js';
 import { getCurrentEditedTiles } from './file_io.js';
 import { TmpTsFile } from './tmp_format.js';
+import { isNativeApp, nativeWriteClipboardImage } from './native_bridge.js';
 
 /* Animation for Marching Ants */
 export function startAnts() {
@@ -224,6 +225,7 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
             id = ctx.createImageData(w, h);
         } else throw err;
     }
+    const d = id.data;
     const d32 = new Uint32Array(id.data.buffer);
 
     if (!skipBG) {
@@ -2107,6 +2109,18 @@ export function renderFramesList() {
         renderTmpComponentsList();
         return;
     }
+    document.body.classList.remove('tmp-mode');
+    if (elements.tmpComponentsList) {
+        elements.tmpComponentsList.style.display = 'none';
+    }
+    if (elements.framesList) {
+        elements.framesList.style.display = 'block';
+    }
+    const sidebarTitle = document.getElementById('sidebarFramesTitle');
+    if (sidebarTitle) {
+        sidebarTitle.setAttribute('data-i18n', 'sidebar_frames');
+        sidebarTitle.textContent = (typeof window.t === 'function' ? window.t('sidebar_frames') : null) || 'Frames';
+    }
     if (!elements.framesList) return;
     if (_framesListRenderPending) return;
     _framesListRenderPending = true;
@@ -2120,6 +2134,18 @@ function _renderFramesListImmediate() {
     if (state.isTmpMode) {
         renderTmpComponentsList();
         return;
+    }
+    document.body.classList.remove('tmp-mode');
+    if (elements.tmpComponentsList) {
+        elements.tmpComponentsList.style.display = 'none';
+    }
+    if (elements.framesList) {
+        elements.framesList.style.display = 'block';
+    }
+    const sidebarTitle = document.getElementById('sidebarFramesTitle');
+    if (sidebarTitle) {
+        sidebarTitle.setAttribute('data-i18n', 'sidebar_frames');
+        sidebarTitle.textContent = (typeof window.t === 'function' ? window.t('sidebar_frames') : null) || 'Frames';
     }
     if (!elements.framesList) return;
 
@@ -2592,38 +2618,30 @@ export function syncStatusCompressionUI() {
 
     if (state.shpFormat === 'td_ra') {
         const hasDelta = state.frames.some(f => f.compression === 4 || f.compression === 2 || f.formatCode === 4 || f.formatCode === 2 || f.classicFormat === 4 || f.classicFormat === 2);
-        const targetVal = hasDelta ? "td_ra_delta" : "td_ra_80";
-        if (!sel.querySelector(`option[value="${targetVal}"]`)) {
-            const opt = document.createElement('option');
-            opt.value = targetVal;
-            opt.textContent = "TD / RA1";
-            sel.appendChild(opt);
-        }
-        Array.from(sel.options).forEach(opt => {
-            if (opt.value === '1' || opt.value === '3') {
-                opt.hidden = true;
-                opt.disabled = true;
-            }
-        });
-        sel.value = targetVal;
-        sel.disabled = true;
-        sel.style.pointerEvents = 'none';
-        sel.style.cursor = 'not-allowed';
-        const msg = "TD / RA1 (Westwood Native Format)";
+        
+        // Rebuild dropdown content for TD/RA1
+        sel.innerHTML = `
+            <option value="80">${t('opt_compression_80') || 'Format 80 (LCW)'}</option>
+            ${hasDelta ? `<option value="40">${t('opt_compression_40') || 'Format 40 (XOR Delta)'}</option>` : ''}
+            <option value="0">${t('opt_compression_0') || 'Format 0 (Uncompressed)'}</option>
+        `;
+        
+        const cur = (state.compression === 0) ? "0" : ((hasDelta && (state.compression === 4 || state.compression === 40 || state.compression === 2)) ? "40" : "80");
+        sel.value = cur;
+        sel.disabled = false;
+        sel.style.pointerEvents = '';
+        sel.style.cursor = '';
+        const msg = t('tooltip_compression_td_ra') || "Compression: Tiberian Dawn / Red Alert 1 Format";
         item.setAttribute('data-title', msg);
         item.title = msg;
         sel.title = msg;
         return;
     } else {
-        // Clean up TD/RA1 options if switching back to TS/RA2
-        const opt80 = sel.querySelector('option[value="td_ra_80"]');
-        if (opt80) opt80.remove();
-        const optDelta = sel.querySelector('option[value="td_ra_delta"]');
-        if (optDelta) optDelta.remove();
-        Array.from(sel.options).forEach(opt => {
-            opt.hidden = false;
-            opt.disabled = false;
-        });
+        // Rebuild dropdown content for TS/RA2
+        sel.innerHTML = `
+            <option value="1">${t('opt_compression_1') || 'Type 1 (Uncompressed)'}</option>
+            <option value="3">${t('opt_compression_3') || 'Type 3 (RLE)'}</option>
+        `;
         sel.style.pointerEvents = '';
         sel.style.cursor = '';
         sel.title = '';
@@ -2651,7 +2669,11 @@ export function setupStatusCompression() {
 
     sel.onchange = () => {
         const newComp = parseInt(sel.value, 10);
-        if (newComp === 1 || newComp === 3) {
+        const isValid = state.shpFormat === 'td_ra'
+            ? (newComp === 80 || newComp === 0 || newComp === 40)
+            : (newComp === 1 || newComp === 3);
+
+        if (isValid) {
             if (state.compression !== newComp) {
                 state.compression = newComp;
                 if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
@@ -4752,14 +4774,15 @@ export function copySelection() {
  * This allows pasting into external apps without any browser prompt.
  */
 export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
-    if (!navigator.clipboard || !navigator.clipboard.write) {
-        showPasteNotification("El portapapeles está bloqueado por seguridad del navegador (usa HTTPS o localhost).", "warning", 4000);
-        return;
-    }
     try {
         let canvas;
+        let rgbaData = null;
         if (indicesOrCanvas instanceof HTMLCanvasElement) {
             canvas = indicesOrCanvas;
+            width = canvas.width;
+            height = canvas.height;
+            const ctx = canvas.getContext('2d');
+            rgbaData = ctx.getImageData(0, 0, width, height).data;
         } else {
             const indices = indicesOrCanvas;
             canvas = document.createElement('canvas');
@@ -4778,6 +4801,21 @@ export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
                 imageData.data[offset + 3] = (paletteIdx === (state.tmpFullZPreviewActive ? 255 : TRANSPARENT_COLOR)) ? 0 : 255;
             }
             ctx.putImageData(imageData, 0, 0);
+            rgbaData = imageData.data;
+        }
+
+        if (isNativeApp()) {
+            const ok = await nativeWriteClipboardImage(width, height, rgbaData);
+            if (ok) {
+                console.log('Image copied directly to OS clipboard via native bridge.');
+                showPasteNotification("Selección copiada al portapapeles del sistema.", "success", 2500);
+                return;
+            }
+        }
+
+        if (!navigator.clipboard || !navigator.clipboard.write) {
+            showPasteNotification("El portapapeles está bloqueado por seguridad del navegador (usa HTTPS o localhost).", "warning", 4000);
+            return;
         }
 
         try {
@@ -8161,6 +8199,7 @@ export function renderTmpComponentsList() {
     const fList = elements.framesList;
     if (!list || !fList) return;
 
+    document.body.classList.add('tmp-mode');
     list.style.display = 'block';
     fList.style.display = 'none';
 
@@ -8170,6 +8209,7 @@ export function renderTmpComponentsList() {
     const sidebarTitle = document.getElementById('sidebarFramesTitle');
     if (sidebarTitle) {
         sidebarTitle.setAttribute('data-i18n', 'sidebar_tiles');
+        sidebarTitle.textContent = (typeof window.t === 'function' ? window.t('sidebar_tiles') : null) || 'Cells';
         if (typeof applyTranslations === 'function') applyTranslations();
     }
 

@@ -2,6 +2,7 @@ import { state, TRANSPARENT_COLOR } from './state.js';
 import { compositeFrame, setupAutoRepeat, SVG_PLAY_MODERN, SVG_PAUSE_MODERN, SVG_STEP_BACK_MODERN, SVG_STEP_FWD_MODERN } from './utils.js';
 import { showConfirm } from './ui.js';
 import { t } from './translations.js';
+import { nativeWriteClipboardText } from './native_bridge.js';
 
 // ============================================================
 // VEHICLE SEQUENCE EDITOR
@@ -775,7 +776,7 @@ export function initVehicleSequenceEditor() {
     document.getElementById('vseqBtnCopyText').onclick = () => {
         const area = document.getElementById('vseqTextArea');
         if (area) {
-            navigator.clipboard.writeText(area.value).then(() => {
+            nativeWriteClipboardText(area.value).then(() => {
                 const b = document.getElementById('vseqBtnCopyText'), o = b.textContent; b.textContent = '\u2713 Copied!'; setTimeout(() => b.textContent = o, 1500);
             });
         }

@@ -5,6 +5,18 @@
 export class TmpTsFile {
     // Parse TMP file from ArrayBuffer
     static parse(buffer) {
+        if (!buffer) {
+            throw new Error("El archivo TMP está vacío o no es válido");
+        }
+        if (ArrayBuffer.isView(buffer)) {
+            buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        }
+        if (!(buffer instanceof ArrayBuffer)) {
+            throw new Error("El formato del búfer no es compatible");
+        }
+        if (buffer.byteLength < 16) {
+            throw new Error("El archivo TMP es demasiado pequeño o está dañado");
+        }
         const dv = new DataView(buffer);
         const u8 = new Uint8Array(buffer);
         
@@ -15,9 +27,23 @@ export class TmpTsFile {
             cx: dv.getInt32(8, true),          // Tile width (60 or 48)
             cy: dv.getInt32(12, true)          // Tile height (30 or 24)
         };
+
+        // Header validation: cx must be 48 or 60, cy must be 24 or 30
+        if ((header.cx !== 48 && header.cx !== 60) || (header.cy !== 24 && header.cy !== 30)) {
+            throw new Error(`Dimensiones de tesela no válidas: ${header.cx}x${header.cy}. Se esperaba 48x24 o 60x30.`);
+        }
+        if (header.cblocks_x <= 0 || header.cblocks_x > 512 || header.cblocks_y <= 0 || header.cblocks_y > 512) {
+            throw new Error(`Dimensiones de cuadrícula TMP no válidas: ${header.cblocks_x}x${header.cblocks_y}`);
+        }
         
         const numTiles = header.cblocks_x * header.cblocks_y;
+        if (numTiles <= 0 || numTiles > 65536) {
+            throw new Error(`Número de teselas no válido: ${numTiles}`);
+        }
         const tileIndexOffset = 16;
+        if (tileIndexOffset + numTiles * 4 > dv.byteLength) {
+            throw new Error(`Archivo TMP truncado: la tabla de teselas excede el tamaño del archivo`);
+        }
         
         // Read tile index (array of offsets)
         const tileIndex = [];
@@ -37,10 +63,10 @@ export class TmpTsFile {
         // Parse each tile
         const tiles = [];
         for (let i = 0; i < numTiles; i++) {
-            if (tileIndex[i] === 0) {
+            const tileOffset = tileIndex[i];
+            if (tileOffset <= 0 || tileOffset + 52 > dv.byteLength) {
                 tiles.push(null);
             } else {
-                const tileOffset = tileIndex[i];
                 const tileData = TmpTsFile.parseTile(u8, dv, tileOffset, header.cx, header.cy, i);
                 tiles.push(tileData);
             }
@@ -53,9 +79,12 @@ export class TmpTsFile {
             numTiles
         };
     }
-    
+
     // Parse individual tile at given offset
     static parseTile(u8, dv, offset, cx, cy, slot) {
+        if (offset < 0 || offset + 52 > dv.byteLength) {
+            return null;
+        }
         const diamondSize = (cx * cy) / 2;
         
         const imageHeader = {
