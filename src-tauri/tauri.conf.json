@@ -31,7 +31,7 @@
     "active": true,
     "publisher": "FS-21",
     "copyright": "Copyright (C) 2026 FS-21",
-    "targets": ["appimage", "deb"],
+    "targets": ["appimage", "deb", "rpm"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
