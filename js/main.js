@@ -51,7 +51,7 @@ import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handl
 import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile, setTdRaShadowMode, getRecentFilePathByName } from './menu_handlers.js';
 import { setupPaletteMenu, setActivePaletteId, getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
-import { initTabs, updateCurrentTabName, createNewTab, closeTab, switchTab } from './tabs.js';
+import { initTabs, updateCurrentTabName, createNewTab, closeTab, switchTab, createBackgroundTabForFile, renderTabs } from './tabs.js';
 import { t } from './translations.js';
 import {
     isNativeApp, nativeReadFile, nativeGetCliArgs, nativeListenEvent,
@@ -2899,14 +2899,32 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
     const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
     const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName;
 
-    let firstOpenedTabIndex = -1;
+    if (validEntries.length === 1) {
+        const { file, handle, filePath, buffer } = validEntries[0];
+        if (isCurrentTabEmpty) {
+            await processSystemFileOpen(file, handle, buffer, filePath);
+        } else {
+            createNewTab(file.name, false);
+            await processSystemFileOpen(file, handle, buffer, filePath);
+        }
+        return;
+    }
 
-    for (let i = 0; i < validEntries.length; i++) {
-        const { file, handle, filePath, buffer } = validEntries[i];
+    // MULTIPLE FILES (> 1 file): Keep the current active tab active without switching or churning UI!
+    let startIndex = 0;
+    if (isCurrentTabEmpty) {
+        // Reuse current empty tab for the first file (which is already the active tab)
+        const { file, handle, filePath, buffer } = validEntries[0];
+        await processSystemFileOpen(file, handle, buffer, filePath);
+        startIndex = 1;
+    }
+
+    for (let i = startIndex; i < validEntries.length; i++) {
+        const entry = validEntries[i];
+        const { file, handle, filePath } = entry;
         const currentNum = i + 1;
 
         if (isBatch && batchDialog) {
-            // Processing phase: 50% to 100%
             const pct = Math.round(50 + (currentNum / validEntries.length) * 50);
             if (batchCount) batchCount.textContent = `${currentNum} / ${validEntries.length}`;
             if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
@@ -2917,30 +2935,24 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
                     .replace('{total}', String(validEntries.length))
                     .replace('{filename}', file.name);
             }
-            // CRITICAL: Yield to browser event loop so it paints frame and keeps UI fully responsive!
             await new Promise(resolve => setTimeout(resolve, 0));
         }
 
-        if (i === 0 && isCurrentTabEmpty) {
-            // First file reuses the current empty tab
-            const success = await processSystemFileOpen(file, handle, buffer, filePath);
-            if (success && firstOpenedTabIndex === -1) {
-                firstOpenedTabIndex = state.activeTabIndex;
+        const bgTab = createBackgroundTabForFile(entry);
+        if (filePath) {
+            if (typeof saveRecentFile === 'function') {
+                saveRecentFile(file.name, filePath);
             }
-        } else {
-            // Open in a new tab (inheriting palette from current active tab)
-            createNewTab(file.name, false);
-            const success = await processSystemFileOpen(file, handle, buffer, filePath);
-            if (success && firstOpenedTabIndex === -1) {
-                firstOpenedTabIndex = state.activeTabIndex;
+        } else if (handle) {
+            if (typeof saveRecentFile === 'function') {
+                saveRecentFile(file.name, handle);
             }
         }
+        state.tabs.push(bgTab);
     }
 
-    // Switch to the first loaded file so the user sees the first tab
-    if (firstOpenedTabIndex >= 0 && firstOpenedTabIndex !== state.activeTabIndex) {
-        switchTab(firstOpenedTabIndex);
-    }
+    // Update tab strip so all newly opened tabs appear
+    renderTabs();
 
     if (isBatch && batchDialog) {
         if (batchProgressFill) batchProgressFill.style.width = '100%';

@@ -3,9 +3,9 @@ let currentContextTabIndex = -1;
 
 import { state, Tab, generateId } from './state.js';
 import { updateUIState } from './main.js';
-import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, resetFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, syncStatusCompressionUI, renderReplaceGrid } from './ui.js';
+import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, resetFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, syncStatusCompressionUI, renderReplaceGrid, syncLayerSelection } from './ui.js';
 import { renderHistory } from './history.js';
-import { handleSaveShp, handleSaveAll, saveTmpData } from './file_io.js';
+import { handleSaveShp, handleSaveAll, saveTmpData, populateTabWithShpData, populateTabWithTmpData } from './file_io.js';
 import { t } from './translations.js';
 
 export function initTabs() {
@@ -103,18 +103,10 @@ export function initTabs() {
 
     new ResizeObserver(updateScrollButtons).observe(tabsContainer);
 
-    // Wheel to NAVIGATE between tabs
+    // Wheel to scroll tabs horizontally
     tabsContainer.addEventListener('wheel', (e) => {
         e.preventDefault();
-        if (e.deltaY > 0) {
-            if (state.activeTabIndex < state.tabs.length - 1) {
-                switchTab(state.activeTabIndex + 1);
-            }
-        } else if (e.deltaY < 0) {
-            if (state.activeTabIndex > 0) {
-                switchTab(state.activeTabIndex - 1);
-            }
-        }
+        tabsContainer.scrollLeft += e.deltaY;
     }, { passive: false });
 
     // Component initialization
@@ -129,7 +121,33 @@ export function createNewTab(fileName = null, blankPalette = false) {
     return createNewTabAt(state.tabs.length, fileName, blankPalette);
 }
 
-function createNewTabAt(index, fileName = null, blankPalette = false) {
+export function createBackgroundTabForFile(entry, sourceTab = null) {
+    const { file, handle, filePath, buffer, type } = entry;
+    const fallbackTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : state;
+    const tab = new Tab(generateId(), file.name, sourceTab || fallbackTab);
+    tab.idName = file.name;
+    tab.fileName = file.name;
+    tab.isNewProject = false;
+    tab.filePath = filePath || null;
+    tab.fileHandle = handle || null;
+    tab.fileLastModified = 0;
+    tab.zoom = 1;
+    tab.compression = parseInt(localStorage.getItem('ase_pref_default_comp')) || 3;
+    tab.hasChanges = false;
+    tab.history = [];
+    tab.historyPtr = -1;
+    tab.savedHistoryPtr = -1;
+
+    if (type === 'shp') {
+        const shp = ShpFormat80.parse(buffer);
+        populateTabWithShpData(tab, shp);
+    } else if (type === 'tmp') {
+        populateTabWithTmpData(tab, buffer, file.name);
+    }
+    return tab;
+}
+
+function createNewTabAt(index, fileName = null, blankPalette = false, shouldSwitch = true) {
     const id = generateId();
     let name = fileName;
     let isNewProject = false;
@@ -154,14 +172,30 @@ function createNewTabAt(index, fileName = null, blankPalette = false) {
     tab.zoom = 1; // Always start new tab with default 100% zoom
     tab.compression = parseInt(localStorage.getItem('ase_pref_default_comp')) || 3;
 
+    if (shouldSwitch) {
+        if (state._currentLoadedTab) {
+            state.saveToTab(state._currentLoadedTab);
+        } else if (state.activeTabIndex !== -1 && state.tabs[state.activeTabIndex]) {
+            state.saveToTab(state.tabs[state.activeTabIndex]);
+        }
+    }
+
+    if (!shouldSwitch && state.activeTabIndex >= index) {
+        state.activeTabIndex++;
+    }
+
     state.tabs.splice(index, 0, tab);
-    switchTab(index);
+    if (shouldSwitch) {
+        switchTab(index);
+    }
     return tab;
 }
 
 function duplicateTabAt(index) {
     const source = state.tabs[index];
-    if (index === state.activeTabIndex) state.saveToTab(source);
+    if (index === state.activeTabIndex || state._currentLoadedTab === source) {
+        state.saveToTab(source);
+    }
 
     const clone = structuredClone(source);
     clone.id = generateId();
@@ -173,8 +207,12 @@ function duplicateTabAt(index) {
     clone.isNewProject = true;
     clone.idName = source.idName ? `${source.idName} (Copy)` : `New File ${++state.newFileCounter}`;
 
-    state.tabs.splice(index + 1, 0, clone);
-    switchTab(index + 1);
+    const insertIdx = index + 1;
+    if (state.activeTabIndex >= insertIdx) {
+        state.activeTabIndex++;
+    }
+    state.tabs.splice(insertIdx, 0, clone);
+    switchTab(insertIdx);
 }
 
 async function closeOtherTabs(keptIndex) {
@@ -213,6 +251,7 @@ async function closeOtherTabs(keptIndex) {
                 state.saveToTab(tab);
                 if (previousActive !== idx) {
                     state.activeTabIndex = previousActive;
+                    state.loadFromTab(state.tabs[previousActive]);
                 }
                 if (!saveOk) {
                     console.warn('[closeOtherTabs] Save was cancelled for', tabName);
@@ -231,7 +270,7 @@ async function closeOtherTabs(keptIndex) {
     // saveToTab with state belonging to one tab and write it into the kept
     // tab, corrupting its hasChanges / historyPtr / savedHistoryPtr.
     if (state.activeTabIndex >= 0 && state.activeTabIndex < state.tabs.length) {
-        const activeTab = state.tabs[state.activeTabIndex];
+        const activeTab = state._currentLoadedTab || state.tabs[state.activeTabIndex];
         if (activeTab !== kept) {
             state.saveToTab(activeTab);
         }
@@ -243,10 +282,12 @@ async function closeOtherTabs(keptIndex) {
     renderTabs();
     updateUIState();
     updateCanvasSize();
-    renderCanvas();
-    renderOverlay();
+    syncZoomUI();
+    syncStatusCompressionUI();
     renderFramesList(true);
     updateLayersList();
+    renderCanvas();
+    renderOverlay();
     renderPalette();
     renderReplaceGrid();
     if (typeof renderHistory === 'function') renderHistory();
@@ -263,8 +304,8 @@ export function switchTab(index) {
     if (index < 0 || index >= state.tabs.length) return;
 
     // Persist current state before switching, only if switching to a different tab
-    if (state.activeTabIndex !== -1 && state.activeTabIndex !== index && state.tabs[state.activeTabIndex]) {
-        const currentTab = state.tabs[state.activeTabIndex];
+    const currentTab = state._currentLoadedTab || (state.activeTabIndex !== -1 ? state.tabs[state.activeTabIndex] : null);
+    if (currentTab && state.tabs[index] !== currentTab) {
         state.saveToTab(currentTab);
     }
 
@@ -288,22 +329,28 @@ export function switchTab(index) {
         window._lastTmpFilename = newTab.fileName || null;
     }
 
+    // Clamp currentFrameIdx safely
+    state.currentFrameIdx = Math.max(0, Math.min(state.currentFrameIdx || 0, Math.max(0, state.frames.length - 1)));
+
+    // Ensure active layer is synchronized for the new tab's current frame
+    syncLayerSelection();
+
     // Update palette selector UI to match the new active tab
     if (typeof window.syncPaletteSelector === 'function') {
         window.syncPaletteSelector();
     }
 
-    // UI Refresh
+    // UI Refresh: renderFramesList and updateLayersList run before renderCanvas
     resetFramesList(newTab.framesListScrollTop || 0);
     renderTabs();
     updateUIState();
     updateCanvasSize();
     syncZoomUI();
     syncStatusCompressionUI();
-    renderCanvas();
-    renderOverlay();
     renderFramesList(true);
     updateLayersList();
+    renderCanvas();
+    renderOverlay();
     renderPalette();
     renderReplaceGrid();
     if (typeof renderHistory === 'function') renderHistory();
@@ -520,15 +567,19 @@ export async function closeTab(index, e) {
     state.loadFromTab(newActiveTab);
     document.body.classList.toggle('tmp-mode', !!state.isTmpMode);
 
+    state.currentFrameIdx = Math.max(0, Math.min(state.currentFrameIdx || 0, Math.max(0, state.frames.length - 1)));
+    syncLayerSelection();
+
     resetFramesList(newActiveTab ? (newActiveTab.framesListScrollTop || 0) : 0);
     renderTabs();
     updateUIState();
     updateCanvasSize();
     syncZoomUI();
-    renderCanvas();
-    renderOverlay();
+    syncStatusCompressionUI();
     renderFramesList(true);
     updateLayersList();
+    renderCanvas();
+    renderOverlay();
     renderPalette();
     if (typeof renderHistory === 'function') renderHistory();
 }

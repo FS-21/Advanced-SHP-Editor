@@ -216,11 +216,17 @@ export const state = {
     tabs: [],
     activeTabIndex: -1,
     newFileCounter: 0,
+    _currentLoadedTab: null,
+    hasChanges: false,
+    savedHistoryPtr: -1,
+    gameType: 'ra2',
+    framesListScrollTop: 0,
 
     fileHandle: null,
     filePath: null,
 
     saveToTab(tab) {
+        tab = tab || this._currentLoadedTab || (this.activeTabIndex >= 0 ? this.tabs[this.activeTabIndex] : null);
         if (!tab) return;
         const wrapper = document.getElementById('canvasWrapper');
         if (wrapper && wrapper.parentElement) {
@@ -234,13 +240,14 @@ export const state = {
         const ignoredKeys = [
             'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
-            'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard'
+            'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard',
+            'tabs', 'activeTabIndex', 'newFileCounter', '_currentLoadedTab', 'saveToTab', 'loadFromTab'
         ];
         const dummy = new Tab('dummy');
         const keys = Object.keys(dummy);
         keys.forEach(k => {
             if (ignoredKeys.includes(k)) return;
-            tab[k] = this[k];
+            if (this[k] !== undefined) tab[k] = this[k];
         });
         if (this.fileHandle !== undefined && this.fileHandle !== null) tab.fileHandle = this.fileHandle;
         if (this.filePath !== undefined && this.filePath !== null) tab.filePath = this.filePath;
@@ -252,16 +259,18 @@ export const state = {
 
     loadFromTab(tab) {
         if (!tab) return;
+        this._currentLoadedTab = tab;
         const ignoredKeys = [
             'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
-            'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard'
+            'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard',
+            'tabs', 'activeTabIndex', 'newFileCounter', '_currentLoadedTab', 'saveToTab', 'loadFromTab'
         ];
         const dummy = new Tab('dummy');
         const keys = Object.keys(dummy);
         keys.forEach(k => {
             if (ignoredKeys.includes(k)) return;
-            this[k] = tab[k];
+            if (tab[k] !== undefined) this[k] = tab[k];
         });
         this.fileHandle = tab.fileHandle || null;
         this.filePath = tab.filePath || null;

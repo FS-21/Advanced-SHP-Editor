@@ -11,49 +11,29 @@ import { t } from './translations.js';
 import { isNativeApp, nativeReadFile, nativeWriteFile, nativeOpenFileDialog, nativeSaveFileDialog, nativeGetFileModifiedTime, nativeResolveDroppedFiles } from './native_bridge.js';
 import { getRecentFilePathByName } from './menu_handlers.js';
 
-export function loadShpData(shp) {
-    // Reset TMP mode when loading a regular SHP
-    state.isTmpMode = false;
-    state.tmpHeader = null;
-    state.originalTmpTiles = null;
-    state.tmpFilename = null;
-    state.tmpFullZPreviewActive = false;
-    document.body.classList.remove('tmp-mode');
-    
-    // Reset Game Grid state and sync controls
-    state.isoGrid = 'none';
-    const cbIsoGrid = document.getElementById('cbIsoGrid');
-    if (cbIsoGrid) cbIsoGrid.checked = false;
-    const selIsoGrid = document.getElementById('selIsoGrid');
-    if (selIsoGrid) selIsoGrid.value = 'none';
+export function populateTabWithShpData(tab, shp) {
+    if (!tab || !shp) return;
+    tab.isTmpMode = false;
+    tab.tmpHeader = null;
+    tab.originalTmpTiles = null;
+    tab.tmpFilename = null;
+    tab.tmpFullZPreviewActive = false;
+    tab.isoGrid = 'none';
+    tab.useShadows = false;
+    tab.showShadowOverlay = false;
+    tab.isAlphaImageMode = false;
+    tab.selection = null;
+    tab.floatingSelection = null;
+    tab.fmSplitActive = false;
+    tab.fmNewFrames = [];
+    tab.fmActiveSection = 'original';
 
-    // Reset Shadows & Alpha Image Modes
-    state.useShadows = false;
-    state.showShadowOverlay = false;
-    state.isAlphaImageMode = false;
-
-    // Reset Replace Feature settings
-    state.replacePairs = [];
-    state.replaceSelection = new Set();
-    state.isPickingForReplace = null;
-    state.isPreviewingReplacement = false;
-    state.isReplacePreviewActive = false;
-    if (elements.btnPickReplaceSrc) elements.btnPickReplaceSrc.classList.remove('picker-active');
-    if (elements.btnPickReplaceTgt) elements.btnPickReplaceTgt.classList.remove('picker-active');
-    document.body.classList.remove('picking-mode');
-
-    console.time("SHP Initialization");
-    resetFramesList();
-
-    // Optimization: Pre-calculate constants to avoid property access in loops
     const sw = shp.width;
     const sh = shp.height;
     const totalPixels = sw * sh;
 
-    state.frames = shp.frames.map(f => {
+    tab.frames = shp.frames.map(f => {
         let fullData;
-
-        // Optimization: If frame matches canvas size exactly and is at (0,0), skip re-mapping
         if (f.width === sw && f.height === sh && f.x === 0 && f.y === 0) {
             fullData = f.originalIndices;
         } else {
@@ -97,66 +77,65 @@ export function loadShpData(shp) {
         };
     });
 
-    // Set SHP Format and Compression Default
-    state.shpFormat = shp.formatType || 'ts_ra2';
-    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-        state.tabs[state.activeTabIndex].shpFormat = state.shpFormat;
-    }
-
-    if (state.frames.length > 0) {
-        const comp = state.frames[0].compression;
+    tab.shpFormat = shp.formatType || 'ts_ra2';
+    if (tab.frames.length > 0) {
+        const comp = tab.frames[0].compression;
         let normalizedComp;
-        if (state.shpFormat === 'td_ra') {
+        if (tab.shpFormat === 'td_ra') {
             normalizedComp = (comp === 0) ? 0 : ((comp === 4 || comp === 40 || comp === 2) ? 40 : 80);
         } else {
             normalizedComp = (comp === 1 || comp === 0) ? 1 : 3;
         }
-        state.compression = normalizedComp;
-        if (elements.selExpShpType) elements.selExpShpType.value = normalizedComp.toString();
-        if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
-            state.tabs[state.activeTabIndex].compression = normalizedComp;
-        }
-        syncStatusCompressionUI();
+        tab.compression = normalizedComp;
     }
 
-    state.canvasW = sw;
-    state.canvasH = sh;
-    state.currentFrameIdx = 0;
+    tab.canvasW = sw;
+    tab.canvasH = sh;
+    tab.currentFrameIdx = 0;
 
-    if (state.frames.length > 0 && state.frames[0].layers.length > 0) {
-        state.activeLayerId = state.frames[0].layers[0].id;
+    if (tab.frames.length > 0 && tab.frames[0].layers.length > 0) {
+        tab.activeLayerId = tab.frames[0].layers[0].id;
     }
+}
 
-    // Note: state.history and state.historyPtr are managed by the caller
-    // (e.g. openRecentFile, import dialog handlers) so that per-tab history
-    // is preserved when loading into a new tab.
-
-    // Reset UI and Frame Manager State completely
-    state.selection = null;
-    state.floatingSelection = null;
+export function loadShpData(shp) {
+    document.body.classList.remove('tmp-mode');
+    document.body.classList.remove('picking-mode');
     
-    // Frame Manager Interface Reset
-    state.fmSplitActive = false;
-    state.fmNewFrames = [];
-    state.fmActiveSection = 'original';
-    state.fmNewFilename = "NewFile";
-    state.fmViewMode = 'mosaic';
-    state.fmRelIndex = false;
-    state.fmSplitRatio = 0.5;
+    // Reset Game Grid state and sync controls
+    const cbIsoGrid = document.getElementById('cbIsoGrid');
+    if (cbIsoGrid) cbIsoGrid.checked = false;
+    const selIsoGrid = document.getElementById('selIsoGrid');
+    if (selIsoGrid) selIsoGrid.value = 'none';
 
-    // Force UI to sync if dialog is open
+    // Reset Replace Feature settings
+    state.replacePairs = [];
+    state.replaceSelection = new Set();
+    state.isPickingForReplace = null;
+    state.isPreviewingReplacement = false;
+    state.isReplacePreviewActive = false;
+    if (elements.btnPickReplaceSrc) elements.btnPickReplaceSrc.classList.remove('picker-active');
+    if (elements.btnPickReplaceTgt) elements.btnPickReplaceTgt.classList.remove('picker-active');
+
+    console.time("SHP Initialization");
+    resetFramesList();
+
+    const activeTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+    populateTabWithShpData(state, shp);
+    if (activeTab) {
+        populateTabWithShpData(activeTab, shp);
+    }
+
+    if (elements.selExpShpType) elements.selExpShpType.value = (state.compression !== undefined ? state.compression : 3).toString();
+    syncStatusCompressionUI();
+
     renderFrameManager();
-
     updateCanvasSize();
-
-    // UI Updates: renderFramesList is the MAJOR bottleneck. 
-    // We will optimize it in ui.js to use virtualization.
     renderFramesList();
     updateLayersList();
     renderCanvas();
     showEditorInterface();
     if (typeof window.updateUIState === 'function') window.updateUIState();
-
 
     console.timeEnd("SHP Initialization");
 }
@@ -1715,6 +1694,107 @@ export async function handleClipboardPaste(input) {
 /** TMP extension list */
 export const TMP_EXTENSIONS = ['tem', 'sno', 'urb', 'des', 'lun', 'ubn'];
 
+export function populateTabWithTmpData(tab, buffer, filename) {
+    if (!tab || !buffer) return false;
+    if (buffer && ArrayBuffer.isView(buffer)) {
+        buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    }
+
+    let parsed;
+    try {
+        parsed = TmpTsFile.parse(buffer);
+    } catch (err) {
+        console.error('Error parsing TMP file:', err);
+        return false;
+    }
+
+    const { header, tiles } = parsed;
+    const { cx, cy } = header;
+
+    tab.isTmpMode = true;
+    tab.tmpHeader = header;
+    tab.originalTmpTiles = tiles.map(t => t ? { ...t } : null); // shallow clone per tile
+    tab.tmpFilename = filename;
+
+    // Build frames[] from tile components
+    const frames = [];
+    for (let i = 0; i < tiles.length; i++) {
+        const tile = tiles[i];
+        if (!tile) continue;
+        const th = tile.tileHeader;
+
+        // --- Main tile image (diamond → rect) ---
+        const mainRect = TmpTsFile.decodeTileDiamond(tile.data, cx, cy, 0);
+        const mainData = new Uint16Array(cx * cy);
+        for (let k = 0; k < mainRect.length; k++) mainData[k] = mainRect[k];
+        frames.push({
+            id: generateId(),
+            width: cx, height: cy, duration: 100, _v: 0,
+            tmpMeta: { tileSlot: i, component: 'main' },
+            layers: [{ type: 'layer', id: generateId(), name: 'Base', data: mainData, visible: true, width: cx, height: cy }]
+        });
+
+        // --- Z-data (diamond → rect) ---
+        if (th.has_z_data && tile.zData) {
+            const zRect = TmpTsFile.decodeTileDiamond(tile.zData, cx, cy, 0);
+            const zData = new Uint16Array(cx * cy);
+            for (let k = 0; k < zRect.length; k++) zData[k] = zRect[k];
+            frames.push({
+                id: generateId(),
+                width: cx, height: cy, duration: 100, _v: 0,
+                tmpMeta: { tileSlot: i, component: 'zdata' },
+                layers: [{ type: 'layer', id: generateId(), name: 'Z-Data', data: zData, visible: true, width: cx, height: cy }]
+            });
+        }
+
+        // --- Extra image (already rectangular) ---
+        if (th.has_extra_data && tile.extraImageData && th.cx_extra > 0 && th.cy_extra > 0) {
+            const ew = th.cx_extra, eh = th.cy_extra;
+            const extraData = new Uint16Array(ew * eh);
+            for (let k = 0; k < tile.extraImageData.length; k++) extraData[k] = tile.extraImageData[k];
+            frames.push({
+                id: generateId(),
+                width: ew, height: eh, duration: 100, _v: 0,
+                tmpMeta: { tileSlot: i, component: 'extra' },
+                layers: [{ type: 'layer', id: generateId(), name: 'Extra', data: extraData, visible: true, width: ew, height: eh }]
+            });
+
+            // --- Extra Z-data ---
+            if (th.has_z_data && tile.extraZData) {
+                const extraZData = new Uint16Array(ew * eh);
+                for (let k = 0; k < tile.extraZData.length; k++) extraZData[k] = tile.extraZData[k];
+                frames.push({
+                    id: generateId(),
+                    width: ew, height: eh, duration: 100, _v: 0,
+                    tmpMeta: { tileSlot: i, component: 'extrazdata' },
+                    layers: [{ type: 'layer', id: generateId(), name: 'Extra Z', data: extraZData, visible: true, width: ew, height: eh }]
+                });
+            }
+        }
+    }
+
+    tab.frames = frames;
+    tab.currentFrameIdx = 0;
+
+    // Canvas size = first frame's dimensions
+    if (frames.length > 0) {
+        tab.canvasW = frames[0].width;
+        tab.canvasH = frames[0].height;
+        tab.activeLayerId = frames[0].layers[0].id;
+    } else {
+        tab.canvasW = cx;
+        tab.canvasH = cy;
+    }
+
+    tab.selection = null;
+    tab.floatingSelection = null;
+    tab.useShadows = false;
+    tab.showShadowOverlay = false;
+    tab.isAlphaImageMode = false;
+    tab.tmpFullZPreviewActive = false;
+    return true;
+}
+
 /**
  * Load a TS/RA2 TMP file into the editor.
  * Populates state.frames with one entry per editable tile component.
@@ -1725,22 +1805,20 @@ export function loadTmpData(buffer, filename, skipPaletteAutoselect = false) {
     console.time('TMP Initialization');
     resetFramesList();
 
-    if (buffer && ArrayBuffer.isView(buffer)) {
-        buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-    }
-
-    let parsed;
-    try {
-        parsed = TmpTsFile.parse(buffer);
-    } catch (err) {
-        alert('Error parsing TMP file: ' + err.message);
-        console.error(err);
+    const ok = populateTabWithTmpData(state, buffer, filename);
+    if (!ok) {
+        alert('Error parsing TMP file.');
         return;
     }
 
-    const { header, tiles } = parsed;
-    const { cx, cy } = header;
+    const activeTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+    if (activeTab) {
+        populateTabWithTmpData(activeTab, buffer, filename);
+    }
 
+    document.body.classList.add('tmp-mode');
+
+    const cx = state.tmpHeader?.cx || 60;
     // Autoselect palette if not manually selected by the user
     if (!state.paletteSelectedManually && !skipPaletteAutoselect && filename) {
         const ext = filename.split('.').pop().toLowerCase();
@@ -1776,93 +1854,6 @@ export function loadTmpData(buffer, filename, skipPaletteAutoselect = false) {
             }
         }
     }
-
-    // Activate TMP mode
-    state.isTmpMode = true;
-    state.tmpHeader = header;
-    state.originalTmpTiles = tiles.map(t => t ? { ...t } : null); // shallow clone per tile
-    state.tmpFilename = filename;
-    document.body.classList.add('tmp-mode');
-
-    // Build frames[] from tile components
-    const frames = [];
-    for (let i = 0; i < tiles.length; i++) {
-        const tile = tiles[i];
-        if (!tile) continue;
-        const th = tile.tileHeader;
-
-        // --- Main tile image (diamond → rect) ---
-        const mainRect = TmpTsFile.decodeTileDiamond(tile.data, cx, cy, 0);
-        const mainData = new Uint16Array(cx * cy);
-        for (let k = 0; k < mainRect.length; k++) mainData[k] = mainRect[k];
-        frames.push({
-            id: generateId(),
-            width: cx, height: cy, duration: 100, _v: 0,
-            tmpMeta: { tileSlot: i, component: 'main' },
-            layers: [{ type: 'layer', id: generateId(), name: 'Base', data: mainData, visible: true, width: cx, height: cy }]
-        });
-
-        // --- Z-data (diamond → rect) ---
-        if (th.has_z_data && tile.zData) {
-            const zRect = TmpTsFile.decodeTileDiamond(tile.zData, cx, cy, 0);
-            const zData = new Uint16Array(cx * cy);
-            for (let k = 0; k < zRect.length; k++) zData[k] = zRect[k];
-            frames.push({
-                id: generateId(),
-                width: cx, height: cy, duration: 100, _v: 0,
-                tmpMeta: { tileSlot: i, component: 'zdata' },
-                layers: [{ type: 'layer', id: generateId(), name: 'Z-Data', data: zData, visible: true, width: cx, height: cy }]
-            });
-        }
-
-
-        // --- Extra image (already rectangular) ---
-        if (th.has_extra_data && tile.extraImageData && th.cx_extra > 0 && th.cy_extra > 0) {
-            const ew = th.cx_extra, eh = th.cy_extra;
-            const extraData = new Uint16Array(ew * eh);
-            for (let k = 0; k < tile.extraImageData.length; k++) extraData[k] = tile.extraImageData[k];
-            frames.push({
-                id: generateId(),
-                width: ew, height: eh, duration: 100, _v: 0,
-                tmpMeta: { tileSlot: i, component: 'extra' },
-                layers: [{ type: 'layer', id: generateId(), name: 'Extra', data: extraData, visible: true, width: ew, height: eh }]
-            });
-
-            // --- Extra Z-data ---
-            if (th.has_z_data && tile.extraZData) {
-                const extraZData = new Uint16Array(ew * eh);
-                for (let k = 0; k < tile.extraZData.length; k++) extraZData[k] = tile.extraZData[k];
-                frames.push({
-                    id: generateId(),
-                    width: ew, height: eh, duration: 100, _v: 0,
-                    tmpMeta: { tileSlot: i, component: 'extrazdata' },
-                    layers: [{ type: 'layer', id: generateId(), name: 'Extra Z', data: extraZData, visible: true, width: ew, height: eh }]
-                });
-            }
-        }
-    }
-
-    state.frames = frames;
-    state.currentFrameIdx = 0;
-
-    // Canvas size = first frame's dimensions
-    if (frames.length > 0) {
-        state.canvasW = frames[0].width;
-        state.canvasH = frames[0].height;
-        state.activeLayerId = frames[0].layers[0].id;
-    } else {
-        state.canvasW = cx;
-        state.canvasH = cy;
-    }
-
-    // Note: state.history and state.historyPtr are managed by the caller
-    // (e.g. openRecentFile, import dialog handlers) so that per-tab history
-    // is preserved when loading into a new tab.
-    state.selection = null;
-    state.floatingSelection = null;
-    state.useShadows = false;
-    state.showShadowOverlay = false;
-    state.isAlphaImageMode = false;
     state.tmpFullZPreviewActive = false;
     state.fmSplitActive = false;
     state.fmNewFrames = [];

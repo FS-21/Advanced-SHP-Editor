@@ -189,7 +189,7 @@ export function applyPaletteFromEntry(entry, isManual = true) {
 // ─────────────────────────────────────────────────────────────
 // USAGE TRACKING & PINNING
 // ─────────────────────────────────────────────────────────────
-function recordUsage(libEntry) {
+export function recordUsage(libEntry) {
     const lib = getLib();
     // Update count
     lib.usageCount[libEntry.id] = (lib.usageCount[libEntry.id] || 0) + 1;
@@ -469,7 +469,7 @@ function createPaletteStrip(node) {
     }
 }
 
-function refreshPalettesMenuDynamic() {
+export function refreshPalettesMenuDynamic() {
     const lib = getLib();
     const dropdownId = 'palettesMenuDropdown';
     const dropdown = document.getElementById(dropdownId);
@@ -1879,6 +1879,7 @@ export function syncPaletteSelector() {
     });
 }
 window.syncPaletteSelector = syncPaletteSelector;
+export const syncPaletteSelectorWithActiveTab = syncPaletteSelector;
 
 export function getActivePaletteName() {
     if (!_appliedPaletteId) return null;
