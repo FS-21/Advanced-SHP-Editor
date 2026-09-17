@@ -2255,7 +2255,8 @@ input[type="number"]:focus,
     padding: 0 10px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    z-index: 50;
+    position: relative;
+    z-index: 25000;
 }
 
 .toolbar-horizontal {
@@ -3350,11 +3351,18 @@ input[type="number"]:focus,
     height: 32px;
     align-items: center;
     border-bottom: 1px solid var(--border);
+    position: relative;
+    z-index: 25001;
 }
 
 .menu-item {
     position: relative;
     height: 100%;
+}
+
+.menu-item.active {
+    position: relative;
+    z-index: 25002;
 }
 
 .menu-item.height-auto {
@@ -3388,7 +3396,7 @@ input[type="number"]:focus,
     background-color: var(--bg-panel);
     border: 1px solid var(--border);
     min-width: 320px;
-    z-index: 10000;
+    z-index: 30000;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     padding: 4px 0;
     max-height: 85vh;
@@ -3856,6 +3864,7 @@ input[type=number] {
     top: -5px;
     left: 100%;
     margin-left: -1px;
+    z-index: 30001;
 }
 
 .arrow {
