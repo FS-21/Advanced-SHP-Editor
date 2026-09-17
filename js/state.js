@@ -23,6 +23,7 @@ export class Tab {
         this.zoom = initialState ? (initialState.zoom || 1) : 1;
         this.scrollLeft = (initialState && initialState.scrollLeft !== undefined) ? initialState.scrollLeft : 0;
         this.scrollTop = (initialState && initialState.scrollTop !== undefined) ? initialState.scrollTop : 0;
+        this.framesListScrollTop = (initialState && initialState.framesListScrollTop !== undefined) ? initialState.framesListScrollTop : 0;
         this.isPlaying = false;
         this.playTimer = null;
         this.canvasW = 60;
@@ -226,6 +227,10 @@ export const state = {
             this.scrollLeft = wrapper.parentElement.scrollLeft;
             this.scrollTop = wrapper.parentElement.scrollTop;
         }
+        const framesListEl = document.getElementById('framesList');
+        if (framesListEl) {
+            tab.framesListScrollTop = framesListEl.scrollTop;
+        }
         const ignoredKeys = [
             'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
@@ -277,6 +282,10 @@ export const state = {
         if (wrapper && wrapper.parentElement && tab.scrollLeft !== undefined) {
             wrapper.parentElement.scrollLeft = tab.scrollLeft;
             wrapper.parentElement.scrollTop = tab.scrollTop;
+        }
+        const framesListEl = document.getElementById('framesList');
+        if (framesListEl && tab.framesListScrollTop !== undefined) {
+            framesListEl.scrollTop = tab.framesListScrollTop;
         }
     }
 };

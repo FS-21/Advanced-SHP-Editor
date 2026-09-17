@@ -3,7 +3,7 @@ let currentContextTabIndex = -1;
 
 import { state, Tab, generateId } from './state.js';
 import { updateUIState } from './main.js';
-import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, syncStatusCompressionUI, renderReplaceGrid } from './ui.js';
+import { renderCanvas, updateLayersList, renderPalette, updateCanvasSize, renderFramesList, resetFramesList, renderOverlay, showConfirm, showChoice, syncZoomUI, syncStatusCompressionUI, renderReplaceGrid } from './ui.js';
 import { renderHistory } from './history.js';
 import { handleSaveShp, handleSaveAll, saveTmpData } from './file_io.js';
 import { t } from './translations.js';
@@ -239,12 +239,13 @@ async function closeOtherTabs(keptIndex) {
     state.tabs = [kept];
     state.activeTabIndex = 0;
     state.loadFromTab(kept);
+    resetFramesList(kept ? (kept.framesListScrollTop || 0) : 0);
     renderTabs();
     updateUIState();
     updateCanvasSize();
     renderCanvas();
     renderOverlay();
-    renderFramesList();
+    renderFramesList(true);
     updateLayersList();
     renderPalette();
     renderReplaceGrid();
@@ -293,6 +294,7 @@ export function switchTab(index) {
     }
 
     // UI Refresh
+    resetFramesList(newTab.framesListScrollTop || 0);
     renderTabs();
     updateUIState();
     updateCanvasSize();
@@ -300,7 +302,7 @@ export function switchTab(index) {
     syncStatusCompressionUI();
     renderCanvas();
     renderOverlay();
-    renderFramesList();
+    renderFramesList(true);
     updateLayersList();
     renderPalette();
     renderReplaceGrid();
@@ -518,13 +520,14 @@ export async function closeTab(index, e) {
     state.loadFromTab(newActiveTab);
     document.body.classList.toggle('tmp-mode', !!state.isTmpMode);
 
+    resetFramesList(newActiveTab ? (newActiveTab.framesListScrollTop || 0) : 0);
     renderTabs();
     updateUIState();
     updateCanvasSize();
     syncZoomUI();
     renderCanvas();
     renderOverlay();
-    renderFramesList();
+    renderFramesList(true);
     updateLayersList();
     renderPalette();
     if (typeof renderHistory === 'function') renderHistory();

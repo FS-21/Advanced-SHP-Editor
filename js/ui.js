@@ -2104,7 +2104,7 @@ export const FRAME_ITEM_HEIGHT = 68; // Standard height for frame thumbnails in 
 export const thumbCache = new WeakMap();
 
 let _framesListRenderPending = false;
-export function renderFramesList() {
+export function renderFramesList(immediate = false) {
     if (state.isTmpMode) {
         renderTmpComponentsList();
         return;
@@ -2122,6 +2122,11 @@ export function renderFramesList() {
         sidebarTitle.textContent = (typeof window.t === 'function' ? window.t('sidebar_frames') : null) || 'Frames';
     }
     if (!elements.framesList) return;
+    if (immediate) {
+        _framesListRenderPending = false;
+        _renderFramesListImmediate();
+        return;
+    }
     if (_framesListRenderPending) return;
     _framesListRenderPending = true;
     requestAnimationFrame(() => {
@@ -2157,6 +2162,7 @@ function _renderFramesListImmediate() {
         elements.framesList._hasScrollListener = true;
     }
 
+    const currentTabId = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex].id : 'active';
     const totalFrames = state.frames.length;
     const containerHeight = elements.framesList.clientHeight || 500;
     const scrollTop = elements.framesList.scrollTop;
@@ -2172,6 +2178,11 @@ function _renderFramesListImmediate() {
         wrapper.className = 'frames-v-wrapper';
         wrapper.style.position = 'relative';
         elements.framesList.appendChild(wrapper);
+    }
+    // Isolate wrapper DOM per tab: if tab switched, flush old elements immediately
+    if (wrapper.dataset.tabId !== currentTabId) {
+        wrapper.innerHTML = '';
+        wrapper.dataset.tabId = currentTabId;
     }
     wrapper.style.height = (totalFrames * FRAME_ITEM_HEIGHT) + 'px';
 
@@ -2308,10 +2319,11 @@ function _renderFramesListImmediate() {
             if (numEl) numEl.textContent = displayIdx;
         }
 
-        if (thumbContainer._frameId !== i || thumbContainer._frameVersion !== (frame._v || 0) || thumbContainer._palVersion !== state.paletteVersion) {
+        if (thumbContainer._frameRef !== frame || thumbContainer._frameId !== i || thumbContainer._frameVersion !== (frame._v || 0) || thumbContainer._palVersion !== state.paletteVersion) {
             thumbContainer.innerHTML = '';
             const c = createFrameThumbnail(frame, 105, 68, { backgroundIdx: 0 }); // backgroundIdx:0 matches save output
             thumbContainer.appendChild(c);
+            thumbContainer._frameRef = frame;
             thumbContainer._frameId = i;
             thumbContainer._frameVersion = (frame._v || 0);
             thumbContainer._palVersion = state.paletteVersion;
@@ -2319,7 +2331,7 @@ function _renderFramesListImmediate() {
     }
 }
 
-export function resetFramesList() {
+export function resetFramesList(targetScrollTop = 0) {
     const titleEl = document.getElementById('sidebarFramesTitle');
     if (titleEl) {
         const t = (key) => {
@@ -2336,8 +2348,11 @@ export function resetFramesList() {
     if (elements.framesList) {
         elements.framesList.style.display = 'block';
         const wrapper = elements.framesList.querySelector('.frames-v-wrapper');
-        if (wrapper) wrapper.innerHTML = '';
-        elements.framesList.scrollTop = 0;
+        if (wrapper) {
+            wrapper.innerHTML = '';
+            wrapper.dataset.tabId = '';
+        }
+        elements.framesList.scrollTop = targetScrollTop;
     }
 }
 
