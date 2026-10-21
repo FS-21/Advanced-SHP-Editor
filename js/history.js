@@ -89,6 +89,16 @@ export function cloneLayerNode(node) {
         _v: node._v || 0
     };
 
+    if (node.cgLockedName) {
+        cloned.cgLockedName = true;
+    }
+    if (node.cgMeta) {
+        cloned.cgMeta = { ...node.cgMeta };
+        if (node.cgMeta.initialData instanceof Uint16Array) {
+            cloned.cgMeta.initialData = new Uint16Array(node.cgMeta.initialData);
+        }
+    }
+
     if (node.type === 'external_shp') {
         cloned.extWidth = node.extWidth;
         cloned.extHeight = node.extHeight;

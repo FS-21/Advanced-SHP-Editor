@@ -2806,6 +2806,7 @@ export async function showLayerPropertiesDialog(node) {
 
     // Populate fields
     nameInput.value = node.name || '';
+    nameInput.disabled = !!node.cgLockedName;
     visibleCb.checked = node.visible !== false;
     ghostingCb.checked = !!node.ghosting;
 
@@ -3748,7 +3749,9 @@ export async function openActiveLayerProperties(node = null) {
 
     const result = await showLayerPropertiesDialog(node);
     if (result) {
-        node.name = result.name;
+        if (!node.cgLockedName) {
+            node.name = result.name;
+        }
         node.visible = result.visible;
         node.ghosting = result.ghosting;
         node.ghostOpacity = result.ghostOpacity;
@@ -3862,6 +3865,8 @@ export function duplicateLayer(layerId = null) {
     // 2. Assign fresh IDs recursively to the new branch
     const assignNewIds = (n) => {
         n.id = generateId();
+        delete n.cgLockedName;
+        delete n.cgMeta;
         if (n.children) n.children.forEach(assignNewIds);
         if (n.layers) n.layers.forEach(assignNewIds);
     };
@@ -5471,7 +5476,7 @@ export function getNextDuplicateName(existingNames, originalName) {
 
     const appender = " - (\\d+)$";
     const regex = new RegExp("^" + escapeRegExp(base) + appender);
-    let max = 1;
+    let max = 0;
 
     existingNames.forEach(n => {
         const m = n.match(regex);

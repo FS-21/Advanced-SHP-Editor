@@ -4258,10 +4258,6 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
                         <span style="font-size:11px; font-weight:700; color:#a0aec0; text-transform:uppercase;" data-i18n="cg_lbl_live_preview">Live Pixel Preview</span>
                         <div style="display:flex; align-items:center; gap:10px;">
-                            <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e0; cursor:pointer;">
-                                <input type="checkbox" id="cgChkShowGrid">
-                                <span data-i18n="cg_chk_show_grid">Text Alignment Grid</span>
-                            </label>
                             <div class="unified-stepper unified-stepper-small">
                                 <button type="button" id="btnCgPreviewZoomReset" class="status-zoom-btn" title="Restore Zoom (100%)"
                                     data-i18n-title="tooltip_zoom_reset"
@@ -4314,11 +4310,12 @@
                             <button id="cgBtnOpenNewTab" class="btn btn-primary" style="flex:1; height:30px; font-size:11px; font-weight:700;" data-i18n="cg_btn_open_new_tab" data-i18n-title="tt_cg_btn_open_new_tab">Open in New SHP Tab</button>
                             <button id="cgBtnInsertFrame" class="btn" style="flex:1; height:30px; font-size:11px; background:#2b6cb0; color:#fff; display:none;" data-i18n="cg_btn_insert_frame" data-i18n-title="tt_cg_btn_insert_frame">Insert Frame</button>
                         </div>
-                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">
-                            <button id="cgBtnExportShp" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_shp" data-i18n-title="tt_cg_btn_export_shp">💾 Save .SHP</button>
-                            <button id="cgBtnExportPcx" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_pcx" data-i18n-title="tt_cg_btn_export_pcx">💾 Save .PCX</button>
-                            <button id="cgBtnExportPng" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_png" data-i18n-title="tt_cg_btn_export_png">💾 Save .PNG</button>
-                            <button id="cgBtnCopyClipboard" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_copy" data-i18n-title="tt_cg_btn_copy">📋 Copy</button>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                            <button id="cgBtnExportShp" class="btn" style="flex:1 1 78px; height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_shp" data-i18n-title="tt_cg_btn_export_shp">💾 Save .SHP</button>
+                            <button id="cgBtnExportPcx" class="btn" style="flex:1 1 78px; height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_pcx" data-i18n-title="tt_cg_btn_export_pcx">💾 Save .PCX</button>
+                            <button id="cgBtnExportPng" class="btn" style="flex:1 1 78px; height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_png" data-i18n-title="tt_cg_btn_export_png">💾 Save .PNG</button>
+                            <button id="cgBtnExportPdn" class="btn" style="flex:1 1 78px; height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_pdn" data-i18n-title="tt_cg_btn_export_pdn">💾 Save .PDN</button>
+                            <button id="cgBtnCopyClipboard" class="btn" style="flex:1 1 68px; height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_copy" data-i18n-title="tt_cg_btn_copy">📋 Copy</button>
                         </div>
                     </div>
                 </div>
