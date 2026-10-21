@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>const APP_VERSION = 'v4.1.1';</script>
+    <script>const APP_VERSION = 'v4.2.0';</script>
     <script>
         // CnCReloadedMode: Defaults to true (standard on web), user-toggleable via Preferences
         const _savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
@@ -909,6 +909,13 @@
                             <span class="menu-icon"
                                 style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">🏛️</span><span
                                 data-i18n="menu_ares_foundation">Ares Custom Foundation...</span>
+                        </div>
+                        <div id="menuCameoGenerator" class="menu-action" data-i18n-title="tt_menu_cameo_generator">
+                            <span class="menu-icon"
+                                style="font-size:11px; display:flex; align-items:center; justify-content:center; filter:none !important;">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="M2 15h20"></path><path d="M8 10l4-3 4 3"></path></svg>
+                            </span><span
+                                data-i18n="menu_cameo_generator">Cameo Generator...</span>
                         </div>
                         <div class="menu-divider"></div>
                         <div id="menuConvertPalette" class="menu-action" data-i18n-title="tt_menu_convert_palette">
@@ -3159,7 +3166,7 @@
                     <h3 style="color: var(--accent); margin: 0; font-size: 16px; letter-spacing: 1px; font-family: monospace;" data-i18n="dlg_about_title">
                         ABOUT ADVANCED SHP EDITOR
                     </h3>
-                    <span style="background: rgba(0, 255, 157, 0.15); color: #00ff9d; border: 1px solid #00ff9d; font-size: 11px; font-family: monospace; padding: 1px 7px; border-radius: 4px; font-weight: bold;">v3.0</span>
+                    <span id="aboutVersionBadge" style="background: rgba(0, 255, 157, 0.15); color: #00ff9d; border: 1px solid #00ff9d; font-size: 11px; font-family: monospace; padding: 1px 7px; border-radius: 4px; font-weight: bold;">v4.2.0</span>
                 </div>
                 <div style="font-size: 12px; color: #a0aec0; margin-top: 4px; font-family: monospace;" data-i18n="lbl_about_subtitle">
                     A 2D graphics editor &amp; basic Terrain editor for Tiberian Sun &amp; Red Alert 2
@@ -3179,9 +3186,22 @@
         </div>
 
         <!-- Description -->
-        <p style="font-size: 12px; color: #cbd5e0; line-height: 1.55; margin-bottom: 16px;" data-i18n="lbl_about_desc">
+        <p style="font-size: 12px; color: #cbd5e0; line-height: 1.55; margin-bottom: 14px;" data-i18n="lbl_about_desc">
             Advanced SHP Editor is an ultra-fast, feature-complete sprite and terrain editor designed for Command &amp; Conquer: Tiberian Sun and Red Alert 2. It supports Format 80 SHP, SHA, and TMP formats with multi-layer painting, game palette conversion, frame sequences, isometric grids, and high-performance desktop execution.
         </p>
+
+        <!-- Special Thanks & Community Credits -->
+        <div style="margin-bottom: 16px; background: #181d2a; padding: 10px 14px; border-radius: 6px; border: 1px solid #283147;">
+            <div style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; font-family: monospace;" data-i18n="lbl_about_credits_title">
+                Special Thanks &amp; Community Credits:
+            </div>
+            <div style="font-size: 11px; color: #cbd5e0; line-height: 1.55;" data-i18n-html="lbl_about_credits_body">
+                • <b>Banshee &amp; Stucuk</b> (with PaD, VK &amp; Zaaz) — <i>OS SHP Builder</i> reference &amp; 3D RGB Infurium palette engine.<br>
+                • <b>tomsons26lv</b>, <b>Blade</b> &amp; <b>Kravvitz</b> — Cameo chevrons, bevel presets, glass reflections &amp; PDN overlay assets.<br>
+                • <b>ShouBing (Geek-Talk)</b>, <b>Thear</b>, <b>Gluk</b>, <b>Michael Schmidt</b> &amp; <b>SolidZORO</b> — Web cameo reference &amp; BDF pixel fonts.<br>
+                • <b>Olaf van der Spek</b> (<i>XCC Utilities</i>) &amp; the <b>Project Perfect Mod (PPM)</b> community.
+            </div>
+        </div>
 
         <!-- Official GitHub Box -->
         <div style="margin-bottom: 18px; background: #0f111a; padding: 14px; border-radius: 6px; border: 1px solid rgba(0, 255, 157, 0.35);">
@@ -4206,6 +4226,318 @@
                 </div>
             </div>
         </div>
+        </div>
+    </dialog>
+
+    <!-- CAMEO GENERATOR DIALOG -->
+    <dialog id="cameoGeneratorDialog" class="dialog-modal"
+        style="width:100%; height:100dvh; max-width:100%; max-height:100dvh; margin:0; padding:0; border:none; border-radius:0; background:var(--bg-panel); overflow:hidden;">
+        <div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+            <!-- TOP HEADER BAR -->
+            <div class="panel-header" style="justify-content:space-between; align-items:center; padding:8px 16px; border-bottom:1px solid var(--border); flex-shrink:0;">
+                <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                    <h3 data-i18n="dlg_cameo_generator" style="margin:0;">Cameo Generator</h3>
+                    <div style="display:flex; align-items:center; gap:8px; background:#141720; padding:4px 10px; border:1px solid #2d3748; border-radius:4px;">
+                        <label for="cgSelGameType" style="font-size:11px; font-weight:700; color:#38bdf8;" data-i18n="cg_lbl_game_type">Game Type:</label>
+                        <select id="cgSelGameType" class="seq-input" style="height:26px; padding:0 8px; font-size:11px; font-weight:600; min-width:170px;">
+                            <option value="ra2" data-i18n="cg_opt_game_ra2" selected>Red Alert 2 (60x48)</option>
+                            <option value="ts" data-i18n="cg_opt_game_ts">Tiberian Sun (64x48)</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <button id="cgBtnResetWindow" class="btn btn-danger" style="height:26px; padding:0 10px; font-size:11px;" data-i18n="cg_btn_reset_window" data-i18n-title="tt_cg_btn_reset_window">Reset All</button>
+                    <button id="cgBtnClose" class="close-modal close-modal-x">×</button>
+                </div>
+            </div>
+
+            <!-- MAIN WORKSPACE BODY -->
+            <div style="display:flex; flex:1; min-height:0; overflow:hidden;">
+                <!-- LEFT: LARGE INTERACTIVE PREVIEW, ACTIVE ELEMENTS LIST & EXPORT -->
+                <div id="cgPreviewDropZone" style="width:min(460px, 42vw); flex:0 0 min(460px, 42vw); min-width:310px; display:flex; flex-direction:column; gap:10px; padding:12px; border-right:1px solid var(--border); background:#0d0f14; overflow-y:auto;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                        <span style="font-size:11px; font-weight:700; color:#a0aec0; text-transform:uppercase;" data-i18n="cg_lbl_live_preview">Live Pixel Preview</span>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e0; cursor:pointer;">
+                                <input type="checkbox" id="cgChkShowGrid">
+                                <span data-i18n="cg_chk_show_grid">Text Alignment Grid</span>
+                            </label>
+                            <div class="unified-stepper unified-stepper-small">
+                                <button type="button" id="btnCgPreviewZoomReset" class="status-zoom-btn" title="Restore Zoom (100%)"
+                                    data-i18n-title="tooltip_zoom_reset"
+                                    style="border-right: 1px solid #4a5568 !important; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                        <path d="M3 3v5h5"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                </button>
+                                <button type="button" id="btnCgPreviewZoomMinus" class="status-zoom-btn status-zoom-btn-minus"
+                                    title="Zoom Out (Ctrl+Click for -5%)"
+                                    data-i18n-title="tooltip_zoom_minus">−</button>
+                                <div class="status-zoom-slider-container">
+                                    <div id="cgPreviewZoomBar" class="status-zoom-bar"></div>
+                                    <input type="range" id="inpCgPreviewZoom" min="50" max="2000" step="50" value="100"
+                                        class="status-zoom-slider">
+                                    <span id="cgPreviewZoomVal" class="status-zoom-val">100%</span>
+                                </div>
+                                <button type="button" id="btnCgPreviewZoomPlus" class="status-zoom-btn status-zoom-btn-plus"
+                                    title="Zoom In (Ctrl+Click for +5%)"
+                                    data-i18n-title="tooltip_zoom_plus">+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BIG PREVIEW CANVAS VIEWPORT -->
+                    <div id="cgPreviewViewport" class="checkerboard-bg" style="display:flex; align-items:center; justify-content:center; flex:0 0 auto; min-height:66px; max-height:420px; border:1px solid #222632; border-radius:4px; padding:8px; overflow:auto;">
+                        <canvas id="cgPreviewCanvas" width="60" height="48" style="image-rendering:pixelated; cursor:grab; display:block;"></canvas>
+                    </div>
+
+                    <!-- ACTIVE ELEMENTS LIST (SELECT TO DRAG & RESET POSITION) -->
+                    <div style="display:flex; flex-direction:column; gap:6px; background:#141720; border:1px solid #232836; border-radius:4px; padding:8px 10px; flex:1 1 130px; min-height:130px; overflow:hidden;">
+                        <div style="display:flex; align-items:center; justify-content:space-between;">
+                            <span style="font-size:11px; font-weight:700; color:#38bdf8; text-transform:uppercase;" data-i18n="cg_lbl_active_elements">Active Elements (Select to Move on Preview)</span>
+                        </div>
+                        <div style="font-size:10px; color:#718096;" data-i18n="cg_lbl_elements_hint">
+                            Click an element to toggle move mode, then drag it on the preview. Click ↺ to restore its default position.
+                        </div>
+                        <div id="cgActiveElementsList" style="display:flex; flex-direction:column; gap:4px; flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:2px;">
+                            <!-- Populated dynamically by JS -->
+                        </div>
+                    </div>
+
+                    <!-- EXPORT / SAVE ACTIONS -->
+                    <div style="margin-top:auto; display:flex; flex-direction:column; gap:6px; padding-top:8px; border-top:1px solid #232836;">
+                        <div style="display:flex; gap:6px;">
+                            <button id="cgBtnOpenNewTab" class="btn btn-primary" style="flex:1; height:30px; font-size:11px; font-weight:700;" data-i18n="cg_btn_open_new_tab" data-i18n-title="tt_cg_btn_open_new_tab">Open in New SHP Tab</button>
+                            <button id="cgBtnInsertFrame" class="btn" style="flex:1; height:30px; font-size:11px; background:#2b6cb0; color:#fff; display:none;" data-i18n="cg_btn_insert_frame" data-i18n-title="tt_cg_btn_insert_frame">Insert Frame</button>
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">
+                            <button id="cgBtnExportShp" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_shp" data-i18n-title="tt_cg_btn_export_shp">💾 Save .SHP</button>
+                            <button id="cgBtnExportPcx" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_pcx" data-i18n-title="tt_cg_btn_export_pcx">💾 Save .PCX</button>
+                            <button id="cgBtnExportPng" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_export_png" data-i18n-title="tt_cg_btn_export_png">💾 Save .PNG</button>
+                            <button id="cgBtnCopyClipboard" class="btn" style="height:28px; font-size:11px; padding:0 4px; white-space:nowrap;" data-i18n="cg_btn_copy" data-i18n-title="tt_cg_btn_copy">📋 Copy</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT: SETTINGS & LAYER CONTROLS -->
+                <div style="flex:1; min-width:0; padding:14px 16px; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:12px; font-size:12px;">
+                    <input type="file" id="cgFileInput" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.pcx" style="display:none;">
+
+                    <!-- SECTION 1: BACKGROUND, UNIT IMAGE & PALETTE -->
+                    <div style="background:#141720; border:1px solid #252a38; border-radius:4px; padding:10px 12px; display:flex; flex-direction:column; gap:10px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span style="font-weight:700; color:#38bdf8; font-size:11px; text-transform:uppercase;" data-i18n="cg_sec_unit_source">1. Background, Unit Artwork & Palette</span>
+                                <span id="cgLblSourceInfo" style="font-size:10px; color:#718096;" data-i18n="cg_lbl_no_image">No image loaded</span>
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <button id="cgBtnLoadImage" class="btn btn-primary" style="height:25px; padding:0 10px; font-size:11px;" data-i18n="cg_btn_load_image">Load Image...</button>
+                                <button id="cgBtnUseEditorFrame" class="btn" style="height:25px; padding:0 10px; font-size:11px;" data-i18n="cg_btn_use_editor_frame" data-i18n-title="tt_cg_btn_use_editor_frame">Use Active Editor Frame</button>
+                                <button id="cgBtnClearImage" class="btn btn-danger" style="height:25px; padding:0 8px; font-size:11px;" data-i18n="cg_btn_clear_image">Clear Image</button>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                            <div style="flex:1 1 170px; min-width:145px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelPaletteMode" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_palette_mode">Palette Mode:</label>
+                                <select id="cgSelPaletteMode" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="full" data-i18n="cg_opt_pal_full" selected>Full Color (No Palette Limit)</option>
+                                    <option value="ra2" data-i18n="cg_opt_pal_ra2">RA2 Cameo Palette</option>
+                                    <option value="ts" data-i18n="cg_opt_pal_ts">TS Cameo Palette</option>
+                                    <option value="custom" data-i18n="cg_opt_pal_custom">Custom Palette...</option>
+                                </select>
+                            </div>
+
+                            <div style="flex:1 1 170px; min-width:145px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelResample" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_resample">Resampling Filter:</label>
+                                <select id="cgSelResample" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="smart" data-i18n="opt_resize_smart" selected>Smart (Area Average)</option>
+                                    <option value="nearest" data-i18n="opt_resize_nearest">Nearest Neighbor</option>
+                                    <option value="xbr" data-i18n="opt_resize_xbr4x">xBR 4x (No Blend)</option>
+                                    <option value="hq4x" data-i18n="opt_resize_hq4x">HQ4x</option>
+                                    <option value="omniscale" data-i18n="opt_resize_omniscale">OmniScale (Discrete)</option>
+                                    <option value="xbrz" data-i18n="opt_resize_xbrz">xBRZ (Discrete)</option>
+                                    <option value="scalefx" data-i18n="opt_resize_scalefx">ScaleFX (Discrete)</option>
+                                    <option value="superxbr" data-i18n="opt_resize_superxbr">Super-xBR (Discrete)</option>
+                                    <option value="scale2x" data-i18n="opt_resize_scale2x">Scale2x (AdvMAME)</option>
+                                    <option value="reloaded_ra2" data-i18n="opt_resize_reloaded">TS to RA2 size for C&amp;C Reloaded (xBRx4 + Smart)</option>
+                                </select>
+                            </div>
+
+                            <div style="flex:0.8 1 120px; min-width:110px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelFlip" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_flip">Flip Image:</label>
+                                <select id="cgSelFlip" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="none" data-i18n="opt_none" selected>None</option>
+                                    <option value="h" data-i18n="opt_horizontal">Horizontal</option>
+                                    <option value="v" data-i18n="opt_vertical">Vertical</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Custom Palette Selector Row (Shown when Palette Mode === 'custom') -->
+                        <div id="cgBoxCustomPalette" style="display:none; align-items:center; gap:10px; background:#10131a; padding:6px 10px; border:1px solid #2d3748; border-radius:4px;">
+                            <span style="font-size:11px; color:#a0aec0;" data-i18n="lbl_target_palette">Target Palette:</span>
+                            <div class="menu-item palette-selector-menu height-auto" id="menuItemCgPalettes" style="flex:1; max-width:320px;">
+                                <button type="button" class="menu-btn" style="width:100%; height:26px; text-align:left; display:flex; align-items:center; justify-content:space-between; padding:0 10px; border:1px solid var(--border); background:var(--bg-input); border-radius:4px; color:var(--accent); font-weight:bold; font-size:11px;">
+                                    <span data-i18n="btn_select_palette">🎨 SELECT PALETTE</span>
+                                    <span class="arrow" style="opacity:0.5;">▼</span>
+                                </button>
+                                <div class="menu-dropdown" id="cgPalettesMenuDropdown" style="width:280px; min-width:280px; margin-top:2px;">
+                                    <!-- Populated by refreshDialogPaletteMenu -->
+                                </div>
+                            </div>
+                            <span id="cgCustomPalName" style="font-size:11px; color:#cbd5e0;"></span>
+                        </div>
+
+                        <!-- Image Adjustment Steppers (Disabled when no image is loaded) -->
+                        <div id="cgImageTransformRow" class="disabled-ui" style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; padding-top:4px; border-top:1px solid #1e2330;">
+                            <div style="flex:1 1 110px; min-width:96px; display:flex; flex-direction:column; gap:3px;">
+                                <label style="font-size:10px; color:#a0aec0; white-space:nowrap;" data-i18n="cg_lbl_scale_pct">Scale (%):</label>
+                                <div class="input-stepper" style="height:24px;">
+                                    <button type="button" id="btnCgZoomDec" class="step-btn step-btn-minus">−</button>
+                                    <input type="number" id="cgInpZoomPct" class="input-step" value="100" min="1" max="800" step="1" style="min-width:0; font-size:11px;">
+                                    <button type="button" id="btnCgZoomInc" class="step-btn step-btn-plus">+</button>
+                                </div>
+                            </div>
+                            <div style="flex:1 1 110px; min-width:96px; display:flex; flex-direction:column; gap:3px;">
+                                <label style="font-size:10px; color:#a0aec0; white-space:nowrap;" data-i18n="cg_lbl_brightness">Brightness:</label>
+                                <div class="input-stepper" style="height:24px;">
+                                    <button type="button" id="btnCgBrightDec" class="step-btn step-btn-minus">−</button>
+                                    <input type="number" id="cgInpBrightness" class="input-step" value="0" min="-100" max="100" step="1" style="min-width:0; font-size:11px;">
+                                    <button type="button" id="btnCgBrightInc" class="step-btn step-btn-plus">+</button>
+                                </div>
+                            </div>
+                            <div style="flex:1 1 110px; min-width:96px; display:flex; flex-direction:column; gap:3px;">
+                                <label style="font-size:10px; color:#a0aec0; white-space:nowrap;" data-i18n="cg_lbl_contrast">Contrast:</label>
+                                <div class="input-stepper" style="height:24px;">
+                                    <button type="button" id="btnCgContrastDec" class="step-btn step-btn-minus">−</button>
+                                    <input type="number" id="cgInpContrast" class="input-step" value="0" min="-100" max="100" step="1" style="min-width:0; font-size:11px;">
+                                    <button type="button" id="btnCgContrastInc" class="step-btn step-btn-plus">+</button>
+                                </div>
+                            </div>
+                            <button type="button" id="cgBtnResetTransform" class="btn" style="height:24px; padding:0 10px; font-size:11px;" data-i18n="cg_btn_reset_transform">Reset</button>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 2: DYNAMIC TEXT LINES -->
+                    <div style="background:#141720; border:1px solid #252a38; border-radius:4px; padding:10px 12px; display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                            <span style="font-weight:700; color:#38bdf8; font-size:11px; text-transform:uppercase;" data-i18n="cg_sec_typography">2. Cameo Text Lines</span>
+                            <button type="button" id="cgBtnAddTextLine" class="btn btn-primary" style="height:24px; padding:0 10px; font-size:11px;" data-i18n="cg_btn_add_text_line">+ Add Text Line Above</button>
+                        </div>
+
+                        <div id="cgTextLinesContainer" style="display:flex; flex-direction:column; gap:6px;">
+                            <!-- Dynamic text line rows rendered by JS -->
+                        </div>
+                    </div>
+
+                    <!-- SECTION 3: TEXT BACKGROUND DARKNESS & SHADOW -->
+                    <div style="background:#141720; border:1px solid #252a38; border-radius:4px; padding:10px 12px; display:flex; flex-direction:column; gap:8px;">
+                        <span style="font-weight:700; color:#38bdf8; font-size:11px; text-transform:uppercase;" data-i18n="cg_sec_text_bg">3. Text Background Darkness & Shadow</span>
+                        <div style="display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label for="cgInpTextBgDark" style="font-size:11px; color:#cbd5e0;" data-i18n="cg_lbl_text_bg_dark">Text Background Darkness (%):</label>
+                                <div class="input-stepper" style="width:110px; height:24px;">
+                                    <button type="button" id="btnCgTextBgDarkDec" class="step-btn step-btn-minus">−</button>
+                                    <input type="number" id="cgInpTextBgDark" class="input-step" value="38" min="0" max="100" step="1" style="min-width:0; font-size:11px;">
+                                    <button type="button" id="btnCgTextBgDarkInc" class="step-btn step-btn-plus">+</button>
+                                </div>
+                            </div>
+
+                            <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e0; cursor:pointer;">
+                                <input type="checkbox" id="cgChkTextShadow" checked>
+                                <span data-i18n="cg_chk_text_shadow">Text Shadow (+1px Right)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 4: BUTTONIZATION (GLASS & BEVEL), CHEVRONS, BADGES & CORNERS -->
+                    <div style="background:#141720; border:1px solid #252a38; border-radius:4px; padding:10px 12px; display:flex; flex-direction:column; gap:10px;">
+                        <span style="font-weight:700; color:#38bdf8; font-size:11px; text-transform:uppercase;" data-i18n="cg_sec_overlays">4. Button Effects, Veteran Chevrons, Badges & Corners</span>
+
+                        <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                            <div style="flex:1 1 180px; min-width:160px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelGlass" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_glass">Glass Reflection:</label>
+                                <select id="cgSelGlass" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="another_glass" data-i18n="cg_opt_glass_another" selected>Alternative RA2 glass effect</option>
+                                    <option value="ra2_glass" data-i18n="cg_opt_glass_ra2">RA2 Glass effect</option>
+                                    <option value="ra2_edges" data-i18n="cg_opt_bev_edges">Edges (RA2 Standard)</option>
+                                    <option value="blade" data-i18n="cg_opt_bev_blade">Blade Bevel</option>
+                                    <option value="mix" data-i18n="cg_opt_bev_mix">Mix Bevel</option>
+                                    <option value="world_war" data-i18n="cg_opt_bev_ww">World War Bevel</option>
+                                    <option value="kravvitz_1" data-i18n="cg_opt_bev_krav1">Kravvitz Bevel 1</option>
+                                    <option value="kravvitz_2" data-i18n="cg_opt_bev_krav2">Kravvitz Bevel 2</option>
+                                    <option value="ra1" data-i18n="cg_opt_bev_ra1">RA1 Bevel</option>
+                                    <option value="td" data-i18n="cg_opt_bev_td">TD Bevel</option>
+                                    <option value="none" data-i18n="opt_none">None</option>
+                                </select>
+                            </div>
+
+                            <div style="flex:1 1 180px; min-width:160px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelCornerMask" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_corner_mask">Corner Mask:</label>
+                                <select id="cgSelCornerMask" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="shp_blue" data-i18n="cg_opt_crn_shp_blue" selected>SHP Transparent (RGB 0,0,255)</option>
+                                    <option value="pcx_magenta" data-i18n="cg_opt_crn_pcx">PCX Transparent (RGB 253,0,253)</option>
+                                    <option value="black" data-i18n="cg_opt_crn_black">Black Corners (RGB 0,0,0)</option>
+                                    <option value="alpha0" data-i18n="cg_opt_crn_alpha">True Alpha (Transparent)</option>
+                                    <option value="none" data-i18n="opt_none">None</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                            <div style="flex:1 1 180px; min-width:160px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelVeteran" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_veteran">Chevron:</label>
+                                <select id="cgSelVeteran" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="none" data-i18n="opt_none" selected>None</option>
+                                    <option value="vet_left_clean" data-i18n="cg_opt_vet_l_clean">Chevron - Left [by tomsons26lv]</option>
+                                    <option value="vet_left_shadow" data-i18n="cg_opt_vet_l_shd">Chevron - Left (with shadow)</option>
+                                    <option value="vet_right_clean" data-i18n="cg_opt_vet_r_clean">Chevron - Right [by tomsons26lv]</option>
+                                    <option value="vet_right_shadow" data-i18n="cg_opt_vet_r_shd">Chevron - Right (with shadow)</option>
+                                    <option value="elite_double_clean" data-i18n="cg_opt_elite_clean">Double chevron</option>
+                                    <option value="elite_double_shadow" data-i18n="cg_opt_elite_shd">Double chevron (with shadow)</option>
+                                </select>
+                            </div>
+
+                            <div style="flex:1 1 180px; min-width:160px; display:flex; flex-direction:column; gap:3px;">
+                                <label for="cgSelFakeBanner" style="font-size:11px; color:#a0aec0;" data-i18n="cg_lbl_fake_banner">Fake Structure Band:</label>
+                                <select id="cgSelFakeBanner" class="seq-input" style="height:26px; padding:0 8px; font-size:11px;">
+                                    <option value="none" data-i18n="opt_none" selected>None</option>
+                                    <option value="fake_en" data-i18n="cg_opt_fake_en">English ("FAKE")</option>
+                                    <option value="fake_es" data-i18n="cg_opt_fake_es">Spanish ("FALSO")</option>
+                                    <option value="fake_fr" data-i18n="cg_opt_fake_fr">French ("FAUX")</option>
+                                    <option value="fake_de" data-i18n="cg_opt_fake_de">German ("FALSCH")</option>
+                                    <option value="fake_ru" data-i18n="cg_opt_fake_ru">Russian ("ЛОЖН.")</option>
+                                    <option value="fake_zh" data-i18n="cg_opt_fake_zh">Chinese ("假")</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding-top:4px; border-top:1px solid #1e2330;">
+                            <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e0; cursor:pointer;">
+                                <input type="checkbox" id="cgChkDarkCorners" checked>
+                                <span data-i18n="cg_chk_dark_corners">Dark Corners (27%)</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e0; cursor:pointer;">
+                                <input type="checkbox" id="cgChkBadgeUpgrade">
+                                <span data-i18n="cg_chk_badge_upgrade">Upgrade Badge</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e0; cursor:pointer;">
+                                <input type="checkbox" id="cgChkBadgeAmphibious">
+                                <span data-i18n="cg_chk_badge_amphibious">Amphibious Icon</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e0; cursor:pointer;">
+                                <input type="checkbox" id="cgChkBadgeJumpjet">
+                                <span data-i18n="cg_chk_badge_jumpjet">Jumpjet Icon</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </dialog>
 

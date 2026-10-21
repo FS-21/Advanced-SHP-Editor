@@ -59,6 +59,7 @@ JS_ORDER = [
     'infantry_sequence.js',
     'vehicle_sequence.js',
     'ares_foundation.js',
+    'cameo_generator.js',
     'menu_handlers.js',
     'tabs.js',
     'main.js'
@@ -213,7 +214,7 @@ def bundle():
         script_content = re.sub(r'import\s+.*?from\s+[\'"].*?[\'"];?\n?', '', script_content, flags=re.DOTALL)
         
         # Remove export keywords (handles export async function, export const, etc.)
-        script_content = re.sub(r'export\s+(async\s+)?(function|const|let|var|class)\s+', r'\1\2 ', script_content)
+        script_content = re.sub(r'^(\s*)export[ \t]+(async[ \t]+)?(function|const|let|var|class)[ \t]+', r'\1\2\3 ', script_content, flags=re.MULTILINE)
         
         # Remove export { ... } statements
         script_content = re.sub(r'export\s+\{.*?\};?\n?', '', script_content, flags=re.DOTALL)

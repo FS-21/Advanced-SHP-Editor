@@ -13,7 +13,7 @@ import { resetImportState, syncImporterPalette } from './import_shp.js';
 import { resetTmpImportState, syncTmpImporterPalette } from './import_tmp.js';
 import { ShpFormat80, ShpTdRaFormat } from './shp_format.js';
 import { PcxLoader } from './pcx_loader.js';
-import { findNearestPaletteIndex, setupAutoRepeat, compositeFrame } from './utils.js';
+import { findNearestPaletteIndex, quantizeInfurium, setupAutoRepeat, compositeFrame } from './utils.js';
 import { t, applyTranslations } from './translations.js';
 import { GAME_PALETTES } from './game_palettes.js';
 import { closeAllPaletteMenus, getActivePaletteId, applyPaletteById, getMostRecentPaletteId, getPaletteName, findNodeById, applyPaletteFromEntry, getLib } from './palette_menu.js';
@@ -27,6 +27,7 @@ import {
 import { openSequenceEditor, initSequenceEditor } from './infantry_sequence.js';
 import { openVehicleSequenceEditor, initVehicleSequenceEditor } from './vehicle_sequence.js';
 import { openAresFoundationEditor, initAresFoundation } from './ares_foundation.js';
+import { openCameoGeneratorDialog, initCameoGenerator } from './cameo_generator.js';
 import { openConvertPaletteDialog } from './palette_convert.js';
 import { saveTmpSelectedTilesToFile } from './export_helper.js';
 import { isNativeApp, nativeReadFile, nativeGetFileModifiedTime } from './native_bridge.js';
@@ -1256,7 +1257,7 @@ async function handleImportSpriteSheet() {
                     if (p.a < 128) {
                         frameData[y * frameW + x] = TRANSPARENT_COLOR;
                     } else {
-                        frameData[y * frameW + x] = findNearestPaletteIndex(p.r, p.g, p.b, state.palette);
+                        frameData[y * frameW + x] = quantizeInfurium(data.pixels, data.width, data.height, ox + x, oy + y, state.palette);
                     }
                 }
             }
@@ -3595,7 +3596,7 @@ async function handleImportFromImage() {
                 for (let x = 0; x < dw; x++) {
                     const color = data.pixels[y * data.width + x];
                     if (color.a < 128) continue;
-                    indices[y * targetW + x] = findNearestPaletteIndex(color.r, color.g, color.b, state.palette);
+                    indices[y * targetW + x] = quantizeInfurium(data.pixels, data.width, data.height, x, y, state.palette);
                 }
             }
 
@@ -3791,10 +3792,24 @@ export function setupToolsMenu() {
         };
     }
 
+    const cameoGenEl = document.getElementById('menuCameoGenerator');
+    if (cameoGenEl) {
+        cameoGenEl.onclick = (e) => {
+            e.stopPropagation();
+            closeAllMenus();
+            if (typeof openCameoGeneratorDialog === 'function') {
+                openCameoGeneratorDialog();
+            } else if (typeof window.openCameoGeneratorDialog === 'function') {
+                window.openCameoGeneratorDialog();
+            }
+        };
+    }
+
     // Init sequence editor events (once)
     initSequenceEditor();
     initVehicleSequenceEditor();
     initAresFoundation();
+    initCameoGenerator();
 }
 
 export function openBatchCompressionDialog() {

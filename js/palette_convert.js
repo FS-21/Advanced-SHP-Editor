@@ -2,6 +2,7 @@ import { state } from './state.js';
 import {
     compositeFrame,
     findNearestPaletteIndex,
+    quantizeInfurium,
     SVG_PLAY_MODERN,
     SVG_PAUSE_MODERN,
     SVG_STEP_BACK_MODERN,
@@ -261,18 +262,40 @@ function renderRemapPreview() {
     const pal = targetPalette || state.palette;
     const isAlpha = state.isAlphaImageMode;
 
+    const w = frame.width;
+    const h = frame.height;
+    const srcRgba = new Uint8ClampedArray(w * h * 4);
     for (let i = 0; i < res.length; i++) {
         const idx = res[i];
         const off = i * 4;
-        if (idx === 65535 || (idx === 0 && !isAlpha) || (idx === 127 && isAlpha)) {
-            d[off + 3] = 0; // Transparent
-        } else {
-            const mappedIdx = (remapTable && targetPalette) ? remapTable[idx] : idx;
-            const c = pal[mappedIdx] || { r: 0, g: 0, b: 0 };
-            d[off] = c.r;
-            d[off + 1] = c.g;
-            d[off + 2] = c.b;
-            d[off + 3] = 255;
+        const sc = (idx < 256 && state.palette[idx]) ? state.palette[idx] : (state.palette[0] || { r: 0, g: 0, b: 0 });
+        srcRgba[off] = sc.r;
+        srcRgba[off + 1] = sc.g;
+        srcRgba[off + 2] = sc.b;
+        srcRgba[off + 3] = 255;
+    }
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = y * w + x;
+            const idx = res[i];
+            const off = i * 4;
+            if (idx === 65535 || (idx === 0 && !isAlpha) || (idx === 127 && isAlpha)) {
+                d[off + 3] = 0; // Transparent
+            } else {
+                const mappedIdx = targetPalette
+                    ? quantizeInfurium(srcRgba, w, h, x, y, targetPalette)
+                    : idx;
+                if ((mappedIdx === 0 && !isAlpha) || (mappedIdx === 127 && isAlpha)) {
+                    d[off + 3] = 0;
+                } else {
+                    const c = pal[mappedIdx] || { r: 0, g: 0, b: 0 };
+                    d[off] = c.r;
+                    d[off + 1] = c.g;
+                    d[off + 2] = c.b;
+                    d[off + 3] = 255;
+                }
+            }
         }
     }
 
@@ -327,7 +350,8 @@ function onConfirm() {
     stopAnimation();
     pushHistory();
 
-    // Remap all layer pixels across all frames
+    // Remap all layer pixels across all frames using 3D RGB Infurium
+    const skipIdx = state.isAlphaImageMode ? 127 : 0;
     for (let fi = 0; fi < state.frames.length; fi++) {
         const frame = state.frames[fi];
         if (state.isTmpMode && frame.tmpMeta) {
@@ -338,12 +362,31 @@ function onConfirm() {
         for (let li = 0; li < flatLayers.length; li++) {
             const layer = flatLayers[li];
             if (layer && layer.data) {
-                let layerAffected = false;
+                const lw = layer.width || frame.width || state.canvasW;
+                const lh = layer.height || frame.height || state.canvasH;
+                const srcRgba = new Uint8ClampedArray(lw * lh * 4);
                 for (let k = 0; k < layer.data.length; k++) {
                     const old = layer.data[k];
-                    if (old !== undefined && old < 256) {
-                        layer.data[k] = remapTable[old];
-                        layerAffected = true;
+                    const off = k * 4;
+                    const sc = (old !== undefined && old < 256 && state.palette[old])
+                        ? state.palette[old]
+                        : (state.palette[skipIdx] || { r: 0, g: 0, b: 0 });
+                    srcRgba[off] = sc.r;
+                    srcRgba[off + 1] = sc.g;
+                    srcRgba[off + 2] = sc.b;
+                    srcRgba[off + 3] = 255;
+                }
+                let layerAffected = false;
+                for (let y = 0; y < lh; y++) {
+                    for (let x = 0; x < lw; x++) {
+                        const k = y * lw + x;
+                        const old = layer.data[k];
+                        if (old !== undefined && old < 256) {
+                            layer.data[k] = (old === skipIdx)
+                                ? skipIdx
+                                : quantizeInfurium(srcRgba, lw, lh, x, y, targetPalette);
+                            layerAffected = true;
+                        }
                     }
                 }
                 if (layerAffected) {

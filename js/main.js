@@ -2987,6 +2987,14 @@ export async function openNativePaths(paths) {
         }
     }
     if (files.length > 0) {
+        const cgDlg = document.getElementById('cameoGeneratorDialog');
+        if (cgDlg && cgDlg.open && typeof window.loadCameoImageFromFile === 'function') {
+            const imgFile = files.find(f => /\.(png|jpe?g|webp|bmp|gif|pcx)$/i.test(f.name || ''));
+            if (imgFile) {
+                await window.loadCameoImageFromFile(imgFile);
+                return;
+            }
+        }
         await openFilesBatch(files, [], filePaths);
     }
 }
@@ -3075,6 +3083,15 @@ document.addEventListener('drop', async (e) => {
     
     const files = Array.from(e.dataTransfer?.files || []);
     if (files.length === 0) return;
+
+    const cgDlg = document.getElementById('cameoGeneratorDialog');
+    if (cgDlg && cgDlg.open && typeof window.loadCameoImageFromFile === 'function') {
+        const imgFile = files.find(f => /\.(png|jpe?g|webp|bmp|gif|pcx)$/i.test(f.name || ''));
+        if (imgFile) {
+            await window.loadCameoImageFromFile(imgFile);
+            return;
+        }
+    }
 
     const items = Array.from(e.dataTransfer?.items || []);
 

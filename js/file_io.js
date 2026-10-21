@@ -4,7 +4,7 @@ import { ShpFormat80 } from './shp_format.js';
 import { TmpTsFile } from './tmp_format.js';
 import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection, syncStatusCompressionUI } from './ui.js';
 import { pushHistory } from './history.js';
-import { findNearestPaletteIndex, getActivePalette } from './utils.js';
+import { findNearestPaletteIndex, quantizeInfurium, getActivePalette } from './utils.js';
 import { PcxLoader } from './pcx_loader.js';
 import { exportFrameList, encodeFramesToShpBuffer, downloadFileAsBlob } from './export_helper.js';
 import { t } from './translations.js';
@@ -1245,12 +1245,13 @@ export async function handleFrameDrop(files) {
         const dw = Math.min(d.width, sw);
         const dh = Math.min(d.height, sh);
 
+        const activePal = getActivePalette();
         for (let y = 0; y < dh; y++) {
             for (let x = 0; x < dw; x++) {
                 const color = d.pixels[y * d.width + x];
                 if (color.a < 128) continue;
 
-                const idx = findNearestPaletteIndex(color.r, color.g, color.b, getActivePalette());
+                const idx = quantizeInfurium(d.pixels, d.width, d.height, x, y, activePal);
                 indices[y * sw + x] = idx;
             }
         }
@@ -1621,11 +1622,12 @@ export async function handleClipboardPaste(input) {
     const dw = Math.min(data.width, sw);
     const dh = Math.min(data.height, sh);
 
+    const activePal = getActivePalette();
     for (let y = 0; y < dh; y++) {
         for (let x = 0; x < dw; x++) {
             const color = data.pixels[y * data.width + x];
             if (color.a < 128) continue;
-            indices[y * sw + x] = findNearestPaletteIndex(color.r, color.g, color.b, getActivePalette());
+            indices[y * sw + x] = quantizeInfurium(data.pixels, data.width, data.height, x, y, activePal);
         }
     }
 

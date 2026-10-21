@@ -47,16 +47,27 @@ export function findNearestPaletteIndex(r, g, b, palette) {
 
     const skipIdx = state.isAlphaImageMode ? 127 : 0;
     const skipCol = palette[skipIdx];
-    if (skipCol && skipCol.r === r && skipCol.g === g && skipCol.b === b) {
+    if (skipCol && ((skipCol.r === r && skipCol.g === g && skipCol.b === b) ||
+        ((skipCol.r & 0xFC) === r && (skipCol.g & 0xFC) === g && (skipCol.b & 0xFC) === b))) {
         return skipIdx; // EXACT match for transparency/background
     }
 
+    // Allow index 0 in nearest-color search when index 0 is chroma-key blue or magenta (e.g. cameo.pal)
+    const isChroma0 = !state.isAlphaImageMode && skipCol && (
+        (skipCol.r <= 8 && skipCol.g <= 8 && skipCol.b >= 248) ||
+        (skipCol.r >= 248 && skipCol.g <= 8 && skipCol.b >= 248)
+    );
+
     for (let i = 0; i < 256; i++) {
-        if (i === skipIdx) continue;
+        if (i === skipIdx && !isChroma0) continue;
         const c = palette[i];
         if (!c) continue;
+        if (c.r === r && c.g === g && c.b === b) return i;
 
-        const d = (c.r - r) ** 2 + (c.g - g) ** 2 + (c.b - b) ** 2;
+        const pr = c.r & 0xFC;
+        const pg = c.g & 0xFC;
+        const pb = c.b & 0xFC;
+        const d = (pr - r) ** 2 + (pg - g) ** 2 + (pb - b) ** 2;
         if (d === 0) return i;
         if (d < minD) {
             minD = d;
@@ -64,6 +75,129 @@ export function findNearestPaletteIndex(r, g, b, palette) {
         }
     }
     return bestIdx;
+}
+
+/**
+ * OS SHP Builder 3D RGB Infurium color conversion algorithm (with 3x3 neighborhood and brightness tie-breaker).
+ * Supports both flat RGBA typed arrays (Uint8ClampedArray/Uint8Array) and arrays of {r,g,b} pixel objects.
+ */
+export function quantizeInfurium(pixels, W, H, x, y, palette) {
+    const isObjArray = Array.isArray(pixels);
+    const getRgb = (px, py) => {
+        const idx = py * W + px;
+        if (isObjArray) {
+            const p = pixels[idx];
+            return p ? [p.r, p.g, p.b] : [0, 0, 0];
+        }
+        const off = idx * 4;
+        return [pixels[off], pixels[off + 1], pixels[off + 2]];
+    };
+
+    const [r, g, b] = getRgb(x, y);
+    const skipIdx = state.isAlphaImageMode ? 127 : 0;
+    const skipCol = palette[skipIdx];
+    if (skipCol && ((skipCol.r === r && skipCol.g === g && skipCol.b === b) ||
+        ((skipCol.r & 0xFC) === r && (skipCol.g & 0xFC) === g && (skipCol.b & 0xFC) === b))) {
+        return skipIdx;
+    }
+
+    const isChroma0 = !state.isAlphaImageMode && skipCol && (
+        (skipCol.r <= 8 && skipCol.g <= 8 && skipCol.b >= 248) ||
+        (skipCol.r >= 248 && skipCol.g <= 8 && skipCol.b >= 248)
+    );
+
+    for (let i = 0; i < 256; i++) {
+        if (i === skipIdx && !isChroma0) continue;
+        const c = palette[i];
+        if (!c) continue;
+        if ((c.r === r && c.g === g && c.b === b) ||
+            ((c.r & 0xFC) === r && (c.g & 0xFC) === g && (c.b & 0xFC) === b)) {
+            return i;
+        }
+    }
+
+    let bestDist = Infinity;
+    let candidates = [];
+    for (let i = 0; i < 256; i++) {
+        if (i === skipIdx && !isChroma0) continue;
+        const c = palette[i];
+        if (!c) continue;
+        const pr = c.r & 0xFC;
+        const pg = c.g & 0xFC;
+        const pb = c.b & 0xFC;
+        const dr = r - pr;
+        const dg = g - pg;
+        const db = b - pb;
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestDist) {
+            bestDist = d;
+            candidates = [i];
+        } else if (d === bestDist) {
+            candidates.push(i);
+        }
+    }
+
+    if (candidates.length === 0) return 0;
+    if (candidates.length === 1) return candidates[0];
+
+    const xMin = Math.max(0, x - 1);
+    const xMax = Math.min(W - 1, x + 1);
+    const yMin = Math.max(0, y - 1);
+    const yMax = Math.min(H - 1, y + 1);
+
+    let bestNeighDist = Infinity;
+    let finalists = [];
+    for (const idx of candidates) {
+        const c = palette[idx];
+        const pr = c.r & 0xFC;
+        const pg = c.g & 0xFC;
+        const pb = c.b & 0xFC;
+        let t0 = 0;
+        for (let ny = yMin; ny <= yMax; ny++) {
+            for (let nx = xMin; nx <= xMax; nx++) {
+                const [nr, ng, nb] = getRgb(nx, ny);
+                const dr = pr - nr;
+                const dg = pg - ng;
+                const db = pb - nb;
+                t0 += Math.sqrt(dr * dr + dg * dg + db * db);
+            }
+        }
+        if (t0 < bestNeighDist - 1e-9) {
+            bestNeighDist = t0;
+            finalists = [idx];
+        } else if (Math.abs(t0 - bestNeighDist) <= 1e-9) {
+            finalists.push(idx);
+        }
+    }
+
+    if (finalists.length === 1) return finalists[0];
+
+    let tn = 0;
+    let ncount = 0;
+    for (let ny = yMin; ny <= yMax; ny++) {
+        for (let nx = xMin; nx <= xMax; nx++) {
+            const [nr, ng, nb] = getRgb(nx, ny);
+            tn += Math.sqrt(nr * nr + ng * ng + nb * nb);
+            ncount++;
+        }
+    }
+    tn /= Math.max(1, ncount);
+    const targetVal = (tn >= 221.7025033688163) ? 255 : 0;
+
+    let chosenIdx = finalists[0];
+    let bestLightDist = Infinity;
+    for (const idx of finalists) {
+        const c = palette[idx];
+        const dr = targetVal - (c.r & 0xFC);
+        const dg = targetVal - (c.g & 0xFC);
+        const db = targetVal - (c.b & 0xFC);
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestLightDist) {
+            bestLightDist = d;
+            chosenIdx = idx;
+        }
+    }
+    return chosenIdx;
 }
 
 /**

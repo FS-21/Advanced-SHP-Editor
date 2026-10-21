@@ -1366,6 +1366,20 @@ function refreshAllPaletteMenus() {
             }
         }
     });
+
+    // Cameo Generator Custom Palette dialog menu
+    refreshDialogPaletteMenu('cgPalettesMenuDropdown', (node) => {
+        if (typeof parsePaletteBuffer === 'function') {
+            const buf = base64ToBuffer(node.b64);
+            const palArray = parsePaletteBuffer(buf);
+            if (typeof updatePaletteSelectorUI === 'function') {
+                updatePaletteSelectorUI('menuItemCgPalettes', node);
+            }
+            if (typeof window.onCameoCustomPaletteSelected === 'function') {
+                window.onCameoCustomPaletteSelected(palArray, node);
+            }
+        }
+    });
 }
 
 export function setCnCReloadedMode(enabled) {
@@ -1778,7 +1792,7 @@ export function setupPaletteMenu() {
     }
 
     // Dialog menus: Click to toggle (floating menu behavior)
-    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes', 'menuItemConvPalettes'].forEach(id => {
+    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes', 'menuItemConvPalettes', 'menuItemCgPalettes'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             const btn = el.querySelector('.menu-btn');

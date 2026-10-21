@@ -3216,7 +3216,7 @@ input[type="number"]:focus,
     width: 100%;
     height: 100%;
     background: #0f111a;
-    z-index: 9999;
+    z-index: 999999;
     display: flex;
     flex-direction: column;
     justify-content: center;
