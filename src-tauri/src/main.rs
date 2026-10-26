@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::env;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 fn register_file_associations(extensions: Vec<String>) -> Result<String, String> {
@@ -479,6 +480,21 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                if let Ok(json_args) = serde_json::to_string(&args) {
+                    let js = format!(
+                        "if (typeof window.__handleSingleInstanceArgs === 'function') {{ window.__handleSingleInstanceArgs({}); }}",
+                        json_args
+                    );
+                    let _ = window.eval(&js);
+                }
+            }
+            let _ = app.emit("single-instance", args);
+        }))
         .invoke_handler(tauri::generate_handler![
             register_file_associations,
             unregister_file_associations,

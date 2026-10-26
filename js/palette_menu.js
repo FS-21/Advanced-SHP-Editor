@@ -1,4 +1,5 @@
-import { setupSubmenusRecursive, renderPalette, updateCanvasSize, renderCanvas, renderFramesList, updateLayersList } from './ui.js';
+import { setupSubmenusRecursive, renderPalette, updateCanvasSize, renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, showConfirm, showPasteNotification } from './ui.js';
+import { findNearestPaletteIndex } from './utils.js';
 import { updateUIState } from './main.js';
 import { GAME_PALETTES } from './game_palettes.js';
 import { t } from './translations.js';
@@ -6,6 +7,8 @@ import { parsePaletteData, parsePaletteBuffer } from './file_io.js';
 import { state } from './state.js';
 import { syncImporterPalette } from './import_shp.js';
 import { syncTmpImporterPalette } from './import_tmp.js';
+import { isNativeApp, nativeSaveFileDialog, nativeWriteFile } from './native_bridge.js';
+import { downloadFileAsBlob } from './export_helper.js';
 
 
 // palette_menu.js — Palette Library & Palettes Menu Manager
@@ -203,6 +206,7 @@ export function recordUsage(libEntry) {
 }
 
 function togglePin(id) {
+    restoreHoverPalettePreview();
     const lib = getLib();
     const idx = lib.pinned.indexOf(id);
     if (idx !== -1) {
@@ -212,6 +216,101 @@ function togglePin(id) {
     }
     saveLibrary();
     refreshAllPaletteMenus();
+}
+
+let _hoverPreviewBackup = null;
+let _hoverRestoreTimer = null;
+let _hoverRafId = null;
+let _hoveredPaletteNode = null;
+let _hoverCtrlActive = false;
+
+function _refreshEditorForPalettePreview() {
+    if (_hoverRafId) cancelAnimationFrame(_hoverRafId);
+    _hoverRafId = requestAnimationFrame(() => {
+        _hoverRafId = null;
+        if (typeof renderPalette === 'function') renderPalette();
+        if (typeof updateCanvasSize === 'function') updateCanvasSize();
+        if (typeof renderCanvas === 'function') renderCanvas();
+        if (state.isTmpMode && typeof renderTmpComponentsList === 'function') {
+            renderTmpComponentsList();
+        } else if (typeof renderFramesList === 'function') {
+            renderFramesList();
+        }
+        if (typeof updateLayersList === 'function') updateLayersList();
+    });
+}
+
+function previewPaletteHover(node, adaptGraphics = false) {
+    if (!node || !node.b64) return;
+    if (!state.frames || state.frames.length === 0) return;
+    if (_hoverRestoreTimer) {
+        clearTimeout(_hoverRestoreTimer);
+        _hoverRestoreTimer = null;
+    }
+    if (!_hoverPreviewBackup) {
+        _hoverPreviewBackup = state.palette.map(c => c ? { r: c.r, g: c.g, b: c.b } : { r: 0, g: 0, b: 0 });
+    }
+    _hoveredPaletteNode = node;
+    _hoverCtrlActive = !!adaptGraphics;
+    try {
+        if (!node._cachedPal) {
+            const buf = base64ToBuffer(node.b64);
+            node._cachedPal = parsePaletteBuffer(buf);
+        }
+        const pal = node._cachedPal;
+        if (adaptGraphics) {
+            state._hoverSidebarPalette = pal.map(c => c ? { r: c.r, g: c.g, b: c.b } : { r: 0, g: 0, b: 0 });
+            const skipIdx = state.isAlphaImageMode ? 127 : 0;
+            for (let i = 0; i < 256; i++) {
+                if (i === skipIdx) {
+                    const sc = pal[skipIdx] || { r: 0, g: 0, b: 0 };
+                    state.palette[i] = { r: sc.r, g: sc.g, b: sc.b };
+                } else {
+                    const origCol = _hoverPreviewBackup[i];
+                    if (!origCol) {
+                        state.palette[i] = { r: 0, g: 0, b: 0 };
+                    } else {
+                        const mappedIdx = findNearestPaletteIndex(origCol.r, origCol.g, origCol.b, pal, true);
+                        const tc = pal[mappedIdx] || { r: 0, g: 0, b: 0 };
+                        state.palette[i] = { r: tc.r, g: tc.g, b: tc.b };
+                    }
+                }
+            }
+        } else {
+            state._hoverSidebarPalette = null;
+            for (let i = 0; i < 256; i++) {
+                if (pal[i]) state.palette[i] = { r: pal[i].r, g: pal[i].g, b: pal[i].b };
+            }
+        }
+        state.paletteVersion = (state.paletteVersion || 0) + 1;
+        _refreshEditorForPalettePreview();
+    } catch (_) {}
+}
+
+export function restoreHoverPalettePreview() {
+    if (_hoverRestoreTimer) {
+        clearTimeout(_hoverRestoreTimer);
+        _hoverRestoreTimer = null;
+    }
+    _hoveredPaletteNode = null;
+    _hoverCtrlActive = false;
+    state._hoverSidebarPalette = null;
+    if (!_hoverPreviewBackup) return;
+    const backup = _hoverPreviewBackup;
+    _hoverPreviewBackup = null;
+    for (let i = 0; i < 256; i++) {
+        if (backup[i]) state.palette[i] = { r: backup[i].r, g: backup[i].g, b: backup[i].b };
+    }
+    state.paletteVersion = (state.paletteVersion || 0) + 1;
+    _refreshEditorForPalettePreview();
+}
+
+function scheduleRestoreHoverPalettePreview() {
+    if (_hoverRestoreTimer) clearTimeout(_hoverRestoreTimer);
+    _hoverRestoreTimer = setTimeout(() => {
+        _hoverRestoreTimer = null;
+        restoreHoverPalettePreview();
+    }, 45);
 }
 
 function clearRecentUsage() {
@@ -355,7 +454,7 @@ export function updatePaletteSelectorUI(menuItemSelectorId, node) {
         } else {
             // No palette applied: restore the original i18n key and the
             // translated default label (e.g. "Select Palette").
-            const originalKey = nameSpan.getAttribute('data-original-i18n') || 'menu_palette';
+            const originalKey = nameSpan.getAttribute('data-original-i18n') || nameSpan.getAttribute('data-i18n') || 'menu_palette';
             nameSpan.setAttribute('data-i18n', originalKey);
             // Translate synchronously using the t() helper to avoid waiting for
             // a language-change event.
@@ -369,7 +468,7 @@ export function updatePaletteSelectorUI(menuItemSelectorId, node) {
 }
 
 
-function buildMenuPaletteItem(entry, node, showGameIcon, onSelect = null) {
+function buildMenuPaletteItem(entry, node, showGameIcon, onSelect = null, onHover = null) {
     const lib = getLib();
     const isPinned = lib.pinned.includes(entry.id);
     const isActive = _appliedPaletteId === entry.id;
@@ -417,9 +516,62 @@ function buildMenuPaletteItem(entry, node, showGameIcon, onSelect = null) {
     if (strip) div.appendChild(strip);
     div.appendChild(pinBtn);
 
-    div.addEventListener('click', (e) => {
+    if (!onSelect) {
+        div.addEventListener('mouseenter', (e) => {
+            previewPaletteHover(node, !!(e.ctrlKey || e.metaKey));
+        });
+        div.addEventListener('mousemove', (e) => {
+            const ctrl = !!(e.ctrlKey || e.metaKey);
+            if (_hoveredPaletteNode !== node || ctrl !== _hoverCtrlActive) {
+                previewPaletteHover(node, ctrl);
+            }
+        });
+        div.addEventListener('mouseleave', () => {
+            scheduleRestoreHoverPalettePreview();
+        });
+    } else if (typeof onHover === 'function') {
+        div.addEventListener('mouseenter', () => {
+            onHover(node);
+        });
+        div.addEventListener('mouseleave', () => {
+            onHover(null);
+        });
+    }
+
+    div.addEventListener('click', async (e) => {
         if (node && node.b64) {
             e.stopPropagation();
+
+            if (!onSelect && (e.ctrlKey || e.metaKey) && state.frames && state.frames.length > 0) {
+                restoreHoverPalettePreview();
+                closeAllPaletteMenus();
+
+                const title = t('dlg_conv_pal_confirm_title') || 'CONVERT GRAPHICS TO PALETTE';
+                const rawMsg = t('dlg_conv_pal_confirm_msg') || 'Do you want to adapt and convert all project graphics to the palette "<strong>{0}</strong>"?';
+                const msg = rawMsg.replace('{0}', escHtml(node.name));
+                const confirmed = await showConfirm(title, msg);
+                if (!confirmed) return;
+
+                if (!node._cachedPal) {
+                    const buf = base64ToBuffer(node.b64);
+                    node._cachedPal = parsePaletteBuffer(buf);
+                }
+                if (typeof window.convertProjectToPalette === 'function') {
+                    window.convertProjectToPalette(node._cachedPal, node);
+                }
+                return;
+            }
+
+            if (!onSelect) {
+                if (_hoverRestoreTimer) {
+                    clearTimeout(_hoverRestoreTimer);
+                    _hoverRestoreTimer = null;
+                }
+                _hoveredPaletteNode = null;
+                _hoverCtrlActive = false;
+                state._hoverSidebarPalette = null;
+                _hoverPreviewBackup = null;
+            }
 
             // Record usage and mark as applied
             const path = buildPath(lib.custom, node.id) || [node.name];
@@ -610,7 +762,7 @@ function attachSubmenuHoverLogic(container) {
     }
 }
 
-export function renderCustomSubmenuNodes(nodes, container, onSelect = null) {
+export function renderCustomSubmenuNodes(nodes, container, onSelect = null, onHover = null) {
     nodes.forEach(node => {
         if (node.type === 'folder') {
             // submenu wrapper
@@ -627,7 +779,7 @@ export function renderCustomSubmenuNodes(nodes, container, onSelect = null) {
             sub.className = 'menu-dropdown submenu';
             sub.style.minWidth = '200px';
             if (node.children && node.children.length > 0) {
-                renderCustomSubmenuNodes(node.children, sub, onSelect);
+                renderCustomSubmenuNodes(node.children, sub, onSelect, onHover);
             } else {
                 const empty = document.createElement('div');
                 empty.className = 'pal-menu-section-label';
@@ -639,7 +791,7 @@ export function renderCustomSubmenuNodes(nodes, container, onSelect = null) {
             container.appendChild(wrapper);
         } else {
             // palette item
-            const item = buildMenuPaletteItem({ id: node.id, name: node.name }, node, false, onSelect);
+            const item = buildMenuPaletteItem({ id: node.id, name: node.name }, node, false, onSelect, onHover);
             container.appendChild(item);
         }
     });
@@ -1039,6 +1191,7 @@ function updateManagerPreview() {
     const grid = document.getElementById('palMgrPreviewGrid');
     const nameEl = document.getElementById('palMgrPreviewName');
     const applyBtn = document.getElementById('btnPalMgrApply');
+    const exportBtn = document.getElementById('btnPalMgrExport');
     if (!grid) return;
 
     // Single palette selection
@@ -1054,6 +1207,7 @@ function updateManagerPreview() {
                 }
                 if (nameEl) nameEl.textContent = node.name;
                 if (applyBtn) applyBtn.disabled = false;
+                if (exportBtn) exportBtn.disabled = false;
                 return;
             } catch (e) { /* fall through */ }
         }
@@ -1066,6 +1220,77 @@ function updateManagerPreview() {
     }
     if (nameEl) nameEl.textContent = _mgrSelection.size > 1 ? `${_mgrSelection.size} items selected` : '';
     if (applyBtn) applyBtn.disabled = true;
+    if (exportBtn) exportBtn.disabled = true;
+}
+
+async function mgrExportPalCopy() {
+    if (_mgrSelection.size !== 1) return;
+    const id = [..._mgrSelection][0];
+    const node = findNodeById(getLib().custom, id);
+    if (!node || node.type !== 'palette' || !node.b64) return;
+
+    let palBytes = null;
+    try {
+        const buf = base64ToBuffer(node.b64);
+        if (buf.byteLength === 768) {
+            palBytes = new Uint8Array(buf);
+        } else {
+            const pal = parsePaletteBuffer(buf);
+            palBytes = new Uint8Array(768);
+            for (let i = 0; i < 256; i++) {
+                const c = pal[i] || { r: 0, g: 0, b: 0 };
+                palBytes[i * 3] = Math.min(63, Math.max(0, (c.r & 255) >> 2));
+                palBytes[i * 3 + 1] = Math.min(63, Math.max(0, (c.g & 255) >> 2));
+                palBytes[i * 3 + 2] = Math.min(63, Math.max(0, (c.b & 255) >> 2));
+            }
+        }
+    } catch (e) {
+        console.error('[PaletteManager] Failed to encode .pal buffer:', e);
+        return;
+    }
+
+    const defaultFilename = `${(node.name || 'custom').replace(/\.pal$/i, '')}.pal`;
+
+    if (typeof isNativeApp === 'function' && isNativeApp()) {
+        const savePath = await nativeSaveFileDialog({
+            defaultPath: defaultFilename,
+            filters: [{ name: 'Westwood Palette (.pal)', extensions: ['pal'] }]
+        });
+        if (!savePath) return;
+        const ok = await nativeWriteFile(savePath, palBytes);
+        if (ok && typeof showPasteNotification === 'function') {
+            showPasteNotification(t('msg_pal_exported') || 'Palette exported (.pal)', 'info', 2500);
+        }
+        return;
+    }
+
+    if (typeof window.showSaveFilePicker === 'function') {
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: defaultFilename,
+                types: [{
+                    description: 'Westwood Palette (.pal)',
+                    accept: { 'application/octet-stream': ['.pal'] }
+                }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(palBytes);
+            await writable.close();
+            if (typeof showPasteNotification === 'function') {
+                showPasteNotification(t('msg_pal_exported') || 'Palette exported (.pal)', 'info', 2500);
+            }
+            return;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return;
+        }
+    }
+
+    if (typeof downloadFileAsBlob === 'function') {
+        await downloadFileAsBlob(palBytes, defaultFilename, 'application/octet-stream');
+        if (typeof showPasteNotification === 'function') {
+            showPasteNotification(t('msg_pal_exported') || 'Palette exported (.pal)', 'info', 2500);
+        }
+    }
 }
 
 function updateManagerButtons() {
@@ -1380,6 +1605,23 @@ function refreshAllPaletteMenus() {
             }
         }
     });
+
+    // Drop External Images Palette dialog menu (preview on selection only)
+    refreshDialogPaletteMenu('dropImgPalettesMenuDropdown', (node) => {
+        if (typeof parsePaletteBuffer === 'function') {
+            if (!node._cachedPal) {
+                const buf = base64ToBuffer(node.b64);
+                node._cachedPal = parsePaletteBuffer(buf);
+            }
+            const palArray = node._cachedPal;
+            if (typeof updatePaletteSelectorUI === 'function') {
+                updatePaletteSelectorUI('menuItemDropImgPalettes', node);
+            }
+            if (typeof window.onDropImgPaletteSelected === 'function') {
+                window.onDropImgPaletteSelected(palArray, node);
+            }
+        }
+    });
 }
 
 export function setCnCReloadedMode(enabled) {
@@ -1530,7 +1772,7 @@ function _cleanupEmptySections(container) {
     });
 }
 
-function refreshDialogPaletteMenu(dropdownId, onSelect) {
+function refreshDialogPaletteMenu(dropdownId, onSelect, onHover = null) {
     const dropdown = document.getElementById(dropdownId);
     if (!dropdown) return;
     dropdown.innerHTML = '';
@@ -1552,7 +1794,7 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
         dropdown.appendChild(label);
         lib.pinned.forEach(id => {
             const node = findNodeById(lib.custom, id);
-            if (node) dropdown.appendChild(buildMenuPaletteItem({ id, name: node.name }, node, true, onSelect));
+            if (node) dropdown.appendChild(buildMenuPaletteItem({ id, name: node.name }, node, true, onSelect, onHover));
         });
         dropdown.appendChild(document.createElement('div')).className = 'menu-divider';
     }
@@ -1567,7 +1809,7 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
         dropdown.appendChild(label);
         validRecent.forEach(entry => {
             const node = findNodeById(lib.custom, entry.id);
-            dropdown.appendChild(buildMenuPaletteItem(entry, node, true, onSelect));
+            dropdown.appendChild(buildMenuPaletteItem(entry, node, true, onSelect, onHover));
         });
         dropdown.appendChild(document.createElement('div')).className = 'menu-divider';
     }
@@ -1590,7 +1832,7 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
         empty.textContent = t("lbl_empty");
         custSub.appendChild(empty);
     } else {
-        renderCustomSubmenuNodes(lib.custom, custSub, onSelect);
+        renderCustomSubmenuNodes(lib.custom, custSub, onSelect, onHover);
     }
     dropdown.appendChild(custTrigger);
 
@@ -1625,7 +1867,7 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
         if (svg) { iconContainer.innerHTML = ''; iconContainer.appendChild(svg); }
 
         (g.nodes || []).forEach(p => {
-            gSub.appendChild(buildMenuPaletteItem({ id: p.id, name: p.name }, p, false, onSelect));
+            gSub.appendChild(buildMenuPaletteItem({ id: p.id, name: p.name }, p, false, onSelect, onHover));
         });
         dropdown.appendChild(gTrigger);
     });
@@ -1654,6 +1896,7 @@ function refreshDialogPaletteMenu(dropdownId, onSelect) {
 
 // ── CLOSING UTILITIES ─────────────────────────────────────────
 export function closeAllPaletteMenus() {
+    restoreHoverPalettePreview();
     document.querySelectorAll('.menu-item.active').forEach(m => {
         m.classList.remove('active');
         const dd = m.querySelector('.menu-dropdown');
@@ -1710,6 +1953,11 @@ export function setupPaletteMenu() {
                 }
             }
         });
+    }
+
+    const btnExport = document.getElementById('btnPalMgrExport');
+    if (btnExport) {
+        btnExport.addEventListener('click', mgrExportPalCopy);
     }
 
     // ── Prevent closure on folder triggers ──────────────────
@@ -1789,10 +2037,29 @@ export function setupPaletteMenu() {
     const menuItemPalettes = document.getElementById('menuItemPalettes');
     if (menuItemPalettes) {
         menuItemPalettes.addEventListener('mouseenter', refreshPalettesMenuDynamic);
+        menuItemPalettes.addEventListener('mouseleave', () => {
+            scheduleRestoreHoverPalettePreview();
+        });
     }
 
+    window.addEventListener('keydown', (e) => {
+        if ((e.key === 'Control' || e.ctrlKey || e.metaKey) && _hoveredPaletteNode && !_hoverCtrlActive) {
+            previewPaletteHover(_hoveredPaletteNode, true);
+        }
+    });
+    window.addEventListener('keyup', (e) => {
+        if ((e.key === 'Control' || (!e.ctrlKey && !e.metaKey)) && _hoveredPaletteNode && _hoverCtrlActive) {
+            previewPaletteHover(_hoveredPaletteNode, false);
+        }
+    });
+    window.addEventListener('blur', () => {
+        if (_hoveredPaletteNode && _hoverCtrlActive) {
+            previewPaletteHover(_hoveredPaletteNode, false);
+        }
+    });
+
     // Dialog menus: Click to toggle (floating menu behavior)
-    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes', 'menuItemConvPalettes', 'menuItemCgPalettes'].forEach(id => {
+    ['menuItemNewPalettes', 'menuItemImpPalettes', 'menuItemImpTmpPalettes', 'menuItemExtPalettes', 'menuItemConvPalettes', 'menuItemCgPalettes', 'menuItemDropImgPalettes'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             const btn = el.querySelector('.menu-btn');
@@ -1874,6 +2141,8 @@ export function getActivePaletteId() {
 export function setActivePaletteId(id) {
     _appliedPaletteId = id;
 }
+window.setActivePaletteId = setActivePaletteId;
+window.refreshPalettesMenuDynamic = refreshPalettesMenuDynamic;
 
 /**
  * Sync the SELECT PALETTE selector UI and the global _appliedPaletteId with
@@ -1933,3 +2202,106 @@ export function getPaletteName(id) {
     return node ? node.name : null;
 }
 
+export function registerCustomPaletteNode(name, palArray) {
+    if (!Array.isArray(palArray) || palArray.length < 256) return null;
+    const cleanName = (name || 'custom_palette').replace(/\.pal$/i, '').replace(/\.shp$/i, '').trim() || 'custom_palette';
+    const palBytes = new Uint8Array(768);
+    for (let i = 0; i < 256; i++) {
+        const c = palArray[i] || { r: 0, g: 0, b: 0 };
+        palBytes[i * 3] = Math.min(63, Math.max(0, (c.r & 255) >> 2));
+        palBytes[i * 3 + 1] = Math.min(63, Math.max(0, (c.g & 255) >> 2));
+        palBytes[i * 3 + 2] = Math.min(63, Math.max(0, (c.b & 255) >> 2));
+    }
+    const b64 = bufferToBase64(palBytes.buffer);
+
+    const lib = getLib();
+    let node = lib.custom.find(n => n.type === 'palette' && n.name.toLowerCase() === cleanName.toLowerCase());
+    if (node) {
+        node.b64 = b64;
+        delete node._cachedPal;
+    } else {
+        node = {
+            id: generateId(),
+            name: cleanName,
+            type: 'palette',
+            b64
+        };
+        lib.custom.unshift(node);
+    }
+    saveLibrary();
+    recordUsage({ id: node.id, name: node.name, path: [node.name] });
+    refreshAllPaletteMenus();
+    renderManagerTree();
+    return node;
+}
+window.registerCustomPaletteNode = registerCustomPaletteNode;
+
+export function registerAndApplyCustomPalette(name, palArray) {
+    if (!Array.isArray(palArray) || palArray.length < 256) return null;
+    const cleanName = (name || 'cameo_palette').replace(/\.pal$/i, '').replace(/\.shp$/i, '').trim() || 'cameo_palette';
+    const lines = ['JASC-PAL', '0100', '256'];
+    for (let i = 0; i < 256; i++) {
+        const c = palArray[i] || { r: 0, g: 0, b: 0 };
+        lines.push(`${c.r & 255} ${c.g & 255} ${c.b & 255}`);
+    }
+    const jascBytes = new TextEncoder().encode(lines.join('\r\n') + '\r\n');
+    const b64 = bufferToBase64(jascBytes.buffer);
+
+    const lib = getLib();
+    let node = lib.custom.find(n => n.type === 'palette' && n.name.toLowerCase() === cleanName.toLowerCase());
+    if (node) {
+        node.b64 = b64;
+        delete node._cachedPal;
+    } else {
+        node = {
+            id: generateId(),
+            name: cleanName,
+            type: 'palette',
+            b64
+        };
+        lib.custom.unshift(node);
+    }
+    saveLibrary();
+
+    for (let i = 0; i < 256; i++) {
+        const c = palArray[i] || { r: 0, g: 0, b: 0 };
+        state.palette[i] = { r: c.r & 255, g: c.g & 255, b: c.b & 255 };
+    }
+    state.paletteSelectedManually = true;
+    state.paletteVersion = (state.paletteVersion || 0) + 1;
+    _appliedPaletteId = node.id;
+
+    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+        state.tabs[state.activeTabIndex].appliedPaletteId = node.id;
+        state.tabs[state.activeTabIndex].palette = JSON.parse(JSON.stringify(state.palette));
+    }
+
+    recordUsage({ id: node.id, name: node.name, path: [node.name] });
+    syncPaletteSelector();
+    refreshAllPaletteMenus();
+    return node;
+}
+window.registerAndApplyCustomPalette = registerAndApplyCustomPalette;
+
+
+
+export function getDefaultDialogPaletteNode() {
+    const lib = getLib();
+    if (_appliedPaletteId) {
+        const node = findNodeById(lib.custom, _appliedPaletteId);
+        if (node && node.b64) return node;
+    }
+    const recentId = getMostRecentPaletteId();
+    if (recentId) {
+        const node = findNodeById(lib.custom, recentId);
+        if (node && node.b64) return node;
+    }
+    if (GAME_PALETTES.ra2 && GAME_PALETTES.ra2.length > 0) {
+        return { ...GAME_PALETTES.ra2[0], type: 'palette' };
+    }
+    if (GAME_PALETTES.ts && GAME_PALETTES.ts.length > 0) {
+        return { ...GAME_PALETTES.ts[0], type: 'palette' };
+    }
+    return null;
+}
+window.getDefaultDialogPaletteNode = getDefaultDialogPaletteNode;

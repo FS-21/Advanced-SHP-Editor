@@ -23,14 +23,14 @@ export class ShpFormat80 {
         const dv = new DataView(buffer);
         const type = dv.getUint16(0, true);
         if (type !== 0) {
-            console.warn("SHP Warning: Header Type is not 0");
+            throw new Error("Invalid SHP: Header Type is not 0");
         }
 
         const width = dv.getUint16(2, true);
         const height = dv.getUint16(4, true);
         const numImages = dv.getUint16(6, true);
 
-        if (width === 0 || height === 0 || numImages === 0) {
+        if (width === 0 || height === 0 || numImages === 0 || width > 4096 || height > 4096 || numImages > 10000 || buffer.byteLength < 8 + numImages * 24) {
             throw new Error("Invalid SHP Dimensions or Empty File");
         }
 

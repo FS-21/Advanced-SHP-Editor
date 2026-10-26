@@ -2,20 +2,22 @@
  * Isometric Tile Set (TMP) Format Parser/Encoder for TS and RA2
  */
 
+import { t } from './translations.js';
+
 export class TmpTsFile {
     // Parse TMP file from ArrayBuffer
     static parse(buffer) {
         if (!buffer) {
-            throw new Error("El archivo TMP está vacío o no es válido");
+            throw new Error(t('err_tmp_empty'));
         }
         if (ArrayBuffer.isView(buffer)) {
             buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
         }
         if (!(buffer instanceof ArrayBuffer)) {
-            throw new Error("El formato del búfer no es compatible");
+            throw new Error(t('err_tmp_unsupported_buffer'));
         }
         if (buffer.byteLength < 16) {
-            throw new Error("El archivo TMP es demasiado pequeño o está dañado");
+            throw new Error(t('err_tmp_too_small'));
         }
         const dv = new DataView(buffer);
         const u8 = new Uint8Array(buffer);
@@ -30,19 +32,19 @@ export class TmpTsFile {
 
         // Header validation: cx must be 48 or 60, cy must be 24 or 30
         if ((header.cx !== 48 && header.cx !== 60) || (header.cy !== 24 && header.cy !== 30)) {
-            throw new Error(`Dimensiones de tesela no válidas: ${header.cx}x${header.cy}. Se esperaba 48x24 o 60x30.`);
+            throw new Error(t('err_tmp_invalid_tile_dimensions', { width: header.cx, height: header.cy }));
         }
         if (header.cblocks_x <= 0 || header.cblocks_x > 512 || header.cblocks_y <= 0 || header.cblocks_y > 512) {
-            throw new Error(`Dimensiones de cuadrícula TMP no válidas: ${header.cblocks_x}x${header.cblocks_y}`);
+            throw new Error(t('err_tmp_invalid_grid_dimensions', { width: header.cblocks_x, height: header.cblocks_y }));
         }
         
         const numTiles = header.cblocks_x * header.cblocks_y;
         if (numTiles <= 0 || numTiles > 65536) {
-            throw new Error(`Número de teselas no válido: ${numTiles}`);
+            throw new Error(t('err_tmp_invalid_tile_count', { count: numTiles }));
         }
         const tileIndexOffset = 16;
         if (tileIndexOffset + numTiles * 4 > dv.byteLength) {
-            throw new Error(`Archivo TMP truncado: la tabla de teselas excede el tamaño del archivo`);
+            throw new Error(t('err_tmp_truncated'));
         }
         
         // Read tile index (array of offsets)

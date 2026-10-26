@@ -41,25 +41,25 @@ export function bresenham(x0, y0, x1, y1) {
  * @param {Array} palette - Array of {r,g,b} or null
  * @returns {number} The index in the palette (0-255)
  */
-export function findNearestPaletteIndex(r, g, b, palette) {
+export function findNearestPaletteIndex(r, g, b, palette, excludeSkipIdx = false) {
     let minD = Infinity;
-    let bestIdx = 0;
+    let bestIdx = excludeSkipIdx ? (state.isAlphaImageMode ? 0 : 1) : 0;
 
     const skipIdx = state.isAlphaImageMode ? 127 : 0;
     const skipCol = palette[skipIdx];
-    if (skipCol && ((skipCol.r === r && skipCol.g === g && skipCol.b === b) ||
+    if (!excludeSkipIdx && skipCol && ((skipCol.r === r && skipCol.g === g && skipCol.b === b) ||
         ((skipCol.r & 0xFC) === r && (skipCol.g & 0xFC) === g && (skipCol.b & 0xFC) === b))) {
         return skipIdx; // EXACT match for transparency/background
     }
 
     // Allow index 0 in nearest-color search when index 0 is chroma-key blue or magenta (e.g. cameo.pal)
-    const isChroma0 = !state.isAlphaImageMode && skipCol && (
+    const isChroma0 = !excludeSkipIdx && !state.isAlphaImageMode && skipCol && (
         (skipCol.r <= 8 && skipCol.g <= 8 && skipCol.b >= 248) ||
         (skipCol.r >= 248 && skipCol.g <= 8 && skipCol.b >= 248)
     );
 
     for (let i = 0; i < 256; i++) {
-        if (i === skipIdx && !isChroma0) continue;
+        if (i === skipIdx && (excludeSkipIdx || !isChroma0)) continue;
         const c = palette[i];
         if (!c) continue;
         if (c.r === r && c.g === g && c.b === b) return i;
@@ -81,7 +81,7 @@ export function findNearestPaletteIndex(r, g, b, palette) {
  * OS SHP Builder 3D RGB Infurium color conversion algorithm (with 3x3 neighborhood and brightness tie-breaker).
  * Supports both flat RGBA typed arrays (Uint8ClampedArray/Uint8Array) and arrays of {r,g,b} pixel objects.
  */
-export function quantizeInfurium(pixels, W, H, x, y, palette) {
+export function quantizeInfurium(pixels, W, H, x, y, palette, excludeSkipIdx = false) {
     const isObjArray = Array.isArray(pixels);
     const getRgb = (px, py) => {
         const idx = py * W + px;
@@ -96,18 +96,18 @@ export function quantizeInfurium(pixels, W, H, x, y, palette) {
     const [r, g, b] = getRgb(x, y);
     const skipIdx = state.isAlphaImageMode ? 127 : 0;
     const skipCol = palette[skipIdx];
-    if (skipCol && ((skipCol.r === r && skipCol.g === g && skipCol.b === b) ||
+    if (!excludeSkipIdx && skipCol && ((skipCol.r === r && skipCol.g === g && skipCol.b === b) ||
         ((skipCol.r & 0xFC) === r && (skipCol.g & 0xFC) === g && (skipCol.b & 0xFC) === b))) {
         return skipIdx;
     }
 
-    const isChroma0 = !state.isAlphaImageMode && skipCol && (
+    const isChroma0 = !excludeSkipIdx && !state.isAlphaImageMode && skipCol && (
         (skipCol.r <= 8 && skipCol.g <= 8 && skipCol.b >= 248) ||
         (skipCol.r >= 248 && skipCol.g <= 8 && skipCol.b >= 248)
     );
 
     for (let i = 0; i < 256; i++) {
-        if (i === skipIdx && !isChroma0) continue;
+        if (i === skipIdx && (excludeSkipIdx || !isChroma0)) continue;
         const c = palette[i];
         if (!c) continue;
         if ((c.r === r && c.g === g && c.b === b) ||
@@ -119,7 +119,7 @@ export function quantizeInfurium(pixels, W, H, x, y, palette) {
     let bestDist = Infinity;
     let candidates = [];
     for (let i = 0; i < 256; i++) {
-        if (i === skipIdx && !isChroma0) continue;
+        if (i === skipIdx && (excludeSkipIdx || !isChroma0)) continue;
         const c = palette[i];
         if (!c) continue;
         const pr = c.r & 0xFC;

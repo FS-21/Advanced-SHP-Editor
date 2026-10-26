@@ -2,7 +2,7 @@ import { state, generateId, TRANSPARENT_COLOR } from './state.js';
 import { elements } from './constants.js';
 import { ShpFormat80 } from './shp_format.js';
 import { TmpTsFile } from './tmp_format.js';
-import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection, syncStatusCompressionUI } from './ui.js';
+import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, renderPaletteSimple, createNewProject, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection, syncStatusCompressionUI } from './ui.js';
 import { pushHistory } from './history.js';
 import { findNearestPaletteIndex, quantizeInfurium, getActivePalette } from './utils.js';
 import { PcxLoader } from './pcx_loader.js';
@@ -10,6 +10,9 @@ import { exportFrameList, encodeFramesToShpBuffer, downloadFileAsBlob } from './
 import { t } from './translations.js';
 import { isNativeApp, nativeReadFile, nativeWriteFile, nativeOpenFileDialog, nativeSaveFileDialog, nativeGetFileModifiedTime, nativeResolveDroppedFiles } from './native_bridge.js';
 import { getRecentFilePathByName } from './menu_handlers.js';
+import { createNewTab, updateCurrentTabName, renderTabs } from './tabs.js';
+import { getDefaultDialogPaletteNode, updatePaletteSelectorUI, setActivePaletteId, recordUsage, syncPaletteSelector, closeAllPaletteMenus, base64ToBuffer, registerCustomPaletteNode } from './palette_menu.js';
+import { updateUIState } from './main.js';
 
 export function populateTabWithShpData(tab, shp) {
     if (!tab || !shp) return;
@@ -1189,9 +1192,13 @@ export async function handleExportShp() {
 export async function handleFrameDrop(files) {
     if (!files || files.length === 0) return;
 
+    const validImgExts = ['pcx', 'png', 'bmp', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'pjp', 'webp', 'gif', 'avif', 'ico', 'svg', 'tif', 'tiff'];
     const filesArray = Array.from(files).filter(f => {
+        if (!f) return false;
+        if (f.type && f.type.startsWith('image/')) return true;
+        if (!f.name) return false;
         const ext = f.name.split('.').pop().toLowerCase();
-        return ext === 'pcx' || ext === 'png';
+        return validImgExts.includes(ext);
     });
 
     if (filesArray.length === 0) return;
@@ -1360,11 +1367,14 @@ export async function processImageFile(file) {
         }
         return { width: res.width, height: res.height, pixels };
     } else {
-        // PNG
+        // Standard browser-decodable image (PNG, BMP, JPG, WEBP, GIF)
+        const blob = (file instanceof Blob) ? file : new Blob([await file.arrayBuffer()]);
         return new Promise((resolve) => {
             const reader = new FileReader();
+            reader.onerror = () => resolve(null);
             reader.onload = (e) => {
                 const img = new Image();
+                img.onerror = () => resolve(null);
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
                     canvas.width = img.width;
@@ -1387,10 +1397,635 @@ export async function processImageFile(file) {
                 };
                 img.src = e.target.result;
             };
-            reader.readAsDataURL(file);
+            reader.readAsDataURL(blob);
         });
     }
 }
+
+function buildAdaptive256PaletteForImage(pixels, w, h) {
+    const pal = new Array(256);
+    pal[0] = { r: 0, g: 0, b: 0 };
+
+    const freq = new Map();
+    const total = w * h;
+    for (let i = 0; i < total; i++) {
+        const c = pixels[i];
+        if (!c || c.a < 128) continue;
+        const r6 = (c.r & 255) >> 2;
+        const g6 = (c.g & 255) >> 2;
+        const b6 = (c.b & 255) >> 2;
+        const r8 = (r6 << 2) | (r6 >> 4);
+        const g8 = (g6 << 2) | (g6 >> 4);
+        const b8 = (b6 << 2) | (b6 >> 4);
+        const key = (r8 << 16) | (g8 << 8) | b8;
+        freq.set(key, (freq.get(key) || 0) + 1);
+    }
+
+    let idx = 1;
+    if (freq.has(0)) {
+        pal[idx++] = { r: 0, g: 0, b: 0 };
+        freq.delete(0);
+    }
+
+    const sorted = Array.from(freq.entries()).sort((a, b) => b[1] - a[1]);
+    const maxColors = 256 - idx;
+
+    if (sorted.length <= maxColors) {
+        for (let i = 0; i < sorted.length; i++) {
+            const key = sorted[i][0];
+            pal[idx++] = {
+                r: (key >> 16) & 255,
+                g: (key >> 8) & 255,
+                b: key & 255
+            };
+        }
+    } else {
+        const nCand = sorted.length;
+        const cR = new Int32Array(nCand);
+        const cG = new Int32Array(nCand);
+        const cB = new Int32Array(nCand);
+        const cCount = new Int32Array(nCand);
+        const cW = new Float32Array(nCand);
+        const minDistSq = new Int32Array(nCand);
+        const chosen = new Uint8Array(nCand);
+
+        for (let i = 0; i < nCand; i++) {
+            const key = sorted[i][0];
+            const count = sorted[i][1];
+            const r = (key >> 16) & 255;
+            const g = (key >> 8) & 255;
+            const b = key & 255;
+            cR[i] = r;
+            cG[i] = g;
+            cB[i] = b;
+            cCount[i] = count;
+            cW[i] = Math.pow(Math.max(1, count), 0.28);
+            let bestD = 0x7fffffff;
+            for (let pi = 1; pi < idx; pi++) {
+                const dr = r - pal[pi].r;
+                const dg = g - pal[pi].g;
+                const db = b - pal[pi].b;
+                const d = dr * dr + dg * dg + db * db;
+                if (d < bestD) bestD = d;
+            }
+            minDistSq[i] = bestD;
+        }
+
+        const selectCandidate = (ci) => {
+            chosen[ci] = 1;
+            minDistSq[ci] = 0;
+            const nr = cR[ci], ng = cG[ci], nb = cB[ci];
+            pal[idx++] = { r: nr, g: ng, b: nb };
+            for (let j = 0; j < nCand; j++) {
+                if (chosen[j]) continue;
+                const dr = cR[j] - nr;
+                const dg = cG[j] - ng;
+                const db = cB[j] - nb;
+                const d = dr * dr + dg * dg + db * db;
+                if (d < minDistSq[j]) minDistSq[j] = d;
+            }
+        };
+
+        // Seed with the #1 most frequent color, then up to 24 diverse popular colors (at least ~14 RGB units apart)
+        selectCandidate(0);
+        let seeded = 1;
+        for (let i = 1; i < nCand && seeded < 24 && idx < 256; i++) {
+            if (!chosen[i] && minDistSq[i] >= 192) {
+                selectCandidate(i);
+                seeded++;
+            }
+        }
+
+        while (idx < 256) {
+            let bestJ = -1;
+            let bestScore = -1;
+            for (let j = 0; j < nCand; j++) {
+                if (chosen[j]) continue;
+                const score = minDistSq[j] * cW[j];
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestJ = j;
+                }
+            }
+            if (bestJ === -1) break;
+            selectCandidate(bestJ);
+        }
+
+        // 1 weighted Lloyd/K-Means centroid refinement pass (snapped to 6-bit Westwood VGA precision)
+        const sumR = new Float64Array(256);
+        const sumG = new Float64Array(256);
+        const sumB = new Float64Array(256);
+        const sumW = new Float64Array(256);
+        for (let j = 0; j < nCand; j++) {
+            const r = cR[j], g = cG[j], b = cB[j], wgt = cCount[j];
+            let bestPi = 1;
+            let bestD = 0x7fffffff;
+            for (let pi = 1; pi < idx; pi++) {
+                const dr = r - pal[pi].r;
+                const dg = g - pal[pi].g;
+                const db = b - pal[pi].b;
+                const d = dr * dr + dg * dg + db * db;
+                if (d < bestD) {
+                    bestD = d;
+                    bestPi = pi;
+                    if (d === 0) break;
+                }
+            }
+            sumR[bestPi] += r * wgt;
+            sumG[bestPi] += g * wgt;
+            sumB[bestPi] += b * wgt;
+            sumW[bestPi] += wgt;
+        }
+        for (let pi = 1; pi < idx; pi++) {
+            if (sumW[pi] > 0) {
+                const r6 = Math.min(63, Math.max(0, Math.round(sumR[pi] / sumW[pi]) >> 2));
+                const g6 = Math.min(63, Math.max(0, Math.round(sumG[pi] / sumW[pi]) >> 2));
+                const b6 = Math.min(63, Math.max(0, Math.round(sumB[pi] / sumW[pi]) >> 2));
+                pal[pi] = {
+                    r: (r6 << 2) | (r6 >> 4),
+                    g: (g6 << 2) | (g6 >> 4),
+                    b: (b6 << 2) | (b6 >> 4)
+                };
+            }
+        }
+    }
+
+    while (idx < 256) {
+        pal[idx++] = { r: 0, g: 0, b: 0 };
+    }
+    return pal;
+}
+
+function quantizeImageWithRgbCache(pixels, w, h, pal) {
+    const indices = new Uint16Array(w * h).fill(TRANSPARENT_COLOR);
+    const singleIdxCache = new Int16Array(1 << 18).fill(-1);
+
+    let hasAlpha = false;
+    for (let i = 0; i < w * h; i++) {
+        if (!pixels[i] || pixels[i].a < 128) {
+            hasAlpha = true;
+            break;
+        }
+    }
+    const skipCol = pal[0];
+    const isChroma0 = Boolean(skipCol && (
+        (skipCol.r <= 8 && skipCol.g <= 8 && skipCol.b >= 248) ||
+        (skipCol.r >= 248 && skipCol.g <= 8 && skipCol.b >= 248)
+    ));
+    const matchesSkipCol = (c) => Boolean(c && skipCol &&
+        ((c.r >> 2) === (skipCol.r >> 2)) &&
+        ((c.g >> 2) === (skipCol.g >> 2)) &&
+        ((c.b >> 2) === (skipCol.b >> 2)));
+    const useColorKey0 = Boolean(!hasAlpha && isChroma0 && w > 0 && h > 0 && (
+        matchesSkipCol(pixels[0]) ||
+        matchesSkipCol(pixels[w - 1]) ||
+        matchesSkipCol(pixels[(h - 1) * w]) ||
+        matchesSkipCol(pixels[h * w - 1])
+    ));
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const pIdx = y * w + x;
+            const color = pixels[pIdx];
+            if (!color || color.a < 128) continue;
+            const r6 = (color.r & 255) >> 2;
+            const g6 = (color.g & 255) >> 2;
+            const b6 = (color.b & 255) >> 2;
+            const key6 = (r6 << 12) | (g6 << 6) | b6;
+            let idx = singleIdxCache[key6];
+            if (idx === -1) {
+                const r = (r6 << 2) | (r6 >> 4);
+                const g = (g6 << 2) | (g6 >> 4);
+                const b = (b6 << 2) | (b6 >> 4);
+                const isExact0 = useColorKey0 && skipCol &&
+                    ((skipCol.r >> 2) === r6 && (skipCol.g >> 2) === g6 && (skipCol.b >> 2) === b6);
+                if (isExact0) {
+                    idx = 0;
+                    singleIdxCache[key6] = 0;
+                } else {
+                    let exactIdx = -1;
+                    let bestDist = Infinity;
+                    let tieCount = 0;
+                    let bestSingle = 1;
+                    for (let i = 1; i < 256; i++) {
+                        const c = pal[i];
+                        if (!c) continue;
+                        if ((c.r >> 2) === r6 && (c.g >> 2) === g6 && (c.b >> 2) === b6) {
+                            exactIdx = i;
+                            break;
+                        }
+                        const dr = r - c.r;
+                        const dg = g - c.g;
+                        const db = b - c.b;
+                        const d = dr * dr + dg * dg + db * db;
+                        if (d < bestDist) {
+                            bestDist = d;
+                            bestSingle = i;
+                            tieCount = 1;
+                        } else if (d === bestDist) {
+                            tieCount++;
+                        }
+                    }
+                    if (exactIdx !== -1) {
+                        idx = exactIdx;
+                        singleIdxCache[key6] = idx;
+                    } else if (tieCount <= 1) {
+                        idx = bestSingle;
+                        singleIdxCache[key6] = idx;
+                    } else {
+                        singleIdxCache[key6] = -2; // Needs 3x3 neighborhood tie-breaker
+                        idx = quantizeInfurium(pixels, w, h, x, y, pal, !useColorKey0);
+                        if (idx === 0 && !useColorKey0) idx = bestSingle;
+                    }
+                }
+            } else if (idx === -2) {
+                idx = quantizeInfurium(pixels, w, h, x, y, pal, !useColorKey0);
+                if (idx === 0 && !useColorKey0) idx = 1;
+            }
+            indices[pIdx] = idx;
+        }
+    }
+    return indices;
+}
+
+export async function openDropImagePaletteDialog(files) {
+    if (!files || files.length === 0) return;
+
+    const validExts = ['png', 'pcx', 'bmp', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'pjp', 'webp', 'gif', 'avif', 'ico', 'svg', 'tif', 'tiff'];
+    const filesArray = Array.from(files).filter(f => {
+        if (!f) return false;
+        if (f.type && f.type.startsWith('image/')) return true;
+        if (!f.name) return false;
+        const ext = f.name.split('.').pop().toLowerCase();
+        return validExts.includes(ext);
+    });
+
+    if (filesArray.length === 0) return;
+
+    const loadedImages = [];
+    for (const file of filesArray) {
+        try {
+            const data = await processImageFile(file);
+            if (data && data.width > 0 && data.height > 0) {
+                loadedImages.push({
+                    name: file.name,
+                    width: data.width,
+                    height: data.height,
+                    pixels: data.pixels,
+                    chosenPal: null,
+                    chosenNode: null,
+                    _previewCache: new Map(),
+                    _indexCache: new Map()
+                });
+            }
+        } catch (err) {
+            console.error(`Failed to process ${file.name}:`, err);
+        }
+    }
+
+    if (loadedImages.length === 0) return;
+
+    const dialog = document.getElementById('dropImagePaletteDialog');
+    const previewCanvas = document.getElementById('dropImgPreviewCanvas');
+    const palGrid = document.getElementById('dropImgPalGrid');
+    const fileInfo = document.getElementById('dropImgFileInfo');
+    const samePalRow = document.getElementById('dropImgSamePaletteRow');
+    const chkSamePal = document.getElementById('chkDropImgSamePalette');
+    const btnNoPal = document.getElementById('btnDropImgNoPalette');
+    const btnCreatePal = document.getElementById('btnDropImgCreatePalette');
+    const btnCancel = document.getElementById('btnCancelDropImg');
+    const btnPrev = document.getElementById('btnPrevDropImg');
+    const btnConfirm = document.getElementById('btnConfirmDropImg');
+
+    if (!dialog || !previewCanvas) return;
+
+    let currentIndex = 0;
+    let currentPalNode = null;
+    let currentPalArray = null;
+
+    if (chkSamePal) {
+        chkSamePal.checked = false;
+    }
+    if (samePalRow) {
+        samePalRow.style.display = loadedImages.length > 1 ? 'flex' : 'none';
+    }
+
+    const updateButtonsUI = () => {
+        if (btnPrev) {
+            if (loadedImages.length > 1) {
+                btnPrev.style.display = 'inline-flex';
+                const canGoPrev = currentIndex > 0;
+                btnPrev.disabled = !canGoPrev;
+                btnPrev.style.opacity = canGoPrev ? '1' : '0.45';
+                btnPrev.style.cursor = canGoPrev ? 'pointer' : 'not-allowed';
+            } else {
+                btnPrev.style.display = 'none';
+            }
+        }
+        if (btnConfirm) {
+            const useSame = !!(chkSamePal && chkSamePal.checked);
+            const isLast = (currentIndex >= loadedImages.length - 1);
+            if (!isLast && !useSame) {
+                btnConfirm.textContent = t('btn_next') || 'NEXT';
+                btnConfirm.setAttribute('data-i18n', 'btn_next');
+            } else if (loadedImages.length > 1) {
+                btnConfirm.textContent = t('btn_convert_images_tabs') || 'CONVERT IMAGES IN NEW TABS';
+                btnConfirm.setAttribute('data-i18n', 'btn_convert_images_tabs');
+            } else {
+                btnConfirm.textContent = t('btn_convert_image_tab') || 'CONVERT IMAGE IN NEW TAB';
+                btnConfirm.setAttribute('data-i18n', 'btn_convert_image_tab');
+            }
+            const hasPal = Boolean(currentPalArray && currentPalArray.length === 256);
+            btnConfirm.disabled = !hasPal;
+            btnConfirm.style.opacity = hasPal ? '1' : '0.45';
+            btnConfirm.style.cursor = hasPal ? 'pointer' : 'not-allowed';
+            btnConfirm.style.pointerEvents = hasPal ? 'auto' : 'none';
+        }
+        if (btnNoPal) {
+            const isOriginal = !currentPalArray;
+            btnNoPal.style.borderColor = isOriginal ? 'var(--accent)' : 'var(--border)';
+            btnNoPal.style.color = isOriginal ? 'var(--accent)' : '#cbd5e1';
+            btnNoPal.style.background = isOriginal ? 'rgba(0, 255, 170, 0.1)' : '#1a202c';
+        }
+    };
+
+    const renderCurrentImagePreview = () => {
+        const entry = loadedImages[currentIndex];
+        if (!entry) return;
+
+        if (fileInfo) {
+            const prefix = loadedImages.length > 1 ? `(${currentIndex + 1}/${loadedImages.length}) ` : '';
+            fileInfo.textContent = `${prefix}${entry.name} [${entry.width}x${entry.height}]`;
+        }
+
+        const w = entry.width;
+        const h = entry.height;
+        previewCanvas.width = w;
+        previewCanvas.height = h;
+        const ctx = previewCanvas.getContext('2d');
+
+        if (!currentPalArray) {
+            // No palette selected yet: show empty palette grid and original Full Color image
+            if (typeof renderPaletteSimple === 'function' && palGrid) {
+                renderPaletteSimple([], palGrid);
+            }
+            const imgData = ctx.createImageData(w, h);
+            const dst = imgData.data;
+            for (let i = 0; i < w * h; i++) {
+                const color = entry.pixels[i];
+                const off = i * 4;
+                if (!color || color.a < 128) {
+                    dst[off] = 0;
+                    dst[off + 1] = 0;
+                    dst[off + 2] = 0;
+                    dst[off + 3] = 0;
+                } else {
+                    dst[off] = color.r;
+                    dst[off + 1] = color.g;
+                    dst[off + 2] = color.b;
+                    dst[off + 3] = color.a;
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            return;
+        }
+
+        if (typeof renderPaletteSimple === 'function' && palGrid) {
+            renderPaletteSimple(currentPalArray, palGrid);
+        }
+
+        const cacheKey = currentPalNode ? currentPalNode.id : null;
+        if (cacheKey && entry._previewCache.has(cacheKey)) {
+            ctx.putImageData(entry._previewCache.get(cacheKey), 0, 0);
+            return;
+        }
+
+        const indices = quantizeImageWithRgbCache(entry.pixels, w, h, currentPalArray);
+        const imgData = ctx.createImageData(w, h);
+        const dst = imgData.data;
+
+        for (let i = 0; i < w * h; i++) {
+            const idx = indices[i];
+            const off = i * 4;
+            if (idx === TRANSPARENT_COLOR) {
+                dst[off] = 0;
+                dst[off + 1] = 0;
+                dst[off + 2] = 0;
+                dst[off + 3] = 0;
+            } else {
+                const c = currentPalArray[idx] || { r: 0, g: 0, b: 0 };
+                dst[off] = c.r;
+                dst[off + 1] = c.g;
+                dst[off + 2] = c.b;
+                dst[off + 3] = 255;
+            }
+        }
+
+        if (cacheKey) {
+            entry._previewCache.set(cacheKey, imgData);
+            entry._indexCache.set(cacheKey, indices);
+        }
+        ctx.putImageData(imgData, 0, 0);
+    };
+
+    const syncCurrentStepState = () => {
+        const entry = loadedImages[currentIndex];
+        currentPalArray = entry && entry.chosenPal ? entry.chosenPal.map(c => c ? { ...c } : { r: 0, g: 0, b: 0 }) : null;
+        currentPalNode = entry && entry.chosenNode ? entry.chosenNode : null;
+        if (typeof updatePaletteSelectorUI === 'function') {
+            updatePaletteSelectorUI('menuItemDropImgPalettes', currentPalNode);
+        }
+        updateButtonsUI();
+        renderCurrentImagePreview();
+    };
+
+    window.onDropImgPaletteSelected = (palArray, node) => {
+        currentPalArray = palArray.map(c => c ? { ...c } : { r: 0, g: 0, b: 0 });
+        currentPalNode = node;
+        if (loadedImages[currentIndex]) {
+            loadedImages[currentIndex].chosenPal = currentPalArray.map(c => c ? { ...c } : { r: 0, g: 0, b: 0 });
+            loadedImages[currentIndex].chosenNode = currentPalNode;
+        }
+        if (typeof updatePaletteSelectorUI === 'function') {
+            updatePaletteSelectorUI('menuItemDropImgPalettes', node);
+        }
+        updateButtonsUI();
+        renderCurrentImagePreview();
+    };
+
+    if (chkSamePal) {
+        chkSamePal.onchange = () => {
+            updateButtonsUI();
+        };
+    }
+
+    const cleanupDialog = () => {
+        window.onDropImgPaletteSelected = null;
+        if (typeof closeAllPaletteMenus === 'function') closeAllPaletteMenus();
+        if (typeof dialog.close === 'function') dialog.close();
+        else dialog.removeAttribute('open');
+    };
+
+    if (btnNoPal) {
+        btnNoPal.onclick = () => {
+            currentPalArray = null;
+            currentPalNode = null;
+            if (loadedImages[currentIndex]) {
+                loadedImages[currentIndex].chosenPal = null;
+                loadedImages[currentIndex].chosenNode = null;
+            }
+            if (typeof updatePaletteSelectorUI === 'function') {
+                updatePaletteSelectorUI('menuItemDropImgPalettes', null);
+            }
+            updateButtonsUI();
+            renderCurrentImagePreview();
+        };
+    }
+
+    if (btnCreatePal) {
+        btnCreatePal.onclick = () => {
+            const entry = loadedImages[currentIndex];
+            if (!entry) return;
+            const newPal = buildAdaptive256PaletteForImage(entry.pixels, entry.width, entry.height);
+            const palBaseName = (entry.name || 'custom_palette').replace(/\.[^/.]+$/, '').trim() || 'custom_palette';
+            const node = (typeof registerCustomPaletteNode === 'function')
+                ? registerCustomPaletteNode(palBaseName, newPal)
+                : { id: 'custom_' + Date.now(), name: palBaseName, type: 'palette' };
+            if (node && node.id) {
+                entry._previewCache.delete(node.id);
+                entry._indexCache.delete(node.id);
+            }
+            if (typeof window.onDropImgPaletteSelected === 'function') {
+                window.onDropImgPaletteSelected(newPal, node);
+            }
+            if (typeof showPasteNotification === 'function') {
+                showPasteNotification(t('msg_custom_pal_created', { name: node ? node.name : palBaseName }) || `Custom palette "${palBaseName}" created`, 'info', 2500);
+            }
+        };
+    }
+
+    if (btnCancel) {
+        btnCancel.onclick = () => {
+            cleanupDialog();
+        };
+    }
+
+    if (btnPrev) {
+        btnPrev.onclick = () => {
+            if (currentIndex > 0) {
+                currentIndex--;
+                syncCurrentStepState();
+            }
+        };
+    }
+
+    if (btnConfirm) {
+        btnConfirm.onclick = () => {
+            if (!currentPalArray) return;
+            loadedImages[currentIndex].chosenPal = currentPalArray.map(c => c ? { ...c } : { r: 0, g: 0, b: 0 });
+            loadedImages[currentIndex].chosenNode = currentPalNode;
+
+            const useSame = !!(chkSamePal && chkSamePal.checked);
+            if (useSame) {
+                for (let i = 0; i < loadedImages.length; i++) {
+                    if (!loadedImages[i].chosenPal || i >= currentIndex) {
+                        loadedImages[i].chosenPal = currentPalArray.map(c => c ? { ...c } : { r: 0, g: 0, b: 0 });
+                        loadedImages[i].chosenNode = currentPalNode;
+                    }
+                }
+            } else if (currentIndex < loadedImages.length - 1) {
+                currentIndex++;
+                syncCurrentStepState();
+                return;
+            }
+
+            cleanupDialog();
+
+            for (let i = 0; i < loadedImages.length; i++) {
+                const imgEntry = loadedImages[i];
+                const w = imgEntry.width;
+                const h = imgEntry.height;
+                const pal = imgEntry.chosenPal || currentPalArray;
+                const node = imgEntry.chosenNode || currentPalNode;
+                const baseName = imgEntry.name.replace(/\.[^/.]+$/, '') + '.shp';
+
+                const cacheKey = node ? node.id : null;
+                const indices = (cacheKey && imgEntry._indexCache && imgEntry._indexCache.has(cacheKey))
+                    ? new Uint16Array(imgEntry._indexCache.get(cacheKey))
+                    : quantizeImageWithRgbCache(imgEntry.pixels, w, h, pal);
+
+                if (i === 0) {
+                    const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
+                    const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName;
+                    if (!isCurrentTabEmpty && typeof createNewTab === 'function') {
+                        createNewTab(baseName, false);
+                    }
+                } else if (typeof createNewTab === 'function') {
+                    createNewTab(baseName, false);
+                }
+
+                const clonedPal = pal.map(c => c ? { r: c.r, g: c.g, b: c.b, locked: false } : { r: 0, g: 0, b: 0, locked: false });
+                const isTdRaPal = Boolean(node && node.id && (node.id.startsWith('game_td_') || node.id.startsWith('game_ra1_')));
+                const targetShpFormat = isTdRaPal ? 'td_ra' : 'ts_ra2';
+                const rawPrefComp = parseInt(localStorage.getItem(isTdRaPal ? 'ase_pref_default_comp_td_ra' : 'ase_pref_default_comp'), 10);
+                const targetComp = Number.isFinite(rawPrefComp) ? rawPrefComp : (isTdRaPal ? 80 : 3);
+                createNewProject(w, h, 1, false, clonedPal, targetComp, false, targetShpFormat);
+
+                if (state.frames.length > 0 && state.frames[0].layers && state.frames[0].layers.length > 0) {
+                    state.frames[0].layers[0].data = indices;
+                    state.frames[0].layers[0].name = 'Layer 1';
+                    state.frames[0]._v = (state.frames[0]._v || 0) + 1;
+                }
+
+                if (node && node.id) {
+                    if (typeof setActivePaletteId === 'function') setActivePaletteId(node.id);
+                    if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                        state.tabs[state.activeTabIndex].appliedPaletteId = node.id;
+                        state.tabs[state.activeTabIndex].palette = JSON.parse(JSON.stringify(state.palette));
+                    }
+                    if (typeof recordUsage === 'function') {
+                        recordUsage({ id: node.id, name: node.name, path: [node.name] });
+                    }
+                }
+
+                if (typeof updateCurrentTabName === 'function') {
+                    updateCurrentTabName(baseName, true);
+                }
+                state.hasChanges = true;
+                if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                    state.tabs[state.activeTabIndex].hasChanges = true;
+                }
+
+                state.history = [];
+                state.historyPtr = -1;
+                pushHistory();
+
+                if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                    state.saveToTab(state.tabs[state.activeTabIndex]);
+                }
+            }
+
+            showEditorInterface();
+            updateCanvasSize();
+            renderCanvas();
+            renderFramesList();
+            updateLayersList();
+            renderPalette();
+            if (typeof syncPaletteSelector === 'function') syncPaletteSelector();
+            if (typeof renderTabs === 'function') renderTabs();
+            if (typeof updateUIState === 'function') updateUIState();
+        };
+    }
+
+    syncCurrentStepState();
+
+    if (typeof dialog.showModal === 'function') {
+        if (!dialog.open) dialog.showModal();
+    } else {
+        dialog.setAttribute('open', '');
+    }
+}
+window.openDropImagePaletteDialog = openDropImagePaletteDialog;
 
 /**
  * Robust entry point for system image pasting (Ctrl+V interceptor).
@@ -1447,12 +2082,12 @@ export async function handleClipboardPaste(input) {
     if (state.isTmpMode && state.currentFrameIdx === -1) {
         const tiles = getCurrentEditedTiles();
         if (!tiles || !state.tmpHeader) {
-            showPasteNotification("No hay tiles cargados para pegar en Full Preview.", "error");
+            showPasteNotification(t('msg_full_preview_no_tiles'), "error", 6000);
             return;
         }
         const bounds = TmpTsFile.computeBounds({ header: state.tmpHeader, tiles, numTiles: tiles.length });
         if (!bounds.hasTiles) {
-            showPasteNotification("No hay tiles válidos en el Full Preview.", "error");
+            showPasteNotification(t('msg_full_preview_no_valid_tiles'), "error", 6000);
             return;
         }
 
@@ -1577,10 +2212,15 @@ export async function handleClipboardPaste(input) {
             renderCanvas();
             renderTmpComponentsList();
             updateLayersList();
-            showPasteNotification("✅ Imagen de Full Preview pegada y procesada correctamente.", "success", 3000);
+            showPasteNotification(t('msg_full_preview_paste_success'), "success", 3000);
             return;
         } else {
-            showPasteNotification(`⚠️ Las dimensiones de la imagen pegada (${data.width}x${data.height}) no coinciden con las del Full Preview (${cw}x${ch}).`, "error", 4000);
+            showPasteNotification(t('msg_full_preview_paste_size_mismatch', {
+                width: data.width,
+                height: data.height,
+                previewWidth: cw,
+                previewHeight: ch
+            }), "error", 8000);
             return;
         }
     }

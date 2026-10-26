@@ -8,7 +8,7 @@ import {
     updatePixelGrid, renderLayerThumbnail, setupTooltips, updatePaletteUsedMarks, syncStatusCompressionUI, showPasteNotification
 } from './ui.js';
 import { openNewShpDialog, updateUIState, detectFileType } from './main.js';
-import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, handleSaveAsShp, handleSaveAll, loadTmpData, saveTmpData } from './file_io.js';
+import { processImageFile, showExportDialog, resizeEntireShp, loadShpData, handleSaveShp, handleSaveAsShp, handleSaveAll, loadTmpData, saveTmpData, openDropImagePaletteDialog } from './file_io.js';
 import { resetImportState, syncImporterPalette } from './import_shp.js';
 import { resetTmpImportState, syncTmpImporterPalette } from './import_tmp.js';
 import { ShpFormat80, ShpTdRaFormat } from './shp_format.js';
@@ -30,7 +30,7 @@ import { openAresFoundationEditor, initAresFoundation } from './ares_foundation.
 import { openCameoGeneratorDialog, initCameoGenerator } from './cameo_generator.js';
 import { openConvertPaletteDialog } from './palette_convert.js';
 import { saveTmpSelectedTilesToFile } from './export_helper.js';
-import { isNativeApp, nativeReadFile, nativeGetFileModifiedTime } from './native_bridge.js';
+import { isNativeApp, nativeReadFile, nativeOpenFileDialog, nativeGetFileModifiedTime } from './native_bridge.js';
 
 
 
@@ -234,14 +234,19 @@ export function updateMenuState(hasProject) {
         }
     });
 
-    // Import gating: Enabled only if a palette is loaded
-    ['menuImpSpriteSheet', 'menuImpOtherShp', 'menuImpFromImage'].forEach(id => {
+    // Import gating: Sprite Sheet & Another SHP require a loaded palette; From Images is always enabled
+    ['menuImpSpriteSheet', 'menuImpOtherShp'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             if (hasPalette) el.classList.remove('disabled');
             else el.classList.add('disabled');
         }
     });
+    const elImpFromImg = document.getElementById('menuImpFromImage');
+    if (elImpFromImg) {
+        elImpFromImg.classList.remove('disabled');
+        elImpFromImg.classList.remove('disabled-ui');
+    }
 
     const controls = [
         'btnUndo', 'btnRedo', 'btnToggleGrid', 'btnToggleBg',
@@ -311,11 +316,11 @@ export function updateMenuState(hasProject) {
         }
     });
 
-    // Import trigger depends on Palette
+    // Import trigger is always enabled because "From Images" (new tabs) is always available
     const trigImp = document.getElementById('triggerImport');
     if (trigImp) {
-        if (hasPalette) trigImp.classList.remove('disabled');
-        else trigImp.classList.add('disabled');
+        trigImp.classList.remove('disabled');
+        trigImp.classList.remove('disabled-ui');
     }
 
     if (state.isTmpMode) {
@@ -325,8 +330,8 @@ export function updateMenuState(hasProject) {
             'menuResizeImage', 'menuResizeCanvasUnified', 'menuCropSelection',
             // Export: frame-based exports don't apply to TMP structure
             'triggerExport', 'menuExpSpriteSheet', 'menuExpRange', 'menuExpCurrent',
-            // Import: importing images would break the TMP tile structure
-            'triggerImport', 'menuImpFromImage', 'menuImpSpriteSheet', 'menuImpOtherShp',
+            // Import: frame-based imports don't apply to TMP tile structure (From Images opens in new SHP tabs)
+            'menuImpSpriteSheet', 'menuImpOtherShp',
             'cbUseShadows', 'cbShowShadowOverlay', 'selTdRaShadows'
         ];
         
@@ -1290,21 +1295,23 @@ async function handleOtherShpFileSelect(file) {
     try {
         const buf = await file.arrayBuffer();
         const shp = ShpFormat80.parse(buf);
+        const frameCount = (shp && Array.isArray(shp.frames)) ? shp.frames.length : (shp.numImages || 0);
         otherShpFile = { file, shp };
         if (elements.otherShpFileInfo) {
-            elements.otherShpFileInfo.innerText = `Selected: ${file.name} (${shp.numImages} frames)`;
+            elements.otherShpFileInfo.innerText = `Selected: ${file.name} (${frameCount} frames)`;
             elements.otherShpFileInfo.style.display = 'block';
         }
         const ctrl = document.getElementById('impOtherShpControls');
         if (ctrl) ctrl.style.display = 'block';
 
+        const maxIdx = Math.max(0, frameCount - 1);
         if (elements.inpImpOtherStart) {
             elements.inpImpOtherStart.value = 0;
-            elements.inpImpOtherStart.max = shp.numImages - 1;
+            elements.inpImpOtherStart.max = maxIdx;
         }
         if (elements.inpImpOtherEnd) {
-            elements.inpImpOtherEnd.value = shp.numImages - 1;
-            elements.inpImpOtherEnd.max = shp.numImages - 1;
+            elements.inpImpOtherEnd.value = maxIdx;
+            elements.inpImpOtherEnd.max = maxIdx;
         }
 
         if (elements.btnClearOtherShp) elements.btnClearOtherShp.style.display = 'inline-block';
@@ -1372,15 +1379,18 @@ async function handleImportOtherShp() {
         resizeEntireShp(pendingResize.w, pendingResize.h);
     }
 
+    const framesArr = otherShp.frames || otherShp.images || [];
     for (let i = s; i <= e; i++) {
-        const shpFrame = otherShpFile.shp.images[i];
+        const shpFrame = framesArr[i];
         if (!shpFrame) continue;
+        const srcIndices = shpFrame.originalIndices || shpFrame.indices;
+        if (!srcIndices) continue;
         const frameData = new Uint16Array(state.canvasW * state.canvasH).fill(TRANSPARENT_COLOR);
         const copyW = Math.min(state.canvasW, shpFrame.width);
         const copyH = Math.min(state.canvasH, shpFrame.height);
         for (let y = 0; y < copyH; y++) {
             for (let x = 0; x < copyW; x++) {
-                frameData[y * state.canvasW + x] = shpFrame.indices[y * shpFrame.width + x];
+                frameData[y * state.canvasW + x] = srcIndices[y * shpFrame.width + x];
             }
         }
         addFrame(state.canvasW, state.canvasH, frameData);
@@ -1587,16 +1597,16 @@ export function isDesktopApp() {
 }
 
 export function checkDesktopIntegration() {
-    if (isDesktopApp()) {
-        const prefDivider = document.getElementById('menuPreferencesDivider');
-        const prefItem = document.getElementById('menuPreferences');
-        if (prefDivider) prefDivider.style.display = 'block';
-        if (prefItem) prefItem.style.display = 'flex';
+    const isDesktop = isDesktopApp();
+    const prefDivider = document.getElementById('menuPreferencesDivider');
+    const prefItem = document.getElementById('menuPreferences');
+    if (prefDivider) prefDivider.style.display = 'block';
+    if (prefItem) prefItem.style.display = 'flex';
 
-        // Hide top-right language selector in desktop app (managed in Preferences)
-        const topLangSelector = document.getElementById('langSelector');
-        if (topLangSelector) topLangSelector.style.display = 'none';
-    }
+    // File associations only make sense in the desktop build.
+    const assocSection = document.getElementById('prefAssociationsSection');
+    if (assocSection) assocSection.style.display = isDesktop ? 'block' : 'none';
+
 }
 
 async function invokeTauri(cmd, args = {}) {
@@ -1710,6 +1720,10 @@ export function openPreferencesDialog() {
     const selComp = document.getElementById('selPrefDefaultCompression');
     if (selComp && savedComp) selComp.value = savedComp;
 
+    const savedCompTdRa = localStorage.getItem('ase_pref_default_comp_td_ra');
+    const selCompTdRa = document.getElementById('selPrefDefaultCompressionTdRa');
+    if (selCompTdRa && savedCompTdRa !== null) selCompTdRa.value = savedCompTdRa;
+
     const savedPal = localStorage.getItem('ase_pref_startup_pal');
     const selPal = document.getElementById('selPrefStartupPalette');
     if (selPal && savedPal) selPal.value = savedPal;
@@ -1721,6 +1735,10 @@ export function openPreferencesDialog() {
     const savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
     const cbReloaded = document.getElementById('cbPrefShowCnCReloaded');
     if (cbReloaded) cbReloaded.checked = savedReloaded === null ? true : savedReloaded === '1';
+
+    const savedSplash = localStorage.getItem('ase_pref_show_splash');
+    const cbSplash = document.getElementById('cbPrefShowSplash');
+    if (cbSplash) cbSplash.checked = savedSplash === null ? true : savedSplash !== '0';
 
     if (isDesktopApp()) {
         invokeTauri('check_file_associations').then(assocExts => {
@@ -1763,6 +1781,11 @@ export function setupPreferencesDialog() {
                 window.setCnCReloadedMode(isEnabled);
             }
         }
+
+        const cbSplash = document.getElementById('cbPrefShowSplash');
+        if (cbSplash) {
+            localStorage.setItem('ase_pref_show_splash', cbSplash.checked ? '1' : '0');
+        }
     });
 
     const btnClose = document.getElementById('btnClosePreferences');
@@ -1770,6 +1793,9 @@ export function setupPreferencesDialog() {
         btnClose.onclick = () => {
             const selComp = document.getElementById('selPrefDefaultCompression');
             if (selComp) localStorage.setItem('ase_pref_default_comp', selComp.value);
+
+            const selCompTdRa = document.getElementById('selPrefDefaultCompressionTdRa');
+            if (selCompTdRa) localStorage.setItem('ase_pref_default_comp_td_ra', selCompTdRa.value);
 
             const selPal = document.getElementById('selPrefStartupPalette');
             if (selPal) localStorage.setItem('ase_pref_startup_pal', selPal.value);
@@ -1784,6 +1810,11 @@ export function setupPreferencesDialog() {
                 if (typeof window.setCnCReloadedMode === 'function') {
                     window.setCnCReloadedMode(isEnabled);
                 }
+            }
+
+            const cbSplash = document.getElementById('cbPrefShowSplash');
+            if (cbSplash) {
+                localStorage.setItem('ase_pref_show_splash', cbSplash.checked ? '1' : '0');
             }
 
             if (typeof dlg.close === 'function') dlg.close();
@@ -3352,9 +3383,12 @@ export function setupImportFromImageHandlers() {
     // File Input
     if (elements.fileImpFromImage) {
         elements.fileImpFromImage.onchange = (e) => {
-            if (e.target.files.length > 0) {
-                addImportFiles(Array.from(e.target.files));
+            if (e.target.files && e.target.files.length > 0) {
+                const selectedFiles = Array.from(e.target.files);
                 e.target.value = ''; // Reset for same file selection
+                if (typeof openDropImagePaletteDialog === 'function') {
+                    openDropImagePaletteDialog(selectedFiles);
+                }
             }
         };
     }
@@ -3504,34 +3538,38 @@ function renderImportFromImageList() {
     });
 }
 
-export function showImportFromImageDialog() {
-    const dlg = elements.importFromImageDialog;
-    if (!dlg) return;
-
-    importFromImageFiles = [];
-    
-    // Set initial dimensions
-    if (state.frames.length > 0) {
-        elements.inpImpFromImageW.value = state.canvasW;
-        elements.inpImpFromImageH.value = state.canvasH;
-        // If project exists, lock resolution inputs? The user said "dimensions can be adjusted manually"
-        // but it's usually for when there is NO project.
-        // Actually, for consistency, if project exists, these dimensions should match.
-        // But the user might want to import and RESIZE later? 
-        // No, typically in this editor, if project exists, we append to it WITH project resolution.
-    } else {
-        elements.inpImpFromImageW.value = 60; // Default
-        elements.inpImpFromImageH.value = 48;
+export async function showImportFromImageDialog() {
+    if (typeof isNativeApp === 'function' && isNativeApp()) {
+        const paths = await nativeOpenFileDialog({
+            multiple: true,
+            filters: [{
+                name: 'Images',
+                extensions: ['png', 'pcx', 'bmp', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'pjp', 'webp', 'gif', 'avif', 'ico', 'svg', 'tif', 'tiff']
+            }]
+        });
+        if (!paths || paths.length === 0) return;
+        const files = [];
+        for (const p of paths) {
+            try {
+                const u8 = await nativeReadFile(p);
+                const name = p.split(/[/\\]/).pop() || p;
+                const f = new File([u8], name);
+                f._nativePath = p;
+                files.push(f);
+            } catch (err) {
+                console.error('[ImportImages] Failed to read file:', p, err);
+            }
+        }
+        if (files.length > 0 && typeof openDropImagePaletteDialog === 'function') {
+            await openDropImagePaletteDialog(files);
+        }
+        return;
     }
 
-    // Show compression only if no project is open
-    if (elements.rowImpFromImageComp) {
-        elements.rowImpFromImageComp.style.display = (state.frames.length === 0) ? 'flex' : 'none';
-        if (elements.selImpFromImageComp) elements.selImpFromImageComp.value = "3";
+    if (elements.fileImpFromImage) {
+        elements.fileImpFromImage.value = '';
+        elements.fileImpFromImage.click();
     }
-
-    renderImportFromImageList();
-    if (typeof dlg.showModal === 'function') dlg.showModal();
 }
 
 async function handleImportFromImage() {

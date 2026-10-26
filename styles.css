@@ -3231,6 +3231,10 @@ input[type="number"]:focus,
     pointer-events: none;
 }
 
+html.no-splash #splashScreen {
+    display: none !important;
+}
+
 .splash-title {
     font-size: 28px;
     font-weight: bold;

@@ -120,6 +120,63 @@ def main():
     else:
         print("\n[OK] All keys referenced in HTML are present in TRANSLATIONS.")
 
+    # Cross-reference translation keys referenced from JavaScript
+    js_dir = os.path.join(base_path, "js")
+    js_key_refs = {}
+    if os.path.isdir(js_dir):
+        for js_name in sorted(os.listdir(js_dir)):
+            if not js_name.endswith(".js") or js_name in ("translations.js", "translations.js.backup"):
+                continue
+            js_path = os.path.join(js_dir, js_name)
+            with open(js_path, "r", encoding="utf-8", errors="replace") as f:
+                for line_no, line in enumerate(f, 1):
+                    for key in re.findall(r"\bt\(\s*['\"]([^'\"]+)['\"]", line):
+                        js_key_refs.setdefault(key, []).append(f"{js_name}:{line_no}")
+                    for key in re.findall(r"state\.translations\[\s*['\"]([^'\"]+)['\"]\s*\]", line):
+                        js_key_refs.setdefault(key, []).append(f"{js_name}:{line_no}")
+
+    missing_js_keys = sorted(set(js_key_refs) - all_keys)
+    if missing_js_keys:
+        report = f"\n[CRITICAL] {len(missing_js_keys)} keys referenced in JavaScript are MISSING from ALL languages in TRANSLATIONS!"
+        for k in missing_js_keys:
+            report += f"\n  - {k}  <- {', '.join(js_key_refs[k])}"
+        print(report)
+        all_reports.append(report)
+    else:
+        print("\n[OK] All keys referenced in JavaScript are present in TRANSLATIONS.")
+
+    # Guard against hardcoded Spanish in user-facing calls. These strings must
+    # go through t() so English stays the default and other locales can override it.
+    spanish_markers = re.compile(
+        r"[áéíóúÁÉÍÓÚñÑ¿¡]|"
+        r"\b(no se|no hay|error al|el archivo|la imagen|los |las |debe |asegúrese|"
+        r"archivo|archivos|proyecto|portapapeles|tesela|teselas|fotograma|fotogramas|"
+        r"paleta|paletas|ventana|guardar|guarde|abrir|cargar|imagen|imágenes|imagenes)\b",
+        re.IGNORECASE,
+    )
+    user_call_pat = re.compile(r"\b(alert|showAlert|showConfirm|showChoice|showPasteNotification|throw\s+new\s+Error)\s*\(")
+    hardcoded_spanish = []
+    if os.path.isdir(js_dir):
+        for js_name in sorted(os.listdir(js_dir)):
+            if not js_name.endswith(".js") or js_name in ("translations.js", "translations.js.backup"):
+                continue
+            js_path = os.path.join(js_dir, js_name)
+            with open(js_path, "r", encoding="utf-8", errors="replace") as f:
+                for line_no, line in enumerate(f, 1):
+                    if not user_call_pat.search(line) or "t(" in line:
+                        continue
+                    if spanish_markers.search(line) and ('"' in line or "'" in line or "`" in line):
+                        hardcoded_spanish.append(f"{js_name}:{line_no}: {line.strip()}")
+
+    if hardcoded_spanish:
+        report = f"\n[CRITICAL] {len(hardcoded_spanish)} user-facing message(s) appear to be hardcoded in Spanish!"
+        for item in hardcoded_spanish:
+            report += f"\n  - {item}"
+        print(report)
+        all_reports.append(report)
+    else:
+        print("\n[OK] No hardcoded Spanish strings found in user-facing calls.")
+
     # Save report to file (save inside the Scripts folder)
     report_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "translation_audit.txt")
     with open(report_file, "w", encoding="utf-8") as f:
@@ -128,7 +185,7 @@ def main():
     
     print(f"Summary: {missing_langs_count} languages have missing keys. See Scripts/translation_audit.txt for details.")
 
-    if missing_langs_count > 0 or missing_from_all or missing_langs_top:
+    if missing_langs_count > 0 or missing_from_all or missing_langs_top or missing_js_keys or hardcoded_spanish:
         print("\n[FAILED] Translation parity check failed.")
         sys.exit(1)
     else:

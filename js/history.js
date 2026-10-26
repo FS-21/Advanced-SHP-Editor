@@ -1,8 +1,18 @@
 import { state } from './state.js';
 import { elements } from './constants.js';
-import { updateCanvasSize, renderFrameManager, clearThumbCaches } from './ui.js';
+import { updateCanvasSize, renderFrameManager, clearThumbCaches, renderPalette } from './ui.js';
 
 let hook_renderCanvas, hook_renderFramesList, hook_updateLayersList, hook_startAnts, hook_stopAnts, hook_updateUIState;
+
+function didCrossPaletteConversion(fromIdx, toIdx) {
+    if (!state.history || fromIdx === toIdx) return false;
+    const lo = Math.min(fromIdx, toIdx) + 1;
+    const hi = Math.max(fromIdx, toIdx);
+    for (let k = lo; k <= hi; k++) {
+        if (state.history[k] && state.history[k].hasPaletteConversion) return true;
+    }
+    return false;
+}
 
 export function initHistoryHooks(renderCanvasFn, renderFramesListFn, updateLayersListFn, startAntsFn, stopAntsFn, updateUIStateFn) {
     hook_renderCanvas = renderCanvasFn;
@@ -32,8 +42,9 @@ export function renderHistory() {
 
         el.onclick = () => {
             if (i === state.historyPtr) return;
+            const crossedPalConv = didCrossPaletteConversion(state.historyPtr, i);
             state.historyPtr = i;
-            restoreHistory(state.history[i]);
+            restoreHistory(state.history[i], crossedPalConv);
         };
         elements.historyList.appendChild(el);
     });
@@ -229,7 +240,8 @@ export function resetHistoryForFreshOpen() {
         activeLayerId: state.activeLayerId,
         currentFrameIdx: state.currentFrameIdx,
         tmpFullZPreviewActive: !!state.tmpFullZPreviewActive,
-        palette: state.palette.map(c => c ? { ...c } : null)
+        palette: state.palette.map(c => c ? { ...c } : null),
+        appliedPaletteId: state.appliedPaletteId || null
     }];
     state.historyPtr = 0;
     state.savedHistoryPtr = 0;
@@ -383,7 +395,8 @@ export function pushHistory(modifiedFrameIndices = null) {
         activeLayerId: state.activeLayerId, // Save so undo restores the correct active layer
         currentFrameIdx: state.currentFrameIdx, // Save the active frame
         tmpFullZPreviewActive: !!state.tmpFullZPreviewActive, // Save whether Full Z Preview is active
-        palette: state.palette.map(c => c ? { ...c } : null) // Snapshot the current palette
+        palette: state.palette.map(c => c ? { ...c } : null), // Snapshot the current palette
+        appliedPaletteId: state.appliedPaletteId || null
     });
 
     // Dynamic history limit based on project size to prevent excessive memory usage
@@ -426,8 +439,9 @@ export function pushHistory(modifiedFrameIndices = null) {
 
 export function undo() {
     if (state.historyPtr > 0 && state.historyPtr < state.history.length) {
+        const crossedPalConv = didCrossPaletteConversion(state.historyPtr, state.historyPtr - 1);
         state.historyPtr--;
-        restoreHistory(state.history[state.historyPtr]);
+        restoreHistory(state.history[state.historyPtr], crossedPalConv);
 
         // Update dirty flag
         state.hasChanges = (state.historyPtr !== state.savedHistoryPtr);
@@ -439,8 +453,9 @@ export function undo() {
 
 export function redo() {
     if (state.historyPtr >= 0 && state.historyPtr < state.history.length - 1) {
+        const crossedPalConv = didCrossPaletteConversion(state.historyPtr, state.historyPtr + 1);
         state.historyPtr++;
-        restoreHistory(state.history[state.historyPtr]);
+        restoreHistory(state.history[state.historyPtr], crossedPalConv);
         
         // Update dirty flag
         state.hasChanges = (state.historyPtr !== state.savedHistoryPtr);
@@ -450,7 +465,7 @@ export function redo() {
     }
 }
 
-export function restoreHistory(snapshot) {
+export function restoreHistory(snapshot, restorePalette = false) {
     if (!snapshot) return;
 
     clearThumbCaches();
@@ -509,8 +524,28 @@ export function restoreHistory(snapshot) {
         if (snapshot.currentFrameIdx !== undefined) state.currentFrameIdx = snapshot.currentFrameIdx;
         state.tmpFullZPreviewActive = snapshot.tmpFullZPreviewActive !== undefined ? snapshot.tmpFullZPreviewActive : false;
         
-        // Palette is an editor/tab viewing property, not an undoable pixel drawing step.
-        // Keep active palette stable during undo/redo operations.
+        if (restorePalette && snapshot.palette && snapshot.palette.length === 256) {
+            state.palette = snapshot.palette.map(c => c ? { ...c } : null);
+            state.paletteVersion = (state.paletteVersion || 0) + 1;
+            const palId = snapshot.appliedPaletteId !== undefined ? snapshot.appliedPaletteId : null;
+            state.appliedPaletteId = palId;
+            if (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) {
+                state.tabs[state.activeTabIndex].palette = state.palette.map(c => c ? { ...c } : null);
+                state.tabs[state.activeTabIndex].appliedPaletteId = palId;
+            }
+            if (typeof window.setActivePaletteId === 'function') {
+                window.setActivePaletteId(palId);
+            }
+            if (typeof window.syncPaletteSelector === 'function') {
+                window.syncPaletteSelector();
+            }
+            if (typeof window.refreshPalettesMenuDynamic === 'function') {
+                window.refreshPalettesMenuDynamic();
+            }
+            if (typeof renderPalette === 'function') {
+                renderPalette();
+            }
+        }
 
     } else {
         state.floatingSelection = null;

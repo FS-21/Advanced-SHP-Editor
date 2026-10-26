@@ -43,6 +43,17 @@ export function stopAnts() {
 
 
 
+export function snapCanvasWrapperToPixel() {
+    if (!elements.canvasWrapper || state.frames.length === 0) return;
+    elements.canvasWrapper.style.transform = '';
+    const rect = elements.canvasWrapper.getBoundingClientRect();
+    const fracX = rect.left - Math.round(rect.left);
+    const fracY = rect.top - Math.round(rect.top);
+    if (Math.abs(fracX) > 0.01 || Math.abs(fracY) > 0.01) {
+        elements.canvasWrapper.style.transform = `translate(${-fracX}px, ${-fracY}px)`;
+    }
+}
+
 export function updateCanvasSize() {
     const w = state.canvasW * state.zoom;
     const h = state.canvasH * state.zoom;
@@ -69,10 +80,17 @@ export function updateCanvasSize() {
     if (elements.canvasWrapper) {
         if (state.frames.length === 0) {
             elements.canvasWrapper.style.display = 'none';
+            elements.canvasWrapper.style.transform = '';
         } else {
             elements.canvasWrapper.style.display = 'block';
             elements.canvasWrapper.style.width = w + "px";
             elements.canvasWrapper.style.height = h + "px";
+            snapCanvasWrapperToPixel();
+        }
+        if (!elements.canvasWrapper._pixelSnapObserverAttached && elements.canvasWrapper.parentElement && typeof ResizeObserver !== 'undefined') {
+            elements.canvasWrapper._pixelSnapObserverAttached = true;
+            const ro = new ResizeObserver(() => snapCanvasWrapperToPixel());
+            ro.observe(elements.canvasWrapper.parentElement);
         }
     }
 
@@ -186,10 +204,10 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
             }
         }
         const scale = Math.min(1.0, w / shpW, h / shpH);
-        const drawW = shpW * scale;
-        const drawH = shpH * scale;
-        const offsetX = (w - drawW) / 2;
-        const offsetY = (h - drawH) / 2;
+        const drawW = Math.round(shpW * scale);
+        const drawH = Math.round(shpH * scale);
+        const offsetX = Math.floor((w - drawW) / 2);
+        const offsetY = Math.floor((h - drawH) / 2);
 
         for (let py = 0; py < h; py++) {
             for (let px = 0; px < w; px++) {
@@ -271,11 +289,11 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
     // Calculate scaling to fit box while preserving aspect ratio
     const scale = Math.min(1.0, w / layerW, h / layerH);
     const invScale = 1.0 / scale;
-    const drawW = layerW * scale;
-    const drawH = layerH * scale;
+    const drawW = Math.round(layerW * scale);
+    const drawH = Math.round(layerH * scale);
 
-    const offsetX = (w - drawW) / 2;
-    const offsetY = (h - drawH) / 2;
+    const offsetX = Math.floor((w - drawW) / 2);
+    const offsetY = Math.floor((h - drawH) / 2);
 
     for (let py = 0; py < h; py++) {
         const ly = Math.floor((py - offsetY) * invScale);
@@ -389,7 +407,7 @@ export function setColor(idx) {
     state.primaryColorIdx = idx;
     renderPalette();
 
-    const paletteToUse = getActivePalette();
+    const paletteToUse = state._hoverSidebarPalette || getActivePalette();
     const color = paletteToUse[idx];
     const p = elements.primaryColorPreview;
     if (p) {
@@ -2366,7 +2384,7 @@ export function renderPalette() {
     // Create cells (256 normally, only 2 in Shadows mode when on a shadow frame)
     const isShadowFrame = state.useShadows && (state.currentFrameIdx >= state.frames.length / 2);
     const maxCells = isShadowFrame ? 2 : 256;
-    const paletteToUse = getActivePalette();
+    const paletteToUse = state._hoverSidebarPalette || getActivePalette();
     for (let i = 0; i < maxCells; i++) {
         const div = document.createElement('div');
         div.className = 'pal-cell';
@@ -4828,13 +4846,13 @@ export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
             const ok = await nativeWriteClipboardImage(width, height, rgbaData);
             if (ok) {
                 console.log('Image copied directly to OS clipboard via native bridge.');
-                showPasteNotification("Selección copiada al portapapeles del sistema.", "success", 2500);
+                showPasteNotification(t('msg_selection_copied_clipboard'), "success", 2500);
                 return;
             }
         }
 
         if (!navigator.clipboard || !navigator.clipboard.write) {
-            showPasteNotification("El portapapeles está bloqueado por seguridad del navegador (usa HTTPS o localhost).", "warning", 4000);
+            showPasteNotification(t('msg_clipboard_blocked_security'), "warning", 4000);
             return;
         }
 
@@ -4844,14 +4862,14 @@ export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
                 new ClipboardItem({ 'image/png': blobPromise })
             ]);
             console.log('Image copied to system clipboard for external paste.');
-            showPasteNotification("Selección copiada al portapapeles del sistema.", "success", 2500);
+            showPasteNotification(t('msg_selection_copied_clipboard'), "success", 2500);
         } catch (err) {
             console.warn('Failed to write to system clipboard:', err);
-            showPasteNotification("Error al copiar al portapapeles: " + err.message, "error", 4000);
+            showPasteNotification(t('msg_clipboard_copy_failed', { error: err.message }), "error", 6000);
         }
     } catch (err) {
         console.warn('Failed to export to system clipboard:', err);
-        showPasteNotification("Error al exportar al portapapeles: " + err.message, "error", 4000);
+        showPasteNotification(t('msg_clipboard_export_failed', { error: err.message }), "error", 6000);
     }
 }
 
@@ -5759,12 +5777,12 @@ export function createFrameThumbnail(frame, w = 120, h = 90, options = {}) {
 
     // Reduced padding from 20 to 8 to achieve ~4px distance from edges as requested
     const pad = 8;
-    const scale = Math.min((w - pad) / frameW, (h - pad) / frameH);
-    const drawW = frameW * scale;
-    const drawH = frameH * scale;
+    const scale = Math.min(1.0, (w - pad) / frameW, (h - pad) / frameH);
+    const drawW = Math.round(frameW * scale);
+    const drawH = Math.round(frameH * scale);
 
-    const offsetX = (w - drawW) / 2;
-    const offsetY = (h - drawH) / 2;
+    const offsetX = Math.floor((w - drawW) / 2);
+    const offsetY = Math.floor((h - drawH) / 2);
 
     const id = ctx.createImageData(w, h);
     const d = id.data;

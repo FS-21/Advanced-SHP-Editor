@@ -47,7 +47,7 @@ import {
 
 import { resampleLayerData, rotateBufferArbitrary, shiftColorIndex } from './image_ops.js';
 import { bresenham, setupAutoRepeat, findNearestPaletteIndex, getActivePalette } from './utils.js';
-import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleSaveAsShp, handleSaveAll, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData } from './file_io.js';
+import { loadShpData, parsePaletteData, parsePaletteBuffer, handleSaveShp, handleSaveAsShp, handleSaveAll, handleClipboardPaste, processSystemImagePaste, loadTmpData, saveTmpData, handleFrameDrop, openDropImagePaletteDialog } from './file_io.js';
 import { initMenu, updateMenuState, setupImageMenuHandlers, initRecentFiles, saveRecentFile, setTdRaShadowMode, getRecentFilePathByName } from './menu_handlers.js';
 import { setupPaletteMenu, setActivePaletteId, getActivePaletteId, getLib, findNodeById, updatePaletteSelectorUI } from './palette_menu.js';
 import { initExternalShpDialog, openExternalShpDialog } from './external_shp.js';
@@ -105,9 +105,31 @@ export function updateUIState() {
 }
 
 
+function hideSplash(immediate = false) {
+    const splash = document.getElementById('splashScreen');
+    if (!splash) return;
+    if (immediate) {
+        splash.remove();
+        return;
+    }
+    splash.classList.add('hidden');
+    setTimeout(() => splash.remove(), 1000); // Remove from DOM after transition
+}
+
+function getCliFilePaths(args) {
+    return (Array.isArray(args) ? args : []).filter(a =>
+        typeof a === 'string' && a.length > 0 && !a.startsWith('-')
+    );
+}
+
 function init() {
     window.updateUIState = updateUIState;
     window.state = state;
+    let showSplash = true;
+    try {
+        showSplash = localStorage.getItem('ase_pref_show_splash') !== '0';
+    } catch (e) {}
+    if (!showSplash) hideSplash(true);
     try {
 
         initLanguageSelector(); // Init translations
@@ -180,13 +202,9 @@ function init() {
 
 
         // Splash Screen Logic
-        setTimeout(() => {
-            const splash = document.getElementById('splashScreen');
-            if (splash) {
-                splash.classList.add('hidden');
-                setTimeout(() => splash.remove(), 1000); // Remove from DOM after transition
-            }
-        }, 1500);
+        if (showSplash) {
+            setTimeout(() => hideSplash(false), 1500);
+        }
 
         // Initialize UI state visibility
         updateUIState();
@@ -196,13 +214,12 @@ function init() {
 
         // Check for CLI arguments on startup (e.g. file association double-click)
         if (isNativeApp()) {
-            nativeGetCliArgs().then(args => {
-                if (args && args.length > 0) {
-                    const filePaths = args.filter(a => !a.startsWith('-') && !a.startsWith('/'));
-                    if (filePaths.length > 0) {
-                        console.log('[Native CLI] Opening startup files:', filePaths);
-                        openNativePaths(filePaths);
-                    }
+            nativeGetCliArgs().then(async args => {
+                const filePaths = getCliFilePaths(args);
+                if (filePaths.length > 0) {
+                    hideSplash(true);
+                    console.log('[Native CLI] Opening startup files:', filePaths);
+                    await openNativePaths(filePaths);
                 }
             }).catch(err => {
                 console.warn('[Native CLI] Error checking startup args:', err);
@@ -273,7 +290,7 @@ function setupEventListeners() {
             const hasUnsaved = state.tabs && state.tabs.some(t => t.hasChanges);
             if (hasUnsaved) {
                 e.preventDefault();
-                showPasteNotification("Acción bloqueada: guarde sus cambios antes de recargar.", "warning", 3000);
+                showPasteNotification(t('msg_reload_blocked_unsaved'), "warning", 4000);
                 return;
             }
         }
@@ -2326,7 +2343,7 @@ export function openNewShpDialog() {
     if (document.getElementById('inpNewShpH')) document.getElementById('inpNewShpH').value = startH;
     if (document.getElementById('inpNewShpF')) document.getElementById('inpNewShpF').value = 1;
     if (document.getElementById('selNewShpFormat')) document.getElementById('selNewShpFormat').value = "ts_ra2";
-    if (document.getElementById('selNewShpComp')) document.getElementById('selNewShpComp').value = "3";
+    syncNewShpCompressionOptions("ts_ra2");
     if (document.getElementById('cbNewShpSolid')) document.getElementById('cbNewShpSolid').checked = true;
 
     // Reset Palette or Inherit from Current Project
@@ -2390,8 +2407,34 @@ export function openNewShpDialog() {
     }
 }
 
+function syncNewShpCompressionOptions(shpFormat) {
+    const compEl = document.getElementById('selNewShpComp');
+    if (!compEl) return;
+    if (shpFormat === 'td_ra') {
+        compEl.innerHTML = `
+            <option value="80">${t('opt_compression_80') || 'Format 80 (LCW)'}</option>
+            <option value="0">${t('opt_compression_0') || 'Format 0 (Uncompressed)'}</option>
+        `;
+        const savedTdComp = localStorage.getItem('ase_pref_default_comp_td_ra');
+        compEl.value = (savedTdComp === '0' || savedTdComp === '80') ? savedTdComp : '80';
+    } else {
+        compEl.innerHTML = `
+            <option value="3">${t('opt_compression_3') || 'Type 3 (RLE)'}</option>
+            <option value="1">${t('opt_compression_1') || 'Type 1 (Uncompressed)'}</option>
+        `;
+        const savedTsComp = localStorage.getItem('ase_pref_default_comp');
+        compEl.value = (savedTsComp === '1' || savedTsComp === '3') ? savedTsComp : '3';
+    }
+}
+
 function initNewShpDialog() {
     const dialog = document.getElementById('newShpDialog');
+    const selFormat = document.getElementById('selNewShpFormat');
+    if (selFormat) {
+        selFormat.onchange = () => {
+            syncNewShpCompressionOptions(selFormat.value);
+        };
+    }
     const btnCancel = document.getElementById('btnNewShpCancel');
     const btnCreate = document.getElementById('btnNewShpCreate');
     const btnLoadPal = document.getElementById('btnNewShpLoadPal');
@@ -2430,8 +2473,11 @@ function initNewShpDialog() {
             }
 
             const f = parseInt(document.getElementById('inpNewShpF').value) || 1;
+            const formatEl = document.getElementById('selNewShpFormat');
+            const shpFormat = formatEl ? formatEl.value : 'ts_ra2';
             const compEl = document.getElementById('selNewShpComp');
-            const comp = compEl ? parseInt(compEl.value) : 3;
+            const parsedComp = compEl ? parseInt(compEl.value, 10) : NaN;
+            const comp = Number.isFinite(parsedComp) ? parsedComp : (shpFormat === 'td_ra' ? 80 : 3);
 
             // Shadows always start disabled for new projects (toggled via toolbar later)
             const useShadows = false;
@@ -2446,8 +2492,6 @@ function initNewShpDialog() {
 
             if (confirmed) {
                 const finalPal = window.tempNewShpPalette || tempNewShpPalette;
-                const formatEl = document.getElementById('selNewShpFormat');
-                const shpFormat = formatEl ? formatEl.value : 'ts_ra2';
                 createNewProject(w, h, f, useShadows, finalPal, comp, solidStart, shpFormat);
 
                 if (window._tempNewShpPaletteId) {
@@ -2542,7 +2586,7 @@ async function systemClipboardInterceptor() {
     } catch (err) {
         console.warn("Clipboard API restricted or blocked by user. Standard paste event remains fallback.");
         if (err.name === 'NotAllowedError') {
-             showPasteNotification("🔒 Navegador bloqueó acceso al portapapeles. Habilítalo o inténtalo de nuevo.", "warning", 3000);
+             showPasteNotification(t('msg_clipboard_blocked_browser'), "warning", 4000);
         }
     }
     return false;
@@ -2626,11 +2670,27 @@ window.addEventListener('keydown', (e) => {
 }, { capture: true, passive: false });
 
 // --- FILE TYPE DETECTION & GLOBAL DRAG AND DROP OVERLAY ---
+export function isSupportedImageFile(f) {
+    if (!f) return false;
+    if (f.type && f.type.startsWith('image/')) return true;
+    return /\.(png|pcx|bmp|jpe?g|jfif|pjpeg|pjp|webp|gif|avif|ico|svg|tif?f)$/i.test(f.name || '');
+}
+
 export function detectFileType(buffer) {
     if (buffer && ArrayBuffer.isView(buffer)) {
-        buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteLength + buffer.byteOffset);
     }
-    if (buffer.byteLength < 16) return 'unknown';
+    if (!buffer || buffer.byteLength < 16) return 'unknown';
+    const u8 = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 16));
+    // Reject standard image signatures immediately (PNG, JPEG, GIF, BMP, RIFF/WEBP)
+    if ((u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47) ||
+        (u8[0] === 0xFF && u8[1] === 0xD8 && u8[2] === 0xFF) ||
+        (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x38) ||
+        (u8[0] === 0x42 && u8[1] === 0x4D) ||
+        (u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46)) {
+        return 'unknown';
+    }
+
     const dv = new DataView(buffer);
     try {
         const cblocks_x = dv.getInt32(0, true);
@@ -2647,25 +2707,45 @@ export function detectFileType(buffer) {
         }
     } catch (e) {}
     
-        if (typeof ShpTdRaFormat !== 'undefined' && ShpTdRaFormat.isTdRaShp(buffer)) {
-            return 'shp';
-        }
+    if (typeof ShpTdRaFormat !== 'undefined' && ShpTdRaFormat.isTdRaShp(buffer)) {
+        return 'shp';
+    }
 
-        if (buffer.byteLength >= 8) {
-            try {
-                const type = dv.getUint16(0, true);
-                const width = dv.getUint16(2, true);
-                const height = dv.getUint16(4, true);
-                const numImages = dv.getUint16(6, true);
-                
-                if (width > 0 && height > 0 && numImages > 0 && buffer.byteLength >= 8 + numImages * 24) {
+    if (buffer.byteLength >= 32) {
+        try {
+            const type = dv.getUint16(0, true);
+            const width = dv.getUint16(2, true);
+            const height = dv.getUint16(4, true);
+            const numImages = dv.getUint16(6, true);
+            const headerEnd = 8 + numImages * 24;
+
+            if (type === 0 && width > 0 && width <= 4096 && height > 0 && height <= 4096 &&
+                numImages > 0 && numImages <= 10000 && buffer.byteLength >= headerEnd) {
+                const checkCount = Math.min(numImages, 5);
+                let headersValid = true;
+                for (let i = 0; i < checkCount; i++) {
+                    const fhOff = 8 + i * 24;
+                    const subW = dv.getUint16(fhOff + 4, true);
+                    const subH = dv.getUint16(fhOff + 6, true);
+                    const dataOffset = dv.getUint32(fhOff + 20, true);
+                    if (subW > width || subH > height) {
+                        headersValid = false;
+                        break;
+                    }
+                    if (dataOffset !== 0 && (dataOffset < headerEnd || dataOffset >= buffer.byteLength)) {
+                        headersValid = false;
+                        break;
+                    }
+                }
+                if (headersValid) {
                     return 'shp';
                 }
-            } catch (e) {}
-        }
-        
-        return 'unknown';
+            }
+        } catch (e) {}
     }
+    
+    return 'unknown';
+}
 
 let dragCounter = 0;
 
@@ -2773,12 +2853,12 @@ export async function processSystemFileOpen(file, handle = null, preloadedBuffer
             return true;
         } else {
             console.warn(`[FileOpen] Unknown signature for: ${file.name}`);
-            alert(`Error: Formato de archivo no soportado o inválido para ${file.name}. Asegúrese de que sea un archivo SHP o TMP válido.`);
+            showPasteNotification(t('msg_unsupported_file_format', { filename: file.name }), 'error', 8000);
             return false;
         }
     } catch (err) {
         console.error(`[FileOpen] Error loading file ${file.name}:`, err);
-        alert(`Error al abrir ${file.name}: ${err.message}`);
+        showPasteNotification(t('msg_error_opening_file', { filename: file.name, error: err.message }), 'error', 8000);
         return false;
     }
 }
@@ -2791,7 +2871,7 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
     const batchCurrentFile = document.getElementById('batchLoadingCurrentFile');
     const batchProgressFill = document.getElementById('batchLoadingProgressFill');
     const batchPercent = document.getElementById('batchLoadingPercent');
-    const t = state.translations || {};
+    const tr = state.translations || {};
 
     const isBatch = files.length >= 2;
     if (isBatch && batchDialog) {
@@ -2799,7 +2879,7 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
         if (batchPercent) batchPercent.textContent = '0%';
         if (batchCount) batchCount.textContent = `0 / ${files.length}`;
         if (batchCurrentFile) {
-            batchCurrentFile.textContent = (t.lbl_batch_reading_file || 'Reading {current} of {total}: {filename}')
+            batchCurrentFile.textContent = (tr.lbl_batch_reading_file || 'Reading {current} of {total}: {filename}')
                 .replace('{current}', '1')
                 .replace('{total}', String(files.length))
                 .replace('{filename}', files[0].name);
@@ -2815,6 +2895,7 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
 
     // Scan files and collect all valid SHP or TMP files with live progress
     const validEntries = [];
+    const invalidEntries = [];
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const handle = (fileHandles && fileHandles[i]) || null;
@@ -2867,7 +2948,7 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
             if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
             if (batchPercent) batchPercent.textContent = `${pct}%`;
             if (batchCurrentFile) {
-                batchCurrentFile.textContent = (t.lbl_batch_reading_file || 'Reading {current} of {total}: {filename}')
+                batchCurrentFile.textContent = (tr.lbl_batch_reading_file || 'Reading {current} of {total}: {filename}')
                     .replace('{current}', String(currentNum))
                     .replace('{total}', String(files.length))
                     .replace('{filename}', file.name);
@@ -2880,9 +2961,15 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
             const type = detectFileType(buffer);
             if (type === 'shp' || type === 'tmp') {
                 validEntries.push({ file, handle, filePath, buffer, type });
+            } else {
+                invalidEntries.push({
+                    file,
+                    reason: buffer.byteLength === 0 ? 'empty' : 'invalid'
+                });
             }
         } catch (err) {
             console.error("Error reading file in selection:", file.name, err);
+            invalidEntries.push({ file, reason: 'read-error', error: err });
         }
     }
 
@@ -2891,7 +2978,21 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
             if (typeof batchDialog.close === 'function') batchDialog.close();
             else batchDialog.removeAttribute('open');
         }
-        alert("No se detectó ningún archivo SHP o TMP válido entre los elementos seleccionados. Asegúrese de que sean archivos SHP o TMP válidos.");
+        if (invalidEntries.length === 1) {
+            const entry = invalidEntries[0];
+            if (entry.reason === 'empty') {
+                showPasteNotification(t('msg_file_empty', { file: entry.file.name }), 'error', 8000);
+            } else if (entry.reason === 'read-error') {
+                showPasteNotification(t('msg_error_opening_file', {
+                    filename: entry.file.name,
+                    error: entry.error?.message || String(entry.error)
+                }), 'error', 8000);
+            } else {
+                showPasteNotification(t('msg_unsupported_file_format', { filename: entry.file.name }), 'error', 8000);
+            }
+        } else {
+            showPasteNotification(t('msg_no_valid_shp_tmp_files'), 'error', 8000);
+        }
         return;
     }
 
@@ -2899,7 +3000,15 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
     const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
     const isCurrentTabEmpty = curTab && state.frames.length === 0 && !state.hasChanges && !curTab.fileName;
 
+    const closeBatchModal = () => {
+        if (isBatch && batchDialog) {
+            if (typeof batchDialog.close === 'function') batchDialog.close();
+            else batchDialog.removeAttribute('open');
+        }
+    };
+
     if (validEntries.length === 1) {
+        closeBatchModal();
         const { file, handle, filePath, buffer } = validEntries[0];
         if (isCurrentTabEmpty) {
             await processSystemFileOpen(file, handle, buffer, filePath);
@@ -2930,7 +3039,7 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
             if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
             if (batchPercent) batchPercent.textContent = `${pct}%`;
             if (batchCurrentFile) {
-                batchCurrentFile.textContent = (t.lbl_batch_loading_file || 'Opening {current} of {total}: {filename}')
+                batchCurrentFile.textContent = (tr.lbl_batch_loading_file || 'Opening {current} of {total}: {filename}')
                     .replace('{current}', String(currentNum))
                     .replace('{total}', String(validEntries.length))
                     .replace('{filename}', file.name);
@@ -2938,17 +3047,21 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
             await new Promise(resolve => setTimeout(resolve, 0));
         }
 
-        const bgTab = createBackgroundTabForFile(entry);
-        if (filePath) {
-            if (typeof saveRecentFile === 'function') {
-                saveRecentFile(file.name, filePath);
+        try {
+            const bgTab = createBackgroundTabForFile(entry);
+            if (filePath) {
+                if (typeof saveRecentFile === 'function') {
+                    saveRecentFile(file.name, filePath);
+                }
+            } else if (handle) {
+                if (typeof saveRecentFile === 'function') {
+                    saveRecentFile(file.name, handle);
+                }
             }
-        } else if (handle) {
-            if (typeof saveRecentFile === 'function') {
-                saveRecentFile(file.name, handle);
-            }
+            state.tabs.push(bgTab);
+        } catch (err) {
+            console.error('[BatchOpen] Error creating tab for:', file.name, err);
         }
-        state.tabs.push(bgTab);
     }
 
     // Update tab strip so all newly opened tabs appear
@@ -2961,7 +3074,7 @@ export async function openFilesBatch(files, fileHandles = [], filePaths = []) {
         if (typeof batchDialog.close === 'function') batchDialog.close();
         else batchDialog.removeAttribute('open');
 
-        const successMsg = (t.msg_batch_loading_success || '✅ Opened {count} file(s) successfully')
+        const successMsg = (tr.msg_batch_loading_success || '✅ Opened {count} file(s) successfully')
             .replace('{count}', String(validEntries.length));
         showPasteNotification(successMsg, 'success', 2500);
     }
@@ -2975,7 +3088,7 @@ export async function openNativePaths(paths) {
         try {
             const u8 = await nativeReadFile(p);
             const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-            const name = p.split(/[/\\]/).pop();
+            const name = p.split(/[/\\]/).pop() || p;
             files.push({
                 name,
                 path: p,
@@ -2995,7 +3108,27 @@ export async function openNativePaths(paths) {
                 return;
             }
         }
-        await openFilesBatch(files, [], filePaths);
+        const imageFiles = files.filter(isSupportedImageFile);
+        const nonImageIndices = [];
+        files.forEach((f, idx) => {
+            if (!isSupportedImageFile(f)) nonImageIndices.push(idx);
+        });
+        if (imageFiles.length > 0 && nonImageIndices.length === 0) {
+            if (state.frames && state.frames.length > 0) {
+                await handleFrameDrop(imageFiles);
+            } else {
+                await openDropImagePaletteDialog(imageFiles);
+            }
+            return;
+        }
+        if (nonImageIndices.length > 0) {
+            const nonImgFiles = nonImageIndices.map(i => files[i]);
+            const nonImgPaths = nonImageIndices.map(i => filePaths[i]);
+            await openFilesBatch(nonImgFiles, [], nonImgPaths);
+        }
+        if (imageFiles.length > 0) {
+            await openDropImagePaletteDialog(imageFiles);
+        }
     }
 }
 
@@ -3010,6 +3143,32 @@ if (isNativeApp()) {
         if (Array.isArray(paths) && paths.length > 0) {
             await openNativePaths(paths);
         }
+    });
+
+    // When a second instance is launched (e.g. file association), the Rust
+    // single-instance plugin forwards its argv here so files open as new tabs
+    // in the already-running window instead of spawning another window.
+    let _lastSingleInstanceSig = '';
+    let _lastSingleInstanceTime = 0;
+    const handleSingleInstanceArgs = async (rawArgs) => {
+        const args = Array.isArray(rawArgs) ? rawArgs : [];
+        const filePaths = getCliFilePaths(args.slice(1));
+        if (filePaths.length > 0) {
+            const now = Date.now();
+            const sig = filePaths.join('|');
+            if (sig === _lastSingleInstanceSig && (now - _lastSingleInstanceTime) < 600) {
+                return;
+            }
+            _lastSingleInstanceSig = sig;
+            _lastSingleInstanceTime = now;
+            hideSplash(true);
+            console.log('[SingleInstance] Opening files:', filePaths);
+            await openNativePaths(filePaths);
+        }
+    };
+    window.__handleSingleInstanceArgs = handleSingleInstanceArgs;
+    nativeListenEvent('single-instance', async (event) => {
+        await handleSingleInstanceArgs(event?.payload);
     });
 }
 
@@ -3046,11 +3205,10 @@ window.addEventListener('focus', async () => {
     const diskMtime = await nativeGetFileModifiedTime(curTab.filePath);
     if (diskMtime && diskMtime > curTab.fileLastModified + 2000) {
         curTab.fileLastModified = diskMtime;
-        const fileName = curTab.fileName || 'archivo';
-        const promptMsg = (t('msg_file_modified_disk') || "El archivo '{file}' ha sido modificado externamente por otro programa. ¿Desea recargarlo desde el disco?")
-            .replace('{file}', fileName);
+        const fileName = curTab.fileName || t('lbl_untitled_file');
+        const promptMsg = t('msg_file_modified_disk', { file: fileName });
         const reloadConfirmed = await showConfirm(
-            t('dlg_reload_file_title') || 'Archivo modificado externamente',
+            t('dlg_reload_file_title'),
             promptMsg
         );
         if (reloadConfirmed) {
@@ -3109,21 +3267,17 @@ document.addEventListener('drop', async (e) => {
         })
     );
 
-    // Check if the user dropped image files (PNG/PCX)
-    // If they did, handle frame drop (multi-import is supported for images)
-    const isImageCollection = files.every(f => {
-        const ext = f.name.split('.').pop().toLowerCase();
-        return ext === 'png' || ext === 'pcx';
+    const imageFiles = files.filter(isSupportedImageFile);
+    const nonImageIndices = [];
+    files.forEach((f, idx) => {
+        if (!isSupportedImageFile(f)) nonImageIndices.push(idx);
     });
-    if (isImageCollection) {
+
+    if (imageFiles.length > 0 && nonImageIndices.length === 0) {
         if (state.frames && state.frames.length > 0) {
-            import('./file_io.js').then(module => {
-                if (typeof module.handleFrameDrop === 'function') {
-                    module.handleFrameDrop(files);
-                }
-            });
+            await handleFrameDrop(imageFiles);
         } else {
-            alert("Debe tener un proyecto abierto para importar imágenes como nuevos fotogramas.");
+            await openDropImagePaletteDialog(imageFiles);
         }
         return;
     }
@@ -3140,5 +3294,13 @@ document.addEventListener('drop', async (e) => {
             console.warn('[Drop] Failed to resolve dropped files:', err);
         }
     }
-    await openFilesBatch(files, fileHandles, filePaths);
+    if (nonImageIndices.length > 0) {
+        const nonImgFiles = nonImageIndices.map(i => files[i]);
+        const nonImgHandles = nonImageIndices.map(i => fileHandles[i]);
+        const nonImgPaths = nonImageIndices.map(i => filePaths[i]);
+        await openFilesBatch(nonImgFiles, nonImgHandles, nonImgPaths);
+    }
+    if (imageFiles.length > 0) {
+        await openDropImagePaletteDialog(imageFiles);
+    }
 });

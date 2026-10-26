@@ -6,6 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>const APP_VERSION = 'v4.2.0';</script>
     <script>
+        // Apply the saved splash preference before first paint to avoid a flash.
+        try {
+            if (localStorage.getItem('ase_pref_show_splash') === '0') {
+                document.documentElement.classList.add('no-splash');
+            }
+        } catch (e) {}
+    </script>
+    <script>
         // CnCReloadedMode: Defaults to true (standard on web), user-toggleable via Preferences
         const _savedReloaded = localStorage.getItem('ase_pref_show_cncreloaded');
         window.CnCReloadedMode = _savedReloaded !== '0';
@@ -125,7 +133,7 @@
                         keys.forEach(k => caches.delete(k));
                     });
                 }
-            } else {
+            } else if (typeof location !== 'undefined' && (location.protocol === 'http:' || location.protocol === 'https:')) {
                 window.addEventListener('load', () => {
                     navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
                 });
@@ -489,8 +497,8 @@
                             <span class="menu-icon icon-invert"></span><span data-i18n="menu_invert_sel">Invert
                                 Selection</span><span class="shortcut">Ctrl+I</span>
                         </div>
-                        <div id="menuPreferencesDivider" class="menu-divider" style="display: none;"></div>
-                        <div id="menuPreferences" class="menu-action" data-i18n-title="tt_menu_preferences" style="display: none;">
+                        <div id="menuPreferencesDivider" class="menu-divider"></div>
+                        <div id="menuPreferences" class="menu-action" data-i18n-title="tt_menu_preferences">
                             <span class="menu-icon icon-preferences"></span><span data-i18n="menu_preferences">Preferences...</span>
                         </div>
                     </div>
@@ -1058,20 +1066,6 @@
 
                 <div class="toolbar-sep"></div>
             </div> <!-- End of topBarControls -->
-
-            <!-- Language Selector Spacer -->
-            <div style="flex: 1;"></div>
-
-            <select id="langSelector" class="input-dark" style="font-size: 11px; padding: 2px 4px; margin-left: 10px;"
-                data-i18n-title="tt_lang">
-                <option value="en">English</option>
-                <option value="es">Español (Spanish)</option>
-                <option value="ru">Русский (Russian)</option>
-                <option value="zh-hant">繁體中文 (Traditional Chinese)</option>
-                <option value="zh-hans">简体中文 (Simplified Chinese)</option>
-                <option value="de">Deutsch (German)</option>
-                <option value="fr">Français (French)</option>
-            </select>
         </div>
 
         <!-- MAIN LAYOUT -->
@@ -1509,8 +1503,8 @@
                         <div id="pasteNotification" class="notification-bar">
                             <span id="pasteNotificationContent" style="display: flex; align-items: center; gap: 10px;">
                                 <span id="pasteNotificationIcon" class="notification-icon" style="font-size: 20px;">⚠️</span>
-                                <span id="pasteNotificationMsg" class="notification-text">Aviso: Usa Ctrl+V para forzar el pegado de tu
-                                    imagen.</span>
+                                <span id="pasteNotificationMsg" class="notification-text">Notice: Use Ctrl+V to force pasting your
+                                    image.</span>
                             </span>
                             <button class="close-btn" onclick="this.parentElement.classList.remove('active')">×</button>
                         </div>
@@ -2467,7 +2461,7 @@
             <button id="btnImpFromImageCancel" class="btn-cancel" data-i18n="btn_cancel">CANCEL</button>
             <button id="btnImpFromImageOk" class="btn-download" disabled data-i18n="btn_import">IMPORT</button>
         </div>
-        <input type="file" id="fileImpFromImage" accept=".png,.pcx" multiple hidden>
+        <input type="file" id="fileImpFromImage" accept=".png,.pcx,.bmp,.jpg,.jpeg,.jfif,.pjpeg,.pjp,.webp,.gif,.avif,.ico,.svg,.tif,.tiff,image/*" multiple hidden>
     </dialog>
 
     <dialog id="importShpDialog" class="dialog-modal" style="width: 800px; max-width: 95vw; background: #0f111a;">
@@ -2546,6 +2540,68 @@
         <!-- Hidden inputs -->
         <input type="file" id="inpImpShpPal" accept=".pal" hidden>
         <input type="file" id="inpImpShpFile" accept=".shp,.sha" hidden>
+    </dialog>
+    <!-- DROP EXTERNAL IMAGES PALETTE CONVERSION DIALOG -->
+    <dialog id="dropImagePaletteDialog" class="dialog-modal" style="width: 780px; max-width: 95vw; background: #0f111a;">
+        <h3 style="color: var(--accent); letter-spacing: 1px;" data-i18n="dlg_drop_img_title">CONVERT DROPPED IMAGES TO PALETTE</h3>
+
+        <div style="display:flex; gap:15px; height:450px; margin-top: 15px;">
+            <!-- Col 1: Palette Selection -->
+            <div style="flex: 1; display:flex; flex-direction:column;">
+                <div class="analysis-header" data-i18n="dlg_drop_img_step1">1. Select Palette</div>
+                <div class="menu-item palette-selector-menu height-auto" id="menuItemDropImgPalettes"
+                    style="margin-bottom: 5px;">
+                    <button class="menu-btn"
+                        style="width:100%; text-align:left; display:flex; justify-content:space-between; padding: 8px 12px; border: 1px solid var(--border); background: var(--bg-input); border-radius: 4px; color: var(--accent); font-weight: bold;">
+                        <span data-i18n="btn_select_palette">🎨 SELECT PALETTE</span>
+                        <span class="arrow" style="opacity: 0.5;">▼</span>
+                    </button>
+                    <div class="menu-dropdown" id="dropImgPalettesMenuDropdown"
+                        style="width: 240px; min-width: 240px; margin-top: 2px;">
+                        <!-- Content populated by JS -->
+                    </div>
+                </div>
+                <button id="btnDropImgNoPalette" class="btn"
+                    style="width: 100%; margin-bottom: 4px; padding: 6px 10px; font-size: 11px; border: 1px solid var(--border); background: #1a202c; color: #cbd5e1; border-radius: 4px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;"
+                    data-i18n="btn_no_palette_original">
+                    🖼️ No Palette (Original Image)
+                </button>
+                <button id="btnDropImgCreatePalette" class="btn"
+                    style="width: 100%; margin-bottom: 6px; padding: 6px 10px; font-size: 11px; border: 1px solid var(--border); background: #1a202c; color: var(--accent); border-radius: 4px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-weight: bold;"
+                    data-i18n="btn_create_img_palette">
+                    ✨ Create Custom Palette
+                </button>
+                <div id="dropImgPalGrid" class="palette-grid-wrapper"></div>
+            </div>
+
+            <!-- Col 2: Image Preview -->
+            <div style="flex: 2; display:flex; flex-direction:column;">
+                <div class="analysis-header" data-i18n="dlg_drop_img_step2">2. Image Preview</div>
+                <div style="font-size:12px; color: var(--text-muted); margin-bottom: 5px; font-family: monospace;">
+                    <span data-i18n="lbl_filename">Filename:</span> <span id="dropImgFileInfo" style="color:var(--accent);">-</span>
+                </div>
+                <div style="flex:1; position:relative; display:flex; align-items:center; justify-content:center; border:1px solid var(--border); overflow:hidden;"
+                    class="checkerboard-bg">
+                    <canvas id="dropImgPreviewCanvas" style="max-width:100%; max-height:100%; image-rendering:pixelated;"></canvas>
+                </div>
+                <div id="dropImgSamePaletteRow"
+                    style="padding: 8px 10px; background: #1a202c; border: 1px solid var(--border); border-top: none; display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="chkDropImgSamePalette" style="cursor: pointer; accent-color: var(--accent);">
+                    <label for="chkDropImgSamePalette" style="font-size: 11px; color: #ddd; cursor: pointer;"
+                        data-i18n="lbl_drop_img_same_palette">Use the same palette for all images</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="dialog-footer" style="padding-top: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <button id="btnCancelDropImg" class="btn-cancel" style="border: 1px solid #4a5568;"
+                data-i18n="btn_cancel">CANCEL</button>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="btnPrevDropImg" class="btn" style="border: 1px solid #4a5568; padding: 8px 18px; display: none;"
+                    data-i18n="btn_previous">PREVIOUS</button>
+                <button id="btnConfirmDropImg" class="btn-download" data-i18n="btn_next">NEXT</button>
+            </div>
+        </div>
     </dialog>
     <!-- CONVERT IMAGE PALETTE DIALOG -->
     <dialog id="convertPaletteDialog" class="dialog-modal" style="width: 960px; max-width: 96vw; background: #0f111a;">
@@ -3044,7 +3100,7 @@
         </p>
 
         <!-- Section: File Associations -->
-        <div style="margin-bottom: 18px; background: #1a202c; padding: 16px 18px; border-radius: 6px; border: 1px solid #2d3748;">
+        <div id="prefAssociationsSection" style="margin-bottom: 18px; background: #1a202c; padding: 16px 18px; border-radius: 6px; border: 1px solid #2d3748;">
             <div style="font-family: monospace; font-size: 13px; color: #cbd5e0; font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
                 <span data-i18n="lbl_pref_associations">🔗 Windows File Associations</span>
                 <span id="assocStatusBadge" style="font-size: 11px; padding: 2px 10px; border-radius: 4px; background: #2d3748; color: #a0aec0;" data-i18n="lbl_pref_assoc_ready">Ready</span>
@@ -3110,26 +3166,33 @@
             <div style="font-family: monospace; font-size: 13px; color: #cbd5e0; font-weight: bold; margin-bottom: 14px;" data-i18n="lbl_pref_general">
                 🎨 General Editor Defaults
             </div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 16px;">
                 <div>
-                    <label for="selPrefLanguage" style="min-height: 26px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_language">Language:</label>
-                    <select id="selPrefLanguage" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
+                    <label for="selPrefLanguage" style="min-height: 22px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_language">Language:</label>
+                    <select id="selPrefLanguage" class="input-dark" data-i18n-title="tt_lang" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
                     </select>
                 </div>
                 <div>
-                    <label for="selPrefDefaultCompression" style="min-height: 26px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_default_compression">Default Compression (New Project):</label>
+                    <label for="selPrefStartupPalette" style="min-height: 22px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_startup_palette">Startup Palette:</label>
+                    <select id="selPrefStartupPalette" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
+                        <option value="remember" data-i18n="lbl_pref_remember_palette">Remember last palette</option>
+                        <option value="none" data-i18n="lbl_pref_palette_none">None (Blank palette)</option>
+                        <option value="game_ts_unittem">TS Temperate (Unit)</option>
+                        <option value="game_ra2_unittem">RA2 Temperate (Unit)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="selPrefDefaultCompression" style="min-height: 22px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_default_compression">Default Compression — TS / RA2 SHP:</label>
                     <select id="selPrefDefaultCompression" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
                         <option value="3" data-i18n="opt_compression_3">Type 3 (RLE)</option>
                         <option value="1" data-i18n="opt_compression_1">Type 1 (Uncompressed)</option>
                     </select>
                 </div>
                 <div>
-                    <label for="selPrefStartupPalette" style="min-height: 26px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_startup_palette">Startup Palette:</label>
-                    <select id="selPrefStartupPalette" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
-                        <option value="remember" data-i18n="lbl_pref_remember_palette">Remember last palette</option>
-                        <option value="none" data-i18n="lbl_pref_palette_none">None (Blank palette)</option>
-                        <option value="game_ts_unittem">TS Temperate (Unit)</option>
-                        <option value="game_ra2_unittem">RA2 Temperate (Unit)</option>
+                    <label for="selPrefDefaultCompressionTdRa" style="min-height: 22px; display: flex; align-items: flex-end; font-size: 11px; color: #a0aec0; margin-bottom: 6px;" data-i18n="lbl_pref_default_compression_td_ra">Default Compression — TD / RA1 SHP:</label>
+                    <select id="selPrefDefaultCompressionTdRa" class="input-dark" style="width: 100%; height: 32px; font-size: 12px; background: #0f141c; border: 1px solid #4a5568; border-radius: 4px; color: #fff; padding: 0 8px;">
+                        <option value="80" data-i18n="opt_compression_80">Format 80 (LCW)</option>
+                        <option value="0" data-i18n="opt_compression_0">Format 0 (Uncompressed)</option>
                     </select>
                 </div>
             </div>
@@ -3141,6 +3204,10 @@
                 <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #e2e8f0; cursor: pointer; user-select: none;">
                     <input type="checkbox" id="cbPrefShowCnCReloaded" style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);" checked>
                     <span data-i18n="lbl_pref_show_cncreloaded">Show C&amp;C Reloaded palette group</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #e2e8f0; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="cbPrefShowSplash" style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);" checked>
+                    <span data-i18n="lbl_pref_show_splash">Show splash screen on startup</span>
                 </label>
             </div>
         </div>
@@ -3872,10 +3939,12 @@
                 <div id="palMgrPreviewName"
                     style="font-size:11px; color:#aaa; margin-top:6px; text-align:center; min-height: 14px;">
                 </div>
-                <!-- Apply Button -->
-                <div style="margin-top: 10px; text-align: center;">
-                    <button id="btnPalMgrApply" class="btn btn-xs" style="padding: 6px 24px; font-weight: bold;"
+                <!-- Apply & Export Buttons -->
+                <div style="margin-top: 10px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+                    <button id="btnPalMgrApply" class="btn btn-xs" style="padding: 6px 16px; font-weight: bold;"
                         disabled data-i18n="btn_apply_palette">Apply Palette</button>
+                    <button id="btnPalMgrExport" class="btn btn-xs" style="padding: 6px 14px; font-weight: bold;"
+                        disabled data-i18n-title="tt_pal_mgr_export">💾 <span data-i18n="btn_export_pal_copy">Export .pal Copy</span></button>
                 </div>
                 <div style="flex:1;"></div>
             </div>
@@ -4554,13 +4623,17 @@
                 <!-- Tray (shifted down) -->
                 <path d="M21 18v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
             </svg>
-            <div style="color: #ffffff; font-size: 32px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; line-height: 1.2;"
+            <div style="color: #ffffff; font-size: 30px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; line-height: 1.2;"
                 data-i18n="msg_drop_to_open">
-                DROP HERE TO OPEN SHP/TMP FILES
+                DROP HERE TO OPEN SHP / TMP / IMAGE FILES
             </div>
-            <div style="color: #ffffff; font-size: 32px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; line-height: 1.2; margin-top: 5px;"
+            <div style="color: #ffffff; font-size: 30px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; line-height: 1.2; margin-top: 5px;"
                 data-i18n="msg_drop_to_open_sub">
                 IN NEW TABS!
+            </div>
+            <div style="color: #cbd5e1; font-size: 13px; font-weight: 600; font-family: monospace; letter-spacing: 0.8px; margin-top: 16px; padding: 6px 16px; background: rgba(0, 255, 170, 0.1); border: 1px solid rgba(0, 255, 170, 0.35); border-radius: 999px;"
+                data-i18n="msg_drop_to_open_formats">
+                Supported Images: PNG, PCX, BMP, JPG/JFIF, WEBP, GIF, AVIF, TIFF, ICO, SVG
             </div>
         </div>
     </div>

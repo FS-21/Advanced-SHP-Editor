@@ -16,6 +16,7 @@ import {
     renderPalette,
     renderCanvas,
     renderFramesList,
+    updateLayersList,
     updateUIState
 } from './ui.js';
 import { pushHistory } from './history.js';
@@ -206,7 +207,7 @@ export function setConvertTargetPalette(palArray, node) {
         if (!c) {
             remapTable[i] = 0;
         } else {
-            remapTable[i] = findNearestPaletteIndex(c.r, c.g, c.b, targetPalette);
+            remapTable[i] = findNearestPaletteIndex(c.r, c.g, c.b, targetPalette, true);
         }
     }
 
@@ -284,7 +285,7 @@ function renderRemapPreview() {
                 d[off + 3] = 0; // Transparent
             } else {
                 const mappedIdx = targetPalette
-                    ? quantizeInfurium(srcRgba, w, h, x, y, targetPalette)
+                    ? quantizeInfurium(srcRgba, w, h, x, y, targetPalette, true)
                     : idx;
                 if ((mappedIdx === 0 && !isAlpha) || (mappedIdx === 127 && isAlpha)) {
                     d[off + 3] = 0;
@@ -345,13 +346,29 @@ function stopAnimation() {
     if (btnPlay) btnPlay.innerHTML = SVG_PLAY_MODERN;
 }
 
-function onConfirm() {
-    if (!targetPalette || !remapTable) return;
-    stopAnimation();
-    pushHistory();
+export function convertProjectToPalette(palToApply, nodeToApply = null) {
+    if (!palToApply || palToApply.length < 256) return;
+    if (!state.frames || state.frames.length === 0) return;
+    if (state.floatingSelection && typeof commitSelection === 'function') {
+        commitSelection();
+    }
+
+    // Ensure the current history entry accurately records the pre-conversion palette & ID
+    if (state.history && state.historyPtr >= 0 && state.history[state.historyPtr]) {
+        state.history[state.historyPtr].palette = state.palette.map(c => c ? { ...c } : null);
+        state.history[state.historyPtr].appliedPaletteId = state.appliedPaletteId || (typeof getActivePaletteId === 'function' ? getActivePaletteId() : null);
+    }
+
+    const skipIdx = state.isAlphaImageMode ? 127 : 0;
+    const localRemap = new Uint8Array(256);
+    localRemap[skipIdx] = skipIdx;
+    for (let i = 0; i < 256; i++) {
+        if (i === skipIdx) continue;
+        const c = state.palette[i];
+        localRemap[i] = c ? findNearestPaletteIndex(c.r, c.g, c.b, palToApply, true) : 0;
+    }
 
     // Remap all layer pixels across all frames using 3D RGB Infurium
-    const skipIdx = state.isAlphaImageMode ? 127 : 0;
     for (let fi = 0; fi < state.frames.length; fi++) {
         const frame = state.frames[fi];
         if (state.isTmpMode && frame.tmpMeta) {
@@ -384,8 +401,17 @@ function onConfirm() {
                         if (old !== undefined && old < 256) {
                             layer.data[k] = (old === skipIdx)
                                 ? skipIdx
-                                : quantizeInfurium(srcRgba, lw, lh, x, y, targetPalette);
+                                : quantizeInfurium(srcRgba, lw, lh, x, y, palToApply, true);
                             layerAffected = true;
+                        }
+                    }
+                }
+                if (layer.cgMeta && layer.cgMeta.initialData instanceof Uint16Array) {
+                    const initData = layer.cgMeta.initialData;
+                    for (let k = 0; k < initData.length; k++) {
+                        const oldInit = initData[k];
+                        if (oldInit !== undefined && oldInit < 256) {
+                            initData[k] = (oldInit === skipIdx) ? skipIdx : localRemap[oldInit];
                         }
                     }
                 }
@@ -394,13 +420,14 @@ function onConfirm() {
                 }
             }
         }
+        frame._v = (frame._v || 0) + 1;
     }
 
     // Assign new palette
-    state.palette = targetPalette.map(c => c ? { ...c } : null);
+    state.palette = palToApply.map(c => c ? { ...c } : null);
     state.paletteVersion = (state.paletteVersion || 0) + 1;
 
-    const newPalId = targetPaletteNode && targetPaletteNode.id ? targetPaletteNode.id : null;
+    const newPalId = nodeToApply && nodeToApply.id ? nodeToApply.id : null;
     state.appliedPaletteId = newPalId;
     state.paletteSelectedManually = true;
     if (typeof setActivePaletteId === 'function') {
@@ -415,8 +442,8 @@ function onConfirm() {
         curTab.paletteSelectedManually = true;
     }
 
-    if (targetPaletteNode && typeof recordUsage === 'function' && targetPaletteNode.id && !targetPaletteNode.id.startsWith('custom_file_')) {
-        recordUsage(targetPaletteNode);
+    if (nodeToApply && typeof recordUsage === 'function' && nodeToApply.id && !nodeToApply.id.startsWith('custom_file_')) {
+        recordUsage(nodeToApply);
     }
 
     if (typeof syncPaletteSelectorWithActiveTab === 'function') {
@@ -427,11 +454,21 @@ function onConfirm() {
     }
 
     pushHistory('all');
+    if (state.history && state.historyPtr >= 0 && state.history[state.historyPtr]) {
+        state.history[state.historyPtr].hasPaletteConversion = true;
+    }
+
     renderPalette();
     renderCanvas();
     renderFramesList();
+    if (typeof updateLayersList === 'function') updateLayersList();
     updateUIState();
+}
 
+function onConfirm() {
+    if (!targetPalette || !remapTable) return;
+    stopAnimation();
+    convertProjectToPalette(targetPalette, targetPaletteNode);
     closeDialog();
 }
 
@@ -446,3 +483,4 @@ function closeDialog() {
 // Global hooks
 window.onConvertPaletteSelected = setConvertTargetPalette;
 window.openConvertPaletteDialog = openConvertPaletteDialog;
+window.convertProjectToPalette = convertProjectToPalette;
