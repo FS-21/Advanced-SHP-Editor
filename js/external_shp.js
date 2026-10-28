@@ -234,10 +234,13 @@ function renderExternalFrame(idx) {
     const canvas = elements.extShpCanvas;
     const ctx = canvas.getContext('2d');
 
+    const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== extShpData.width || canvas.height !== extShpData.height) {
         canvas.width = extShpData.width;
         canvas.height = extShpData.height;
     }
+    canvas.style.width = `${extShpData.width / dpr}px`;
+    canvas.style.height = `${extShpData.height / dpr}px`;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 

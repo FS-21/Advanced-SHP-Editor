@@ -46,17 +46,21 @@ export function stopAnts() {
 export function snapCanvasWrapperToPixel() {
     if (!elements.canvasWrapper || state.frames.length === 0) return;
     elements.canvasWrapper.style.transform = '';
+    const dpr = window.devicePixelRatio || 1;
     const rect = elements.canvasWrapper.getBoundingClientRect();
-    const fracX = rect.left - Math.round(rect.left);
-    const fracY = rect.top - Math.round(rect.top);
-    if (Math.abs(fracX) > 0.01 || Math.abs(fracY) > 0.01) {
+    const fracX = rect.left - (Math.round(rect.left * dpr) / dpr);
+    const fracY = rect.top - (Math.round(rect.top * dpr) / dpr);
+    if (Math.abs(fracX) > 0.001 || Math.abs(fracY) > 0.001) {
         elements.canvasWrapper.style.transform = `translate(${-fracX}px, ${-fracY}px)`;
     }
 }
 
 export function updateCanvasSize() {
-    const w = state.canvasW * state.zoom;
-    const h = state.canvasH * state.zoom;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(state.canvasW * state.zoom);
+    const h = Math.round(state.canvasH * state.zoom);
+    const cssW = w / dpr;
+    const cssH = h / dpr;
 
     // Main and BG remain at Game Resolution (crisp scaling via CSS)
     elements.mainCanvas.width = state.canvasW;
@@ -66,14 +70,14 @@ export function updateCanvasSize() {
         elements.bgCanvas.height = state.canvasH;
     }
 
-    // Overlay becomes High-Res (Screen Resolution) for crisp lines
+    // Overlay becomes High-Res (Physical Screen Resolution) for crisp lines
     elements.overlayCanvas.width = w;
     elements.overlayCanvas.height = h;
 
-    [elements.mainCanvas, elements.overlayCanvas].forEach(c => {
+    [elements.mainCanvas, elements.overlayCanvas, elements.bgCanvas].forEach(c => {
         if (!c) return;
-        c.style.width = w + "px";
-        c.style.height = h + "px";
+        c.style.width = cssW + "px";
+        c.style.height = cssH + "px";
     });
 
     // Fix centering: Set wrapper size so flexbox centers the whole box
@@ -83,8 +87,8 @@ export function updateCanvasSize() {
             elements.canvasWrapper.style.transform = '';
         } else {
             elements.canvasWrapper.style.display = 'block';
-            elements.canvasWrapper.style.width = w + "px";
-            elements.canvasWrapper.style.height = h + "px";
+            elements.canvasWrapper.style.width = cssW + "px";
+            elements.canvasWrapper.style.height = cssH + "px";
             snapCanvasWrapperToPixel();
         }
         if (!elements.canvasWrapper._pixelSnapObserverAttached && elements.canvasWrapper.parentElement && typeof ResizeObserver !== 'undefined') {
@@ -92,6 +96,24 @@ export function updateCanvasSize() {
             const ro = new ResizeObserver(() => snapCanvasWrapperToPixel());
             ro.observe(elements.canvasWrapper.parentElement);
         }
+    }
+
+    if (typeof window !== 'undefined' && !window._aseDprListenerAttached) {
+        window._aseDprListenerAttached = true;
+        let lastDpr = window.devicePixelRatio || 1;
+        window.addEventListener('resize', () => {
+            const curDpr = window.devicePixelRatio || 1;
+            if (Math.abs(curDpr - lastDpr) > 0.001) {
+                lastDpr = curDpr;
+                if (state.frames.length > 0) {
+                    updateCanvasSize();
+                    renderCanvas();
+                    renderOverlay();
+                }
+            } else {
+                snapCanvasWrapperToPixel();
+            }
+        });
     }
 
     if (elements.resDisplay) {
@@ -328,19 +350,14 @@ function _renderLayerThumbnailImmediate(layer, ctx, w, h, forceFS = false, skipB
 
 
 export function updatePixelGrid() {
-    if (!elements.pixelGridOverlay) return;
-
-    // Show grid if toggled ON and zoom >= 400%
-    const shouldShow = state.showGrid && state.zoom >= 4;
-    elements.pixelGridOverlay.style.display = shouldShow ? 'block' : 'none';
-
-    if (shouldShow) {
-        elements.pixelGridOverlay.classList.toggle('grid-dark', state.gridColor === 'dark');
-        elements.pixelGridOverlay.style.backgroundSize = `${state.zoom}px ${state.zoom}px`;
+    if (elements.pixelGridOverlay) {
+        elements.pixelGridOverlay.style.display = 'none';
     }
-
     if (elements.btnToggleGrid) {
         elements.btnToggleGrid.classList.toggle('grid-active', state.showGrid);
+    }
+    if (state.frames.length > 0) {
+        renderOverlay();
     }
 }
 
@@ -468,9 +485,10 @@ export function zoomToSelection() {
     const scrollArea = document.getElementById('canvasScrollArea');
     if (!scrollArea) return;
 
-    // Viewport dimensions (scrollArea minus its double padding of 20px)
-    const vw = scrollArea.clientWidth - 40;
-    const vh = scrollArea.clientHeight - 40;
+    const dpr = window.devicePixelRatio || 1;
+    // Viewport dimensions in physical pixels (scrollArea minus its double padding of 20px)
+    const vw = (scrollArea.clientWidth - 40) * dpr;
+    const vh = (scrollArea.clientHeight - 40) * dpr;
 
     const zoomW = (vw / sel.w) * 100;
     const zoomH = (vh / sel.h) * 100;
@@ -484,8 +502,8 @@ export function zoomToSelection() {
 
     // Center scroll area on selection
     setTimeout(() => {
-        const z = zoom / 100;
-        // Selection center relative to canvas (0,0) scaled by zoom
+        const z = (zoom / 100) / (window.devicePixelRatio || 1);
+        // Selection center relative to canvas (0,0) scaled by CSS zoom
         const selCenterX = (sel.x + sel.w / 2) * z;
         const selCenterY = (sel.y + sel.h / 2) * z;
 
@@ -1367,11 +1385,23 @@ export function renderOverlay(x, y, tool, startPos) {
     const isCurrentlyDrawing = !!startPos;
     const ctx = elements.overlayCtx;
     const z = state.zoom;
-    // Screen Dimensions
-    const w = state.canvasW * z;
-    const h = state.canvasH * z;
+    // Physical Screen Dimensions
+    const w = Math.round(state.canvasW * z);
+    const h = Math.round(state.canvasH * z);
 
     ctx.clearRect(0, 0, w, h);
+
+    if (state.showGrid && z >= 4) {
+        ctx.save();
+        ctx.fillStyle = state.gridColor === 'dark' ? 'rgba(0, 0, 0, 0.45)' : 'rgba(255, 255, 255, 0.15)';
+        for (let gx = 0; gx < state.canvasW; gx++) {
+            ctx.fillRect(Math.round(gx * z), 0, 1, h);
+        }
+        for (let gy = 0; gy < state.canvasH; gy++) {
+            ctx.fillRect(0, Math.round(gy * z), w, 1);
+        }
+        ctx.restore();
+    }
 
     // Brush Cursor
     if (x !== undefined && y !== undefined && (['pencil', 'eraser', 'line', 'rect', 'spray'].includes(tool))) {
@@ -2565,21 +2595,24 @@ export function setupZoomOptions() {
         }
 
         const container = elements.canvasWrapper.parentElement;
+        const dpr = window.devicePixelRatio || 1;
         const oldZoom = state.zoom;
         const newZoom = val / 100;
+        const oldCssZoom = oldZoom / dpr;
+        const newCssZoom = newZoom / dpr;
 
         // --- Memorize visual center (Robust Version) ---
         // If canvas is smaller than container, it's centered by margin:auto (flex/block).
         // If larger, it starts at scroll position.
-        const canvasW = state.canvasW * oldZoom;
-        const canvasH = state.canvasH * oldZoom;
+        const canvasW = state.canvasW * oldCssZoom;
+        const canvasH = state.canvasH * oldCssZoom;
 
         // Centered visual offset from canvas start
         const visualX = (canvasW < container.clientWidth) ? canvasW / 2 : (container.scrollLeft + container.clientWidth / 2);
         const visualY = (canvasH < container.clientHeight) ? canvasH / 2 : (container.scrollTop + container.clientHeight / 2);
 
-        const centerCanvasX = visualX / oldZoom;
-        const centerCanvasY = visualY / oldZoom;
+        const centerCanvasX = visualX / oldCssZoom;
+        const centerCanvasY = visualY / oldCssZoom;
 
         state.zoom = newZoom;
         updateCanvasSize();
@@ -2587,12 +2620,9 @@ export function setupZoomOptions() {
         syncZoomUI();
 
         // --- Re-center (Synchronous) ---
-        const newCanvasW = state.canvasW * newZoom;
-        const newCanvasH = state.canvasH * newZoom;
-
         // Target scroll position to keep that same canvas-pixel in the middle
-        container.scrollLeft = centerCanvasX * newZoom - container.clientWidth / 2;
-        container.scrollTop = centerCanvasY * newZoom - container.clientHeight / 2;
+        container.scrollLeft = centerCanvasX * newCssZoom - container.clientWidth / 2;
+        container.scrollTop = centerCanvasY * newCssZoom - container.clientHeight / 2;
     };
 
     // Wheel Zoom Support

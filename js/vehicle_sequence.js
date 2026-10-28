@@ -187,7 +187,10 @@ function vseq_renderFrameToCanvas(canvas, shpFrameIdx, shadowFrameIdx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height); return;
     }
     const frame = state.frames[shpFrameIdx];
+    const dpr = window.devicePixelRatio || 1;
     canvas.width = frame.width; canvas.height = frame.height;
+    canvas.style.width = `${frame.width / dpr}px`;
+    canvas.style.height = `${frame.height / dpr}px`;
     const composited = compositeFrame(frame, { backgroundIdx: TRANSPARENT_COLOR, transparentIdx: TRANSPARENT_COLOR });
     const imgData = ctx.createImageData(frame.width, frame.height);
     const d = imgData.data;

@@ -332,8 +332,9 @@ function updatePixelGrid() {
     if (!displayArea) return;
 
     if (zoom >= 4.0) {
+        const dpr = window.devicePixelRatio || 1;
         displayArea.classList.add('pixel-grid');
-        displayArea.style.setProperty('--grid-size', `${zoom}px`);
+        displayArea.style.setProperty('--grid-size', `${zoom / dpr}px`);
     } else {
         displayArea.classList.remove('pixel-grid');
     }
@@ -498,8 +499,13 @@ function renderPreview() {
         return;
     }
 
-    canvas.width = frame.width * zoom;
-    canvas.height = frame.height * zoom;
+    const dpr = window.devicePixelRatio || 1;
+    const physW = Math.round(frame.width * zoom);
+    const physH = Math.round(frame.height * zoom);
+    canvas.width = physW;
+    canvas.height = physH;
+    canvas.style.width = (physW / dpr) + 'px';
+    canvas.style.height = (physH / dpr) + 'px';
 
     previewCtx.clearRect(0, 0, canvas.width, canvas.height);
 

@@ -277,10 +277,13 @@ function shp_renderImportFrame(idx) {
     const canvas = elements.impShpCanvas;
     const ctx = canvas.getContext('2d');
 
+    const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== impShpData.width || canvas.height !== impShpData.height) {
         canvas.width = impShpData.width;
         canvas.height = impShpData.height;
     }
+    canvas.style.width = `${impShpData.width / dpr}px`;
+    canvas.style.height = `${impShpData.height / dpr}px`;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 

@@ -644,8 +644,10 @@ export function deleteSelection() {
 
 export function getPos(e) {
     const rect = elements.mainCanvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) / state.zoom);
-    const y = Math.floor((e.clientY - rect.top) / state.zoom);
+    const dpr = window.devicePixelRatio || 1;
+    const cssZoom = state.zoom / dpr;
+    const x = Math.floor((e.clientX - rect.left) / cssZoom);
+    const y = Math.floor((e.clientY - rect.top) / cssZoom);
     return { x, y };
 }
 

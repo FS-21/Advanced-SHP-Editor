@@ -2207,16 +2207,17 @@ function updateResizePreview() {
     }
     const zoom = zoomVal / 100;
 
+    const dpr = window.devicePixelRatio || 1;
     cvs.width = tw;
     cvs.height = th;
-    cvs.style.width = Math.round(tw * zoom) + 'px';
-    cvs.style.height = Math.round(th * zoom) + 'px';
+    cvs.style.width = (Math.round(tw * zoom) / dpr) + 'px';
+    cvs.style.height = (Math.round(th * zoom) / dpr) + 'px';
     cvs.style.imageRendering = 'pixelated'; // Force sharp pixels
 
     // Pixel Grid Logic (Zoom >= 400%)
     const scene = document.getElementById('resizePreviewScene');
     if (scene) {
-        scene.style.setProperty('--grid-size', `${zoom}px`);
+        scene.style.setProperty('--grid-size', `${zoom / dpr}px`);
         if (zoom >= 4) scene.classList.add('pixel-grid');
         else scene.classList.remove('pixel-grid');
     }
@@ -2838,9 +2839,10 @@ function getUnifiedScale() {
     }
 
     if (chkAutoFit && chkAutoFit.checked) {
-        // Use container size minus padding
-        const cw = container.clientWidth - 40;
-        const ch = container.clientHeight - 40;
+        const dpr = window.devicePixelRatio || 1;
+        // Use container size in physical pixels minus padding
+        const cw = (container.clientWidth - 40) * dpr;
+        const ch = (container.clientHeight - 40) * dpr;
         let s = Math.min(cw / sceneW, ch / sceneH);
         return s > 1.0 ? 1.0 : s; // NEVER upscale (1:1 max)
     }
@@ -2904,32 +2906,34 @@ function updateUnifiedResizePreview() {
     // But if we use Zoom 100%, we can center the Image.
     // Use the Scene to wrap both. Scene Size = BB Size * Scale.
 
+    const dpr = window.devicePixelRatio || 1;
+    const cssScale = scale / dpr;
     const minX = Math.min(0, -l), minY = Math.min(0, -t);
     const maxX = Math.max(W, W + r), maxY = Math.max(H, H + b);
     const sceneW = maxX - minX, sceneH = maxY - minY;
 
-    scene.style.width = (sceneW * scale) + 'px';
-    scene.style.height = (sceneH * scale) + 'px';
+    scene.style.width = (sceneW * cssScale) + 'px';
+    scene.style.height = (sceneH * cssScale) + 'px';
 
     // Image Position relative to Scene:
     // Image is at (0,0) in local space. Scene starts at (minX, minY).
     // So Image offset = 0 - minX = -minX.
-    const imgX = -minX * scale;
-    const imgY = -minY * scale;
+    const imgX = -minX * cssScale;
+    const imgY = -minY * cssScale;
 
     // Overlay Position relative to Scene:
     // Overlay is at (-l, -t). Scene starts at (minX, minY).
     // Overlay offset = -l - minX.
-    ox = (-l - minX) * scale;
-    oy = (-t - minY) * scale;
+    ox = (-l - minX) * cssScale;
+    oy = (-t - minY) * cssScale;
 
     cvs.width = Math.floor(W * scale); cvs.height = Math.floor(H * scale);
-    cvs.style.width = (W * scale) + 'px'; cvs.style.height = (H * scale) + 'px';
+    cvs.style.width = (W * cssScale) + 'px'; cvs.style.height = (H * cssScale) + 'px';
     cvs.style.position = 'absolute';
     cvs.style.left = imgX + 'px'; cvs.style.top = imgY + 'px';
 
     overlay.style.left = ox + 'px'; overlay.style.top = oy + 'px';
-    overlay.style.width = (ow * scale) + 'px'; overlay.style.height = (oh * scale) + 'px';
+    overlay.style.width = (ow * cssScale) + 'px'; overlay.style.height = (oh * cssScale) + 'px';
 
     // Render Image
     const ctx = cvs.getContext('2d');

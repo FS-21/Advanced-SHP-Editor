@@ -1669,9 +1669,10 @@ export async function updateCameoPreview() {
     ctx.putImageData(imgData, 0, 0);
 
     updatePreviewZoomUI();
+    const dpr = window.devicePixelRatio || 1;
     const scale = (cgState.previewZoomPct || 100) / 100;
-    previewCanvas.style.width = `${Math.max(1, Math.round(W * scale))}px`;
-    previewCanvas.style.height = `${Math.max(1, Math.round(H * scale))}px`;
+    previewCanvas.style.width = `${Math.max(1, Math.round(W * scale)) / dpr}px`;
+    previewCanvas.style.height = `${Math.max(1, Math.round(H * scale)) / dpr}px`;
 
     renderActiveElementsListUI();
     saveCameoStateToStorage();
@@ -4807,7 +4808,8 @@ export function initCameoGenerator() {
 
         window.addEventListener('mousemove', (e) => {
             if (!isDragging || !activeTarget) return;
-            const scale = Math.max(0.5, (cgState.previewZoomPct || 100) / 100);
+            const dpr = window.devicePixelRatio || 1;
+            const scale = Math.max(0.5, (cgState.previewZoomPct || 100) / 100) / dpr;
             const dx = Math.round((e.clientX - dragStartX) / scale);
             const dy = Math.round((e.clientY - dragStartY) / scale);
 
