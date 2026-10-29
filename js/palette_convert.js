@@ -246,10 +246,13 @@ function renderRemapPreview() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
+    const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== frame.width || canvas.height !== frame.height) {
         canvas.width = frame.width;
         canvas.height = frame.height;
     }
+    canvas.style.width = `${frame.width / dpr}px`;
+    canvas.style.height = `${frame.height / dpr}px`;
 
     const res = compositeFrame(frame, {
         transparentIdx: 65535,

@@ -43,16 +43,35 @@ export function stopAnts() {
 
 
 
-export function snapCanvasWrapperToPixel() {
-    if (!elements.canvasWrapper || state.frames.length === 0) return;
-    elements.canvasWrapper.style.transform = '';
+export function snapElementToPixel(el) {
+    if (!el) return;
+    el.style.transform = '';
     const dpr = window.devicePixelRatio || 1;
-    const rect = elements.canvasWrapper.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
     const fracX = rect.left - (Math.round(rect.left * dpr) / dpr);
     const fracY = rect.top - (Math.round(rect.top * dpr) / dpr);
     if (Math.abs(fracX) > 0.001 || Math.abs(fracY) > 0.001) {
-        elements.canvasWrapper.style.transform = `translate(${-fracX}px, ${-fracY}px)`;
+        el.style.transform = `translate(${-fracX}px, ${-fracY}px)`;
     }
+}
+
+export function snapSidebarThumbnailsToPixel() {
+    if (elements.framesList && elements.framesList.style.display !== 'none') {
+        elements.framesList.querySelectorAll('.thumb-content canvas').forEach(snapElementToPixel);
+    }
+    if (elements.tmpComponentsList && elements.tmpComponentsList.style.display !== 'none') {
+        elements.tmpComponentsList.querySelectorAll('canvas').forEach(snapElementToPixel);
+    }
+    if (elements.layersList) {
+        elements.layersList.querySelectorAll('canvas.layer-preview').forEach(snapElementToPixel);
+    }
+}
+
+export function snapCanvasWrapperToPixel() {
+    snapSidebarThumbnailsToPixel();
+    if (!elements.canvasWrapper || state.frames.length === 0) return;
+    snapElementToPixel(elements.canvasWrapper);
 }
 
 export function updateCanvasSize() {
@@ -109,6 +128,8 @@ export function updateCanvasSize() {
                     updateCanvasSize();
                     renderCanvas();
                     renderOverlay();
+                    renderFramesList(true);
+                    updateLayersList();
                 }
             } else {
                 snapCanvasWrapperToPixel();
@@ -163,7 +184,7 @@ export function renderLayerThumbnail(layer, ctx, w, h, forceFS = false, skipBG =
     // Optimization: Cache thumbnails to avoid expensive pixel loops
     const _isZDataPal = state.tmpFullZPreviewActive ||
         (state.isTmpMode && (() => { const af = state.frames[state.currentFrameIdx]; return af && af.tmpMeta && (af.tmpMeta.component === 'zdata' || af.tmpMeta.component === 'extrazdata'); })());
-    const layerKey = `${layer.id}_${layer._v || 0}_${state.paletteVersion}_${_isZDataPal ? 'zdp' : 'pal'}_${forceFS ? 'fs' : 'nofs'}_${skipBG ? 'nobg' : 'bg'}`;
+    const layerKey = `${layer.id}_${layer._v || 0}_${state.paletteVersion}_${_isZDataPal ? 'zdp' : 'pal'}_${forceFS ? 'fs' : 'nofs'}_${skipBG ? 'nobg' : 'bg'}_${w}x${h}`;
     const cachedEntry = _layerThumbCache.get(layer.id);
 
     if (cachedEntry && cachedEntry.key === layerKey) {
@@ -2004,14 +2025,19 @@ export function updateLayersList() {
 
         // B. Preview (Only for layers)
         if (!isGroup) {
+            const dpr = window.devicePixelRatio || 1;
+            const physW = Math.max(1, Math.round(60 * dpr));
+            const physH = Math.max(1, Math.round(48 * dpr));
             const previewCanvas = document.createElement('canvas');
             previewCanvas.className = 'layer-preview';
             previewCanvas.id = `layer-preview-${node.id}`; // CRITICAL: Added ID for live updates
-            previewCanvas.width = 60;
-            previewCanvas.height = 45;
+            previewCanvas.width = physW;
+            previewCanvas.height = physH;
+            previewCanvas.style.width = (physW / dpr) + 'px';
+            previewCanvas.style.height = (physH / dpr) + 'px';
             const pCtx = previewCanvas.getContext('2d');
             if (node.data || node.type === 'external_shp') {
-                renderLayerThumbnail(node, pCtx, 60, 45);
+                renderLayerThumbnail(node, pCtx, physW, physH);
             }
             div.appendChild(previewCanvas);
         }
@@ -2136,6 +2162,9 @@ export function updateLayersList() {
     }
 
     frame.layers.forEach((l, i) => renderNode(l, 0, i, frame.layers));
+    if (elements.layersList) {
+        elements.layersList.querySelectorAll('canvas.layer-preview').forEach(snapElementToPixel);
+    }
 
     // --- Update Layer Toolbar State ---
     const activeInfo = findLayerParent(frame.layers, state.activeLayerId);
@@ -2367,7 +2396,8 @@ function _renderFramesListImmediate() {
             if (numEl) numEl.textContent = displayIdx;
         }
 
-        if (thumbContainer._frameRef !== frame || thumbContainer._frameId !== i || thumbContainer._frameVersion !== (frame._v || 0) || thumbContainer._palVersion !== state.paletteVersion) {
+        const curDpr = window.devicePixelRatio || 1;
+        if (thumbContainer._frameRef !== frame || thumbContainer._frameId !== i || thumbContainer._frameVersion !== (frame._v || 0) || thumbContainer._palVersion !== state.paletteVersion || thumbContainer._dpr !== curDpr) {
             thumbContainer.innerHTML = '';
             const c = createFrameThumbnail(frame, 105, 68, { backgroundIdx: 0 }); // backgroundIdx:0 matches save output
             thumbContainer.appendChild(c);
@@ -2375,7 +2405,10 @@ function _renderFramesListImmediate() {
             thumbContainer._frameId = i;
             thumbContainer._frameVersion = (frame._v || 0);
             thumbContainer._palVersion = state.paletteVersion;
+            thumbContainer._dpr = curDpr;
         }
+        const thumbCanvas = thumbContainer.querySelector('canvas');
+        if (thumbCanvas) snapElementToPixel(thumbCanvas);
     }
 }
 
@@ -3269,9 +3302,12 @@ function renderExternalShpLayerPropsPreview(node, frameIdx) {
         const maxExpandX = Math.max(0, -minX, maxX - mainW);
         const maxExpandY = Math.max(0, -minY, maxY - mainH);
 
+        const dpr = window.devicePixelRatio || 1;
         const pad = 10;
         canvas.width = mainW + maxExpandX * 2 + pad * 2;
         canvas.height = mainH + maxExpandY * 2 + pad * 2;
+        canvas.style.width = `${canvas.width / dpr}px`;
+        canvas.style.height = `${canvas.height / dpr}px`;
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = bgColor;
@@ -3326,8 +3362,11 @@ function renderExternalShpLayerPropsPreview(node, frameIdx) {
 
     } else {
         // Just the external SHP
+        const dpr = window.devicePixelRatio || 1;
         canvas.width = shpW;
         canvas.height = shpH;
+        canvas.style.width = `${shpW / dpr}px`;
+        canvas.style.height = `${shpH / dpr}px`;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -5791,12 +5830,14 @@ function _getCachedComposite(frame, options = {}) {
 }
 
 export function createFrameThumbnail(frame, w = 120, h = 90, options = {}) {
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
     const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    const ctx = c.getContext('2d');
 
-    if (!frame || !frame.layers) return c;
+    if (!frame || !frame.layers || !frame.width || !frame.height) {
+        c.width = 1;
+        c.height = 1;
+        return c;
+    }
 
     // Use cached composite data when possible
     const cached = _getCachedComposite(frame, options);
@@ -5805,14 +5846,25 @@ export function createFrameThumbnail(frame, w = 120, h = 90, options = {}) {
     const frameW = frame.width;
     const frameH = frame.height;
 
-    // Reduced padding from 20 to 8 to achieve ~4px distance from edges as requested
+    // Size the thumbnail canvas directly to its physical pixel bounds (drawW x drawH)
+    // so that 1:1 frames (scale === 1.0) map 1:1 to physical screen pixels without CSS clamping
     const pad = 8;
-    const scale = Math.min(1.0, (w - pad) / frameW, (h - pad) / frameH);
-    const drawW = Math.round(frameW * scale);
-    const drawH = Math.round(frameH * scale);
+    const maxPhysW = Math.max(1, Math.round((w - pad) * dpr));
+    const maxPhysH = Math.max(1, Math.round((h - pad) * dpr));
+    const scale = Math.min(1.0, maxPhysW / frameW, maxPhysH / frameH);
+    const drawW = Math.max(1, Math.round(frameW * scale));
+    const drawH = Math.max(1, Math.round(frameH * scale));
 
-    const offsetX = Math.floor((w - drawW) / 2);
-    const offsetY = Math.floor((h - drawH) / 2);
+    c.width = drawW;
+    c.height = drawH;
+    c.style.width = (drawW / dpr) + 'px';
+    c.style.height = (drawH / dpr) + 'px';
+    const ctx = c.getContext('2d');
+
+    const offsetX = 0;
+    const offsetY = 0;
+    w = drawW;
+    h = drawH;
 
     const id = ctx.createImageData(w, h);
     const d = id.data;
@@ -8255,11 +8307,13 @@ export function renderComponentThumbnail(frame, canvas) {
 
     // Draw scaled offscreen image
     const scale = Math.min(canvas.width / w, canvas.height / h, 1);
-    const dx = (canvas.width - w * scale) / 2;
-    const dy = (canvas.height - h * scale) / 2;
+    const drawW = Math.max(1, Math.round(w * scale));
+    const drawH = Math.max(1, Math.round(h * scale));
+    const dx = Math.floor((canvas.width - drawW) / 2);
+    const dy = Math.floor((canvas.height - drawH) / 2);
 
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(offscreen, dx, dy, w * scale, h * scale);
+    ctx.drawImage(offscreen, dx, dy, drawW, drawH);
 }
 
 export function renderTmpComponentsList() {
@@ -8288,9 +8342,15 @@ export function renderTmpComponentsList() {
         fullPreviewCard.classList.add('active');
     }
 
+    const dpr = window.devicePixelRatio || 1;
+    const compPhysW = Math.max(1, Math.round(46 * dpr));
+    const compPhysH = Math.max(1, Math.round(36 * dpr));
+
     const fullCanvas = document.createElement('canvas');
-    fullCanvas.width = 46;
-    fullCanvas.height = 36;
+    fullCanvas.width = compPhysW;
+    fullCanvas.height = compPhysH;
+    fullCanvas.style.width = (compPhysW / dpr) + 'px';
+    fullCanvas.style.height = (compPhysH / dpr) + 'px';
     fullCanvas.className = 'thumb-canvas';
     fullPreviewCard.appendChild(fullCanvas);
 
@@ -8307,10 +8367,12 @@ export function renderTmpComponentsList() {
             const cw = compositeCanvas.width;
             const ch = compositeCanvas.height;
             const scale = Math.min(fullCanvas.width / cw, fullCanvas.height / ch, 1);
-            const dx = (fullCanvas.width - cw * scale) / 2;
-            const dy = (fullCanvas.height - ch * scale) / 2;
+            const drawW = Math.max(1, Math.round(cw * scale));
+            const drawH = Math.max(1, Math.round(ch * scale));
+            const dx = Math.floor((fullCanvas.width - drawW) / 2);
+            const dy = Math.floor((fullCanvas.height - drawH) / 2);
             fCtx.imageSmoothingEnabled = false;
-            fCtx.drawImage(compositeCanvas, dx, dy, cw * scale, ch * scale);
+            fCtx.drawImage(compositeCanvas, dx, dy, drawW, drawH);
         }
     }
 
@@ -8369,8 +8431,10 @@ export function renderTmpComponentsList() {
     }
 
     const fullZCanvas = document.createElement('canvas');
-    fullZCanvas.width = 46;
-    fullZCanvas.height = 36;
+    fullZCanvas.width = compPhysW;
+    fullZCanvas.height = compPhysH;
+    fullZCanvas.style.width = (compPhysW / dpr) + 'px';
+    fullZCanvas.style.height = (compPhysH / dpr) + 'px';
     fullZCanvas.className = 'thumb-canvas';
     fullZPreviewCard.appendChild(fullZCanvas);
 
@@ -8386,10 +8450,12 @@ export function renderTmpComponentsList() {
             const cw = compositeCanvas.width;
             const ch = compositeCanvas.height;
             const scale = Math.min(fullZCanvas.width / cw, fullZCanvas.height / ch, 1);
-            const dx = (fullZCanvas.width - cw * scale) / 2;
-            const dy = (fullZCanvas.height - ch * scale) / 2;
+            const drawW = Math.max(1, Math.round(cw * scale));
+            const drawH = Math.max(1, Math.round(ch * scale));
+            const dx = Math.floor((fullZCanvas.width - drawW) / 2);
+            const dy = Math.floor((fullZCanvas.height - drawH) / 2);
             fCtx.imageSmoothingEnabled = false;
-            fCtx.drawImage(compositeCanvas, dx, dy, cw * scale, ch * scale);
+            fCtx.drawImage(compositeCanvas, dx, dy, drawW, drawH);
         }
     }
 
@@ -8465,8 +8531,10 @@ export function renderTmpComponentsList() {
 
         // Canvases
         const canvas = document.createElement('canvas');
-        canvas.width = 46;
-        canvas.height = 36;
+        canvas.width = compPhysW;
+        canvas.height = compPhysH;
+        canvas.style.width = (compPhysW / dpr) + 'px';
+        canvas.style.height = (compPhysH / dpr) + 'px';
         box.appendChild(canvas);
         renderComponentThumbnail(frame, canvas);
 
@@ -8575,6 +8643,7 @@ export function renderTmpComponentsList() {
 
         list.appendChild(group);
     });
+    list.querySelectorAll('canvas').forEach(snapElementToPixel);
 }
 
 

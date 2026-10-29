@@ -272,10 +272,16 @@ export function showExportDialog() {
         }
         for (let i = frame.layers.length - 1; i >= 0; i--) compositeNode(frame.layers[i]);
 
-        // Determine display scale (max 260x200)
-        const scale = Math.min(Math.floor(260 / w), Math.floor(200 / h), 8) || 1;
+        // Determine display scale (max 260x200 CSS px in physical pixels)
+        const dpr = window.devicePixelRatio || 1;
+        const maxPhysW = Math.round(260 * dpr);
+        const maxPhysH = Math.round(200 * dpr);
+        const scale = Math.min(Math.floor(maxPhysW / w), Math.floor(maxPhysH / h), 8) || 1;
         canvas.width = w * scale;
         canvas.height = h * scale;
+        canvas.style.width = ((w * scale) / dpr) + 'px';
+        canvas.style.height = ((h * scale) / dpr) + 'px';
+        canvas.style.boxSizing = 'content-box';
 
         const ctx = canvas.getContext('2d');
         const imgData = ctx.createImageData(w * scale, h * scale);
@@ -1352,7 +1358,13 @@ export async function processImageFile(file) {
         ext = 'png';
     }
 
-    if (ext === 'pcx') {
+    if (ext === 'pdn') {
+        const buffer = await file.arrayBuffer();
+        return await parsePdnFile(buffer);
+    } else if (ext === 'psd' || ext === 'psb') {
+        const buffer = await file.arrayBuffer();
+        return await parsePsdFile(buffer);
+    } else if (ext === 'pcx') {
         const buffer = await file.arrayBuffer();
         const loader = new PcxLoader(buffer);
         const res = loader.decode(); // { width, height, indices, palette }
@@ -1402,23 +1414,734 @@ export async function processImageFile(file) {
     }
 }
 
-function buildAdaptive256PaletteForImage(pixels, w, h) {
+async function gzipDecompressPdnBytes(compressedU8) {
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    writer.write(compressedU8);
+    writer.close();
+    const resp = new Response(ds.readable);
+    const ab = await resp.arrayBuffer();
+    return new Uint8Array(ab);
+}
+
+function read7BitPdnInt(data, pos) {
+    let res = 0, shift = 0;
+    while (pos < data.length) {
+        const b = data[pos++];
+        res |= (b & 0x7F) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+    }
+    return [res, pos];
+}
+
+function readNrbfPdnStr(data, pos, textDec) {
+    const [len, nextPos] = read7BitPdnInt(data, pos);
+    const str = textDec.decode(data.subarray(nextPos, nextPos + len));
+    return [str, nextPos + len];
+}
+
+function findPdnSubarray(haystack, needle, fromIndex = 0) {
+    const end = haystack.length - needle.length;
+    outer: for (let i = fromIndex; i <= end; i++) {
+        for (let j = 0; j < needle.length; j++) {
+            if (haystack[i + j] !== needle[j]) continue outer;
+        }
+        return i;
+    }
+    return -1;
+}
+
+export async function parsePdnFile(buffer) {
+    const u8 = new Uint8Array(buffer);
+    if (u8.length < 16 || u8[0] !== 0x50 || u8[1] !== 0x44 || u8[2] !== 0x4E || u8[3] !== 0x33) {
+        throw new Error('Invalid PDN3 header');
+    }
+    const textDec = new TextDecoder('utf-8');
+    const xmlLen = u8[4] | (u8[5] << 8) | (u8[6] << 16);
+    const xmlStr = textDec.decode(u8.subarray(7, 7 + xmlLen));
+    const wMatch = xmlStr.match(/width="(\d+)"/i);
+    const hMatch = xmlStr.match(/height="(\d+)"/i);
+    const lMatch = xmlStr.match(/layers="(\d+)"/i);
+    if (!wMatch || !hMatch || !lMatch) {
+        throw new Error('Missing PDN XML dimensions');
+    }
+    const width = parseInt(wMatch[1], 10);
+    const height = parseInt(hMatch[1], 10);
+    const numLayers = parseInt(lMatch[1], 10);
+    if (width <= 0 || height <= 0 || numLayers <= 0) {
+        throw new Error('Invalid PDN dimensions');
+    }
+
+    let pos = 7 + xmlLen;
+    const flags = u8[pos] | (u8[pos + 1] << 8);
+    pos += 2;
+    let data = u8;
+    if (flags === 0x0000) {
+        data = await gzipDecompressPdnBytes(u8.subarray(pos));
+        pos = 0;
+    }
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+    const markerStr = 'PaintDotNet.Layer+LayerProperties';
+    const markerBytes = new Uint8Array(1 + markerStr.length);
+    markerBytes[0] = markerStr.length;
+    for (let i = 0; i < markerStr.length; i++) markerBytes[i + 1] = markerStr.charCodeAt(i);
+
+    let searchPos = pos;
+    let lyrPropsClassId = null;
+    let firstPropsPos = -1;
+    while (true) {
+        const idx = findPdnSubarray(data, markerBytes, searchPos);
+        if (idx === -1) break;
+        if (idx >= 5 && data[idx - 5] === 0x05) {
+            lyrPropsClassId = dv.getInt32(idx - 4, true);
+            firstPropsPos = idx - 5;
+            break;
+        }
+        searchPos = idx + 1;
+    }
+
+    const layersMeta = [];
+    if (firstPropsPos !== -1) {
+        let p = firstPropsPos + 5;
+        [, p] = readNrbfPdnStr(data, p, textDec);
+        const memberCount = dv.getInt32(p, true); p += 4;
+        const memberNames = [];
+        for (let m = 0; m < memberCount; m++) {
+            let mn;
+            [mn, p] = readNrbfPdnStr(data, p, textDec);
+            memberNames.push(mn);
+        }
+        const btypes = [];
+        for (let m = 0; m < memberCount; m++) btypes.push(data[p++]);
+        for (const bt of btypes) {
+            if (bt === 0 || bt === 7) p += 1;
+            else if (bt === 3) [, p] = readNrbfPdnStr(data, p, textDec);
+            else if (bt === 4) { [, p] = readNrbfPdnStr(data, p, textDec); p += 4; }
+        }
+        p += 4; // libraryId
+
+        const strTable = new Map();
+        const readLayerPropsValues = (curP, idxNum) => {
+            const vals = { name: `Layer ${idxNum + 1}`, visible: true, isBackground: false, opacity: 255 };
+            for (const mn of memberNames) {
+                if (mn === 'name') {
+                    const rt = data[curP++];
+                    if (rt === 0x06) {
+                        const sid = dv.getInt32(curP, true); curP += 4;
+                        let sval;
+                        [sval, curP] = readNrbfPdnStr(data, curP, textDec);
+                        strTable.set(sid, sval);
+                        vals.name = sval;
+                    } else if (rt === 0x09) {
+                        const refId = dv.getInt32(curP, true); curP += 4;
+                        if (strTable.has(refId)) vals.name = strTable.get(refId);
+                    }
+                } else if (mn === 'userMetadataItems') {
+                    const rt = data[curP++];
+                    if (rt === 0x09) curP += 4;
+                } else if (mn === 'visible') {
+                    vals.visible = (data[curP++] !== 0);
+                } else if (mn === 'isBackground') {
+                    vals.isBackground = (data[curP++] !== 0);
+                } else if (mn === 'opacity') {
+                    vals.opacity = data[curP++];
+                } else if (mn === 'blendMode') {
+                    const rt = data[curP++];
+                    if (rt === 0x05) {
+                        curP += 4;
+                        [, curP] = readNrbfPdnStr(data, curP, textDec);
+                        const mc = dv.getInt32(curP, true); curP += 4;
+                        for (let k = 0; k < mc; k++) [, curP] = readNrbfPdnStr(data, curP, textDec);
+                        curP += mc * 2 + 4;
+                        vals.blendMode = dv.getInt32(curP, true); curP += 4;
+                    } else if (rt === 0x01) {
+                        curP += 8;
+                        vals.blendMode = dv.getInt32(curP, true); curP += 4;
+                    } else if (rt === 0x04) {
+                        curP += 4;
+                        [, curP] = readNrbfPdnStr(data, curP, textDec);
+                        const mc = dv.getInt32(curP, true); curP += 4;
+                        for (let k = 0; k < mc; k++) [, curP] = readNrbfPdnStr(data, curP, textDec);
+                        curP += mc * 2;
+                        vals.blendMode = dv.getInt32(curP, true); curP += 4;
+                    }
+                }
+            }
+            return [vals, curP];
+        };
+
+        let v0;
+        [v0, p] = readLayerPropsValues(p, 0);
+        layersMeta.push(v0);
+
+        const metaSig = new Uint8Array(4);
+        new DataView(metaSig.buffer).setInt32(0, lyrPropsClassId, true);
+        while (layersMeta.length < numLayers) {
+            const idx = findPdnSubarray(data, metaSig, p);
+            if (idx === -1) break;
+            if (idx >= 5 && data[idx - 5] === 0x01 && (data[idx + 4] === 0x06 || data[idx + 4] === 0x09 || data[idx + 4] === 0x0A)) {
+                let vi;
+                [vi, p] = readLayerPropsValues(idx + 4, layersMeta.length);
+                layersMeta.push(vi);
+            } else {
+                p = idx + 1;
+            }
+        }
+    }
+
+    while (layersMeta.length < numLayers) {
+        layersMeta.push({ name: `Layer ${layersMeta.length + 1}`, visible: true, isBackground: false, opacity: 255 });
+    }
+
+    const totalLayerBytes = width * height * 4;
+    const len64Sig = new Uint8Array(10);
+    const ldv = new DataView(len64Sig.buffer);
+    ldv.setUint32(0, totalLayerBytes >>> 0, true);
+    ldv.setUint32(4, Math.floor(totalLayerBytes / 0x100000000) >>> 0, true);
+    len64Sig[8] = 0x00;
+    len64Sig[9] = 0x01;
+
+    let cur = pos;
+    for (let i = 0; i < numLayers; i++) {
+        const idx = findPdnSubarray(data, len64Sig, cur);
+        if (idx === -1) throw new Error('PDN MemoryBlock signature not found');
+        cur = idx + len64Sig.length;
+    }
+
+    while (cur < data.length) {
+        const bIdx = data.indexOf(0x0B, cur);
+        if (bIdx === -1) throw new Error('PDN NRBF MessageEnd not found');
+        const sPos = bIdx + 1;
+        const fmt = data[sPos];
+        if (fmt === 0 && sPos + 15 <= data.length && data[sPos + 13] === 0x1F && data[sPos + 14] === 0x8B) {
+            cur = sPos;
+            break;
+        } else if (fmt === 1) {
+            cur = sPos;
+            break;
+        }
+        cur = bIdx + 1;
+    }
+
+    const totalPixels = width * height;
+    const layers = [];
+    for (let i = 0; i < numLayers; i++) {
+        const fmt = data[cur++];
+        const bgra = new Uint8Array(totalLayerBytes);
+        if (fmt === 0) {
+            const chunkSize = dv.getUint32(cur, false); cur += 4;
+            const numChunks = Math.ceil(totalLayerBytes / chunkSize);
+            for (let c = 0; c < numChunks; c++) {
+                const chunkNum = dv.getUint32(cur, false); cur += 4;
+                const compLen = dv.getUint32(cur, false); cur += 4;
+                const compSlice = data.subarray(cur, cur + compLen); cur += compLen;
+                const rawChunk = await gzipDecompressPdnBytes(compSlice);
+                bgra.set(rawChunk, chunkNum * chunkSize);
+            }
+        } else if (fmt === 1) {
+            bgra.set(data.subarray(cur, cur + totalLayerBytes));
+            cur += totalLayerBytes;
+        } else {
+            throw new Error(`Unsupported PDN surface formatVersion: ${fmt}`);
+        }
+
+        const lyrPixels = new Array(totalPixels);
+        for (let pIdx = 0; pIdx < totalPixels; pIdx++) {
+            const off = pIdx * 4;
+            lyrPixels[pIdx] = {
+                r: bgra[off + 2],
+                g: bgra[off + 1],
+                b: bgra[off],
+                a: bgra[off + 3]
+            };
+        }
+        layers.push({
+            name: layersMeta[i].name || `Layer ${i + 1}`,
+            visible: Boolean(layersMeta[i].visible),
+            isBackground: Boolean(layersMeta[i].isBackground || i === 0),
+            pixels: lyrPixels
+        });
+    }
+
+    const compositePixels = new Array(totalPixels);
+    for (let pIdx = 0; pIdx < totalPixels; pIdx++) {
+        compositePixels[pIdx] = { r: 0, g: 0, b: 0, a: 0 };
+    }
+    for (let i = 0; i < layers.length; i++) {
+        if (!layers[i].visible) continue;
+        const lyrPixels = layers[i].pixels;
+        for (let pIdx = 0; pIdx < totalPixels; pIdx++) {
+            const px = lyrPixels[pIdx];
+            if (px && px.a >= 128) {
+                compositePixels[pIdx] = { r: px.r, g: px.g, b: px.b, a: 255 };
+            }
+        }
+    }
+
+    return { width, height, pixels: compositePixels, pdnLayers: layers };
+}
+
+async function deflateDecompressPsdBytes(compressedU8) {
+    for (const fmt of ['deflate', 'deflate-raw']) {
+        try {
+            const ds = new DecompressionStream(fmt);
+            const writer = ds.writable.getWriter();
+            writer.write(compressedU8);
+            writer.close();
+            const resp = new Response(ds.readable);
+            const ab = await resp.arrayBuffer();
+            return new Uint8Array(ab);
+        } catch (e) {}
+    }
+    throw new Error('Failed to decompress PSD ZIP channel');
+}
+
+export async function parsePsdFile(buffer) {
+    const u8 = new Uint8Array(buffer);
+    if (u8.length < 26 || u8[0] !== 0x38 || u8[1] !== 0x42 || u8[2] !== 0x50 || u8[3] !== 0x53) {
+        throw new Error('Invalid PSD header');
+    }
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const version = dv.getUint16(4, false);
+    if (version !== 1 && version !== 2) {
+        throw new Error(`Unsupported PSD version: ${version}`);
+    }
+    const isPsb = (version === 2);
+    const docChannels = dv.getUint16(12, false);
+    const height = dv.getUint32(14, false);
+    const width = dv.getUint32(18, false);
+    const depth = dv.getUint16(22, false);
+    const colorMode = dv.getUint16(24, false);
+    if (width <= 0 || height <= 0) {
+        throw new Error('Invalid PSD dimensions');
+    }
+
+    let pos = 26;
+    const colorModeLen = dv.getUint32(pos, false); pos += 4;
+    let indexedLut = null;
+    if (colorMode === 2 && colorModeLen >= 768) {
+        indexedLut = new Uint8Array(768);
+        for (let i = 0; i < 256; i++) {
+            indexedLut[i * 3] = u8[pos + i];
+            indexedLut[i * 3 + 1] = u8[pos + 256 + i];
+            indexedLut[i * 3 + 2] = u8[pos + 512 + i];
+        }
+    }
+    pos += colorModeLen;
+
+    const imgResLen = dv.getUint32(pos, false);
+    pos += 4 + imgResLen;
+
+    const layerMaskLen = isPsb ? Number(dv.getBigUint64(pos, false)) : dv.getUint32(pos, false);
+    pos += isPsb ? 8 : 4;
+    const layerMaskEnd = pos + layerMaskLen;
+
+    let layerInfoStart = -1;
+    if (layerMaskLen > 0 && pos < layerMaskEnd) {
+        const layerInfoLen = isPsb ? Number(dv.getBigUint64(pos, false)) : dv.getUint32(pos, false);
+        const afterLenPos = pos + (isPsb ? 8 : 4);
+        if (layerInfoLen > 0) {
+            layerInfoStart = afterLenPos;
+        } else if (afterLenPos + 4 <= layerMaskEnd) {
+            const globalMaskLen = dv.getUint32(afterLenPos, false);
+            let addPos = afterLenPos + 4 + globalMaskLen;
+            while (addPos + 12 <= layerMaskEnd) {
+                const sigOk = (u8[addPos] === 0x38 && u8[addPos + 1] === 0x42 &&
+                    ((u8[addPos + 2] === 0x49 && u8[addPos + 3] === 0x4D) || (u8[addPos + 2] === 0x36 && u8[addPos + 3] === 0x34)));
+                if (!sigOk) break;
+                const key = String.fromCharCode(u8[addPos + 4], u8[addPos + 5], u8[addPos + 6], u8[addPos + 7]);
+                addPos += 8;
+                const use8 = isPsb && ['LMsk', 'Lr16', 'Lr32', 'Layr', 'Mt16', 'Mt32', 'Mtrn', 'Alph', 'FMsk', 'lnk2', 'FEid', 'FXid', 'PxSD'].includes(key);
+                const bLen = use8 ? Number(dv.getBigUint64(addPos, false)) : dv.getUint32(addPos, false);
+                addPos += use8 ? 8 : 4;
+                if (key === 'Lr16' || key === 'Lr32' || key === 'Layr') {
+                    layerInfoStart = addPos;
+                    break;
+                }
+                addPos += (bLen + 3) & ~3;
+            }
+        }
+    }
+
+    const decodeChannelBytes = async (chStart, chEnd, cw, ch, comp) => {
+        const out = new Uint8Array(cw * ch);
+        if (cw <= 0 || ch <= 0 || chStart >= chEnd) return out;
+        if (comp === 0) {
+            const rawStart = chStart;
+            if (depth === 8) {
+                const avail = Math.min(out.length, chEnd - rawStart);
+                out.set(u8.subarray(rawStart, rawStart + avail));
+            } else if (depth === 16) {
+                for (let k = 0; k < out.length && rawStart + k * 2 < chEnd; k++) {
+                    out[k] = u8[rawStart + k * 2];
+                }
+            }
+        } else if (comp === 1) {
+            let rlePos = chStart + ch * (isPsb ? 4 : 2);
+            const bytesPerSample = depth === 16 ? 2 : 1;
+            const rawBuf = bytesPerSample === 1 ? out : new Uint8Array(cw * ch * bytesPerSample);
+            let outOff = 0;
+            while (outOff < rawBuf.length && rlePos < chEnd) {
+                const n = (u8[rlePos++] << 24) >> 24;
+                if (n >= 0) {
+                    const count = n + 1;
+                    for (let k = 0; k < count && outOff < rawBuf.length && rlePos < chEnd; k++) {
+                        rawBuf[outOff++] = u8[rlePos++];
+                    }
+                } else if (n !== -128) {
+                    const count = 1 - n;
+                    const val = u8[rlePos++];
+                    for (let k = 0; k < count && outOff < rawBuf.length; k++) {
+                        rawBuf[outOff++] = val;
+                    }
+                }
+            }
+            if (bytesPerSample === 2) {
+                for (let k = 0; k < out.length; k++) out[k] = rawBuf[k * 2];
+            }
+        } else if (comp === 2 || comp === 3) {
+            const raw = await deflateDecompressPsdBytes(u8.subarray(chStart, chEnd));
+            if (depth === 8) {
+                out.set(raw.subarray(0, out.length));
+                if (comp === 3) {
+                    for (let y = 0; y < ch; y++) {
+                        const rowOff = y * cw;
+                        for (let x = 1; x < cw; x++) {
+                            out[rowOff + x] = (out[rowOff + x] + out[rowOff + x - 1]) & 0xFF;
+                        }
+                    }
+                }
+            }
+        }
+        return out;
+    };
+
+    const latin1Dec = new TextDecoder('latin1');
+    const utf16BeDec = new TextDecoder('utf-16be');
+    const layerRecords = [];
+    const totalPixels = width * height;
+
+    if (layerInfoStart !== -1 && layerInfoStart + 2 <= layerMaskEnd) {
+        let p = layerInfoStart;
+        const rawLayerCount = dv.getInt16(p, false); p += 2;
+        const numLayers = Math.abs(rawLayerCount);
+
+        for (let i = 0; i < numLayers; i++) {
+            const top = dv.getInt32(p, false); p += 4;
+            const left = dv.getInt32(p, false); p += 4;
+            const bottom = dv.getInt32(p, false); p += 4;
+            const right = dv.getInt32(p, false); p += 4;
+            const numChan = dv.getUint16(p, false); p += 2;
+            const chanSpecs = [];
+            for (let c = 0; c < numChan; c++) {
+                const chanId = dv.getInt16(p, false); p += 2;
+                const chanLen = isPsb ? Number(dv.getBigUint64(p, false)) : dv.getUint32(p, false);
+                p += isPsb ? 8 : 4;
+                chanSpecs.push({ id: chanId, len: chanLen });
+            }
+            p += 8; // 8BIM + blendKey
+            const opacity = u8[p++];
+            const clipping = u8[p++];
+            const flags = u8[p++];
+            p += 1; // filler
+            const visible = ((flags & 0x02) === 0);
+
+            const extraLen = dv.getUint32(p, false); p += 4;
+            const extraEnd = p + extraLen;
+
+            const maskDataLen = dv.getUint32(p, false); p += 4;
+            let maskMeta = null;
+            if (maskDataLen >= 20) {
+                maskMeta = {
+                    top: dv.getInt32(p, false),
+                    left: dv.getInt32(p + 4, false),
+                    bottom: dv.getInt32(p + 8, false),
+                    right: dv.getInt32(p + 12, false),
+                    defaultColor: u8[p + 16],
+                    flags: u8[p + 17]
+                };
+            }
+            p += maskDataLen;
+
+            const blendRangesLen = dv.getUint32(p, false);
+            p += 4 + blendRangesLen;
+
+            const pasLen = u8[p];
+            let layerName = latin1Dec.decode(u8.subarray(p + 1, p + 1 + pasLen));
+            p += ((1 + pasLen + 3) & ~3);
+
+            let dividerType = 0;
+            while (p + 12 <= extraEnd) {
+                const is8Bim = (u8[p] === 0x38 && u8[p + 1] === 0x42 &&
+                    ((u8[p + 2] === 0x49 && u8[p + 3] === 0x4D) || (u8[p + 2] === 0x36 && u8[p + 3] === 0x34)));
+                if (!is8Bim) break;
+                const key = String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7]);
+                p += 8;
+                const use8 = isPsb && ['LMsk', 'Lr16', 'Lr32', 'Layr', 'Mt16', 'Mt32', 'Mtrn', 'Alph', 'FMsk', 'lnk2', 'FEid', 'FXid', 'PxSD'].includes(key);
+                const bLen = use8 ? Number(dv.getBigUint64(p, false)) : dv.getUint32(p, false);
+                p += use8 ? 8 : 4;
+                const bStart = p;
+
+                if (key === 'luni' && bLen >= 4) {
+                    const uChars = dv.getUint32(bStart, false);
+                    if (uChars > 0 && bStart + 4 + uChars * 2 <= extraEnd) {
+                        layerName = utf16BeDec.decode(u8.subarray(bStart + 4, bStart + 4 + uChars * 2)).replace(/\0+$/, '');
+                    }
+                } else if ((key === 'lsct' || key === 'lsdk') && bLen >= 4) {
+                    dividerType = dv.getUint32(bStart, false);
+                }
+
+                p = bStart + ((bLen + 1) & ~1);
+                if (p + 4 <= extraEnd && u8[p] === 0 && u8[p + 1] === 0 && u8[p + 2] === 0x38 && u8[p + 3] === 0x42) {
+                    p += 2;
+                }
+            }
+            p = extraEnd;
+
+            layerRecords.push({
+                name: layerName || `Layer ${i + 1}`,
+                top, left, bottom, right,
+                visible, opacity, dividerType,
+                chanSpecs, maskMeta,
+                pixels: null
+            });
+        }
+
+        for (let i = 0; i < numLayers; i++) {
+            const rec = layerRecords[i];
+            const lw = Math.max(0, rec.right - rec.left);
+            const lh = Math.max(0, rec.bottom - rec.top);
+            const decodedChans = new Map();
+
+            for (const chSpec of rec.chanSpecs) {
+                const chStart = p;
+                const chEnd = chStart + chSpec.len;
+                let cw = lw, ch = lh;
+                if (chSpec.id === -2 && rec.maskMeta) {
+                    cw = Math.max(0, rec.maskMeta.right - rec.maskMeta.left);
+                    ch = Math.max(0, rec.maskMeta.bottom - rec.maskMeta.top);
+                }
+                if (rec.dividerType === 0 && chSpec.len >= 2 && cw > 0 && ch > 0 && chSpec.id >= -2 && chSpec.id <= 3) {
+                    const comp = dv.getUint16(chStart, false);
+                    const plane = await decodeChannelBytes(chStart + 2, chEnd, cw, ch, comp);
+                    decodedChans.set(chSpec.id, plane);
+                }
+                p = chEnd;
+            }
+
+            if (rec.dividerType === 0) {
+                const lyrPixels = new Array(totalPixels);
+                for (let k = 0; k < totalPixels; k++) {
+                    lyrPixels[k] = { r: 0, g: 0, b: 0, a: 0 };
+                }
+                if (lw > 0 && lh > 0) {
+                    const chR = decodedChans.get(0);
+                    const chG = decodedChans.get(1) || chR;
+                    const chB = decodedChans.get(2) || chR;
+                    const chA = decodedChans.get(-1);
+                    const chMask = (rec.maskMeta && ((rec.maskMeta.flags & 0x02) === 0)) ? decodedChans.get(-2) : null;
+                    const mw = chMask ? Math.max(0, rec.maskMeta.right - rec.maskMeta.left) : 0;
+
+                    for (let ly = 0; ly < lh; ly++) {
+                        const gy = rec.top + ly;
+                        if (gy < 0 || gy >= height) continue;
+                        for (let lx = 0; lx < lw; lx++) {
+                            const gx = rec.left + lx;
+                            if (gx < 0 || gx >= width) continue;
+                            const si = ly * lw + lx;
+                            let a = chA ? chA[si] : 255;
+                            if (chMask) {
+                                const mx = gx - rec.maskMeta.left;
+                                const my = gy - rec.maskMeta.top;
+                                const mVal = (mx >= 0 && mx < mw && my >= 0 && my < (rec.maskMeta.bottom - rec.maskMeta.top))
+                                    ? chMask[my * mw + mx]
+                                    : (rec.maskMeta.defaultColor || 0);
+                                a = Math.round((a * mVal) / 255);
+                            }
+                            let r = 0, g = 0, b = 0;
+                            if (colorMode === 2 && indexedLut && chR) {
+                                const pi = chR[si] * 3;
+                                r = indexedLut[pi];
+                                g = indexedLut[pi + 1];
+                                b = indexedLut[pi + 2];
+                            } else {
+                                r = chR ? chR[si] : 0;
+                                g = chG ? chG[si] : 0;
+                                b = chB ? chB[si] : 0;
+                            }
+                            lyrPixels[gy * width + gx] = { r, g, b, a };
+                        }
+                    }
+                }
+                rec.pixels = lyrPixels;
+            }
+        }
+    }
+
+    // Fallback for flattened PSDs with 0 layer records (read Merged Image Data section)
+    if (layerRecords.length === 0 && layerMaskEnd + 2 <= u8.length) {
+        const mPos = layerMaskEnd;
+        const comp = dv.getUint16(mPos, false);
+        const numCh = Math.min(docChannels, 4);
+        const planes = [];
+        if (comp === 0) {
+            let cur = mPos + 2;
+            const planeLen = totalPixels * (depth === 16 ? 2 : 1);
+            for (let c = 0; c < numCh; c++) {
+                planes.push(await decodeChannelBytes(cur, cur + planeLen, width, height, 0));
+                cur += planeLen;
+            }
+        } else if (comp === 1) {
+            const countBytesPerRow = isPsb ? 4 : 2;
+            let countPos = mPos + 2;
+            let dataPos = countPos + docChannels * height * countBytesPerRow;
+            for (let c = 0; c < numCh; c++) {
+                let chByteLen = 0;
+                for (let y = 0; y < height; y++) {
+                    chByteLen += isPsb ? dv.getUint32(countPos, false) : dv.getUint16(countPos, false);
+                    countPos += countBytesPerRow;
+                }
+                const fakeStart = dataPos - height * countBytesPerRow;
+                planes.push(await decodeChannelBytes(fakeStart, dataPos + chByteLen, width, height, 1));
+                dataPos += chByteLen;
+            }
+        }
+        if (planes.length > 0) {
+            const lyrPixels = new Array(totalPixels);
+            const chR = planes[0];
+            const chG = planes[1] || chR;
+            const chB = planes[2] || chR;
+            const chA = planes[3] || null;
+            for (let k = 0; k < totalPixels; k++) {
+                if (colorMode === 2 && indexedLut) {
+                    const pi = chR[k] * 3;
+                    lyrPixels[k] = { r: indexedLut[pi], g: indexedLut[pi + 1], b: indexedLut[pi + 2], a: chA ? chA[k] : 255 };
+                } else {
+                    lyrPixels[k] = { r: chR[k], g: chG[k], b: chB[k], a: chA ? chA[k] : 255 };
+                }
+            }
+            layerRecords.push({
+                name: 'Background',
+                top: 0, left: 0, bottom: height, right: width,
+                visible: true, opacity: 255, dividerType: 0,
+                chanSpecs: [], maskMeta: null,
+                pixels: lyrPixels
+            });
+        }
+    }
+
+    const rootChildren = [];
+    const containerStack = [{ children: rootChildren, effectiveVisible: true }];
+    const leafLayersTopToBottom = [];
+
+    for (let i = layerRecords.length - 1; i >= 0; i--) {
+        const rec = layerRecords[i];
+        const curContainer = containerStack[containerStack.length - 1];
+        if (rec.dividerType === 1 || rec.dividerType === 2) {
+            const grpNode = {
+                type: 'group',
+                name: rec.name || 'Group',
+                visible: Boolean(rec.visible),
+                expanded: rec.dividerType === 1,
+                children: []
+            };
+            curContainer.children.push(grpNode);
+            containerStack.push({
+                children: grpNode.children,
+                effectiveVisible: curContainer.effectiveVisible && Boolean(rec.visible)
+            });
+        } else if (rec.dividerType === 3) {
+            if (containerStack.length > 1) {
+                containerStack.pop();
+            }
+        } else if (rec.pixels) {
+            const leafObj = {
+                type: 'layer',
+                name: rec.name || 'Layer',
+                visible: Boolean(rec.visible),
+                effectiveVisible: curContainer.effectiveVisible && Boolean(rec.visible),
+                isBackground: (i === 0),
+                pixels: rec.pixels,
+                leafIndex: -1
+            };
+            curContainer.children.push(leafObj);
+            leafLayersTopToBottom.push(leafObj);
+        }
+    }
+
+    const pdnLayers = leafLayersTopToBottom.slice().reverse().map((leaf, idx) => {
+        leaf.leafIndex = idx;
+        return {
+            name: leaf.name,
+            visible: leaf.effectiveVisible,
+            ownVisible: leaf.visible,
+            isBackground: (idx === 0),
+            pixels: leaf.pixels
+        };
+    });
+
+    const compositePixels = new Array(totalPixels);
+    for (let pIdx = 0; pIdx < totalPixels; pIdx++) {
+        compositePixels[pIdx] = { r: 0, g: 0, b: 0, a: 0 };
+    }
+    for (let i = 0; i < pdnLayers.length; i++) {
+        if (!pdnLayers[i].visible) continue;
+        const lyrPixels = pdnLayers[i].pixels;
+        for (let pIdx = 0; pIdx < totalPixels; pIdx++) {
+            const px = lyrPixels[pIdx];
+            if (px && px.a >= 128) {
+                compositePixels[pIdx] = { r: px.r, g: px.g, b: px.b, a: 255 };
+            }
+        }
+    }
+
+    return { width, height, pixels: compositePixels, pdnLayers, psdTree: rootChildren };
+}
+
+function buildAdaptive256PaletteForImage(pixels, w, h, pdnLayers = null) {
     const pal = new Array(256);
     pal[0] = { r: 0, g: 0, b: 0 };
 
+    const refCornerPixels = (pdnLayers && pdnLayers.length > 0 && pdnLayers[0].pixels) ? pdnLayers[0].pixels : pixels;
+    if (refCornerPixels && w > 0 && h > 0) {
+        const corners = [refCornerPixels[0], refCornerPixels[w - 1], refCornerPixels[(h - 1) * w], refCornerPixels[h * w - 1]];
+        const hasChromaBlue = corners.some(c => c && c.a >= 128 && c.r <= 8 && c.g <= 8 && c.b >= 248);
+        const hasChromaMagenta = corners.some(c => c && c.a >= 128 && c.r >= 248 && c.g <= 8 && c.b >= 248);
+        if (hasChromaBlue) {
+            pal[0] = { r: 0, g: 0, b: 252 };
+        } else if (hasChromaMagenta) {
+            pal[0] = { r: 252, g: 0, b: 252 };
+        }
+    }
+    const skipKey0 = (pal[0].r !== 0 || pal[0].g !== 0 || pal[0].b !== 0)
+        ? ((pal[0].r << 16) | (pal[0].g << 8) | pal[0].b)
+        : -1;
+
     const freq = new Map();
     const total = w * h;
-    for (let i = 0; i < total; i++) {
-        const c = pixels[i];
-        if (!c || c.a < 128) continue;
-        const r6 = (c.r & 255) >> 2;
-        const g6 = (c.g & 255) >> 2;
-        const b6 = (c.b & 255) >> 2;
-        const r8 = (r6 << 2) | (r6 >> 4);
-        const g8 = (g6 << 2) | (g6 >> 4);
-        const b8 = (b6 << 2) | (b6 >> 4);
-        const key = (r8 << 16) | (g8 << 8) | b8;
-        freq.set(key, (freq.get(key) || 0) + 1);
+    const addPixelsToFreq = (pxArr, weight = 1) => {
+        if (!pxArr) return;
+        for (let i = 0; i < total; i++) {
+            const c = pxArr[i];
+            if (!c || c.a < 128) continue;
+            const r6 = (c.r & 255) >> 2;
+            const g6 = (c.g & 255) >> 2;
+            const b6 = (c.b & 255) >> 2;
+            const r8 = (r6 << 2) | (r6 >> 4);
+            const g8 = (g6 << 2) | (g6 >> 4);
+            const b8 = (b6 << 2) | (b6 >> 4);
+            const key = (r8 << 16) | (g8 << 8) | b8;
+            if (key === skipKey0) continue;
+            freq.set(key, (freq.get(key) || 0) + weight);
+        }
+    };
+    addPixelsToFreq(pixels, pdnLayers ? 2 : 1);
+    if (pdnLayers && pdnLayers.length > 0) {
+        for (const lyr of pdnLayers) {
+            addPixelsToFreq(lyr.pixels, 1);
+        }
     }
 
     let idx = 1;
@@ -1556,7 +2279,7 @@ function buildAdaptive256PaletteForImage(pixels, w, h) {
     return pal;
 }
 
-function quantizeImageWithRgbCache(pixels, w, h, pal) {
+function quantizeImageWithRgbCache(pixels, w, h, pal, opts = {}) {
     const indices = new Uint16Array(w * h).fill(TRANSPARENT_COLOR);
     const singleIdxCache = new Int16Array(1 << 18).fill(-1);
 
@@ -1572,16 +2295,19 @@ function quantizeImageWithRgbCache(pixels, w, h, pal) {
         (skipCol.r <= 8 && skipCol.g <= 8 && skipCol.b >= 248) ||
         (skipCol.r >= 248 && skipCol.g <= 8 && skipCol.b >= 248)
     ));
-    const matchesSkipCol = (c) => Boolean(c && skipCol &&
+    const matchesSkipCol = (c) => Boolean(c && c.a >= 128 && skipCol &&
         ((c.r >> 2) === (skipCol.r >> 2)) &&
         ((c.g >> 2) === (skipCol.g >> 2)) &&
         ((c.b >> 2) === (skipCol.b >> 2)));
-    const useColorKey0 = Boolean(!hasAlpha && isChroma0 && w > 0 && h > 0 && (
+    const hasCornerMatch0 = Boolean(w > 0 && h > 0 && (
         matchesSkipCol(pixels[0]) ||
         matchesSkipCol(pixels[w - 1]) ||
         matchesSkipCol(pixels[(h - 1) * w]) ||
         matchesSkipCol(pixels[h * w - 1])
     ));
+    const useColorKey0 = opts.isPdnLayer
+        ? Boolean((isChroma0 && hasCornerMatch0) || (opts.isBackgroundLayer && hasCornerMatch0))
+        : Boolean(!hasAlpha && isChroma0 && hasCornerMatch0);
 
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -1648,10 +2374,30 @@ function quantizeImageWithRgbCache(pixels, w, h, pal) {
     return indices;
 }
 
+function quantizePdnLayers(pdnLayers, w, h, pal) {
+    const layerDataList = pdnLayers.map((pLyr, lIdx) =>
+        quantizeImageWithRgbCache(pLyr.pixels, w, h, pal, {
+            isPdnLayer: true,
+            isBackgroundLayer: Boolean(pLyr.isBackground || lIdx === 0)
+        })
+    );
+    const compIndices = new Uint16Array(w * h).fill(TRANSPARENT_COLOR);
+    for (let lIdx = 0; lIdx < pdnLayers.length; lIdx++) {
+        if (!pdnLayers[lIdx].visible) continue;
+        const lData = layerDataList[lIdx];
+        for (let p = 0; p < w * h; p++) {
+            if (lData[p] !== TRANSPARENT_COLOR) {
+                compIndices[p] = lData[p];
+            }
+        }
+    }
+    return { layerDataList, compIndices };
+}
+
 export async function openDropImagePaletteDialog(files) {
     if (!files || files.length === 0) return;
 
-    const validExts = ['png', 'pcx', 'bmp', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'pjp', 'webp', 'gif', 'avif', 'ico', 'svg', 'tif', 'tiff'];
+    const validExts = ['png', 'pcx', 'bmp', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'pjp', 'webp', 'gif', 'avif', 'ico', 'svg', 'tif', 'tiff', 'pdn', 'psd', 'psb'];
     const filesArray = Array.from(files).filter(f => {
         if (!f) return false;
         if (f.type && f.type.startsWith('image/')) return true;
@@ -1672,10 +2418,13 @@ export async function openDropImagePaletteDialog(files) {
                     width: data.width,
                     height: data.height,
                     pixels: data.pixels,
+                    pdnLayers: data.pdnLayers || null,
+                    psdTree: data.psdTree || null,
                     chosenPal: null,
                     chosenNode: null,
                     _previewCache: new Map(),
-                    _indexCache: new Map()
+                    _indexCache: new Map(),
+                    _layerIndexCache: new Map()
                 });
             }
         } catch (err) {
@@ -1760,8 +2509,11 @@ export async function openDropImagePaletteDialog(files) {
 
         const w = entry.width;
         const h = entry.height;
+        const dpr = window.devicePixelRatio || 1;
         previewCanvas.width = w;
         previewCanvas.height = h;
+        previewCanvas.style.width = (w / dpr) + 'px';
+        previewCanvas.style.height = (h / dpr) + 'px';
         const ctx = previewCanvas.getContext('2d');
 
         if (!currentPalArray) {
@@ -1800,7 +2552,15 @@ export async function openDropImagePaletteDialog(files) {
             return;
         }
 
-        const indices = quantizeImageWithRgbCache(entry.pixels, w, h, currentPalArray);
+        let indices;
+        let pdnLayerDataList = null;
+        if (entry.pdnLayers && entry.pdnLayers.length > 0) {
+            const qRes = quantizePdnLayers(entry.pdnLayers, w, h, currentPalArray);
+            indices = qRes.compIndices;
+            pdnLayerDataList = qRes.layerDataList;
+        } else {
+            indices = quantizeImageWithRgbCache(entry.pixels, w, h, currentPalArray);
+        }
         const imgData = ctx.createImageData(w, h);
         const dst = imgData.data;
 
@@ -1824,6 +2584,9 @@ export async function openDropImagePaletteDialog(files) {
         if (cacheKey) {
             entry._previewCache.set(cacheKey, imgData);
             entry._indexCache.set(cacheKey, indices);
+            if (pdnLayerDataList && entry._layerIndexCache) {
+                entry._layerIndexCache.set(cacheKey, pdnLayerDataList);
+            }
         }
         ctx.putImageData(imgData, 0, 0);
     };
@@ -1886,7 +2649,7 @@ export async function openDropImagePaletteDialog(files) {
         btnCreatePal.onclick = () => {
             const entry = loadedImages[currentIndex];
             if (!entry) return;
-            const newPal = buildAdaptive256PaletteForImage(entry.pixels, entry.width, entry.height);
+            const newPal = buildAdaptive256PaletteForImage(entry.pixels, entry.width, entry.height, entry.pdnLayers);
             const palBaseName = (entry.name || 'custom_palette').replace(/\.[^/.]+$/, '').trim() || 'custom_palette';
             const node = (typeof registerCustomPaletteNode === 'function')
                 ? registerCustomPaletteNode(palBaseName, newPal)
@@ -1894,6 +2657,7 @@ export async function openDropImagePaletteDialog(files) {
             if (node && node.id) {
                 entry._previewCache.delete(node.id);
                 entry._indexCache.delete(node.id);
+                if (entry._layerIndexCache) entry._layerIndexCache.delete(node.id);
             }
             if (typeof window.onDropImgPaletteSelected === 'function') {
                 window.onDropImgPaletteSelected(newPal, node);
@@ -1950,9 +2714,6 @@ export async function openDropImagePaletteDialog(files) {
                 const baseName = imgEntry.name.replace(/\.[^/.]+$/, '') + '.shp';
 
                 const cacheKey = node ? node.id : null;
-                const indices = (cacheKey && imgEntry._indexCache && imgEntry._indexCache.has(cacheKey))
-                    ? new Uint16Array(imgEntry._indexCache.get(cacheKey))
-                    : quantizeImageWithRgbCache(imgEntry.pixels, w, h, pal);
 
                 if (i === 0) {
                     const curTab = (state.activeTabIndex >= 0 && state.tabs[state.activeTabIndex]) ? state.tabs[state.activeTabIndex] : null;
@@ -1971,10 +2732,77 @@ export async function openDropImagePaletteDialog(files) {
                 const targetComp = Number.isFinite(rawPrefComp) ? rawPrefComp : (isTdRaPal ? 80 : 3);
                 createNewProject(w, h, 1, false, clonedPal, targetComp, false, targetShpFormat);
 
-                if (state.frames.length > 0 && state.frames[0].layers && state.frames[0].layers.length > 0) {
-                    state.frames[0].layers[0].data = indices;
-                    state.frames[0].layers[0].name = 'Layer 1';
-                    state.frames[0]._v = (state.frames[0]._v || 0) + 1;
+                if (state.frames.length > 0 && state.frames[0]) {
+                    if (imgEntry.pdnLayers && imgEntry.pdnLayers.length > 0) {
+                        const cachedLayerData = (cacheKey && imgEntry._layerIndexCache && imgEntry._layerIndexCache.has(cacheKey))
+                            ? imgEntry._layerIndexCache.get(cacheKey)
+                            : quantizePdnLayers(imgEntry.pdnLayers, w, h, pal).layerDataList;
+                        let builtLayers;
+                        let firstVisibleLeaf = null;
+                        let firstAnyLeaf = null;
+                        if (imgEntry.psdTree && imgEntry.psdTree.length > 0) {
+                            const buildFromPsdTree = (nodes) => nodes.map(n => {
+                                if (n.type === 'group') {
+                                    return {
+                                        type: 'group',
+                                        id: generateId(),
+                                        name: n.name || 'Group',
+                                        visible: Boolean(n.visible),
+                                        expanded: n.expanded !== false,
+                                        children: buildFromPsdTree(n.children || [])
+                                    };
+                                } else {
+                                    const lNode = {
+                                        type: 'layer',
+                                        id: generateId(),
+                                        name: n.name || 'Layer',
+                                        data: new Uint16Array(cachedLayerData[n.leafIndex]),
+                                        visible: Boolean(n.visible),
+                                        width: w,
+                                        height: h,
+                                        mask: null,
+                                        editMask: false
+                                    };
+                                    if (!firstAnyLeaf) firstAnyLeaf = lNode;
+                                    if (!firstVisibleLeaf && n.effectiveVisible && !n.isBackground) {
+                                        firstVisibleLeaf = lNode;
+                                    }
+                                    return lNode;
+                                }
+                            });
+                            builtLayers = buildFromPsdTree(imgEntry.psdTree);
+                        } else {
+                            builtLayers = imgEntry.pdnLayers.map((pLyr, lIdx) => ({
+                                type: 'layer',
+                                id: generateId(),
+                                name: pLyr.name || `Layer ${lIdx + 1}`,
+                                data: new Uint16Array(cachedLayerData[lIdx]),
+                                visible: Boolean(pLyr.visible),
+                                width: w,
+                                height: h,
+                                mask: null,
+                                editMask: false
+                            })).reverse(); // Reverse so index 0 is TOP layer and index length-1 is BOTTOM layer
+                        }
+                        state.frames[0].layers = builtLayers;
+                        state.frames[0]._v = (state.frames[0]._v || 0) + 1;
+                        const activeCand = firstVisibleLeaf
+                            || builtLayers.find((l, idx) => l.type === 'layer' && l.visible && idx < builtLayers.length - 1)
+                            || builtLayers.find(l => l.type === 'layer' && l.visible)
+                            || firstAnyLeaf
+                            || builtLayers[0];
+                        if (activeCand) {
+                            state.activeLayerId = activeCand.id;
+                            state.selectedLayerIds = [state.activeLayerId];
+                        }
+                    } else if (state.frames[0].layers && state.frames[0].layers.length > 0) {
+                        const indices = (cacheKey && imgEntry._indexCache && imgEntry._indexCache.has(cacheKey))
+                            ? new Uint16Array(imgEntry._indexCache.get(cacheKey))
+                            : quantizeImageWithRgbCache(imgEntry.pixels, w, h, pal);
+                        state.frames[0].layers[0].data = indices;
+                        state.frames[0].layers[0].name = 'Layer 1';
+                        state.frames[0]._v = (state.frames[0]._v || 0) + 1;
+                    }
                 }
 
                 if (node && node.id) {

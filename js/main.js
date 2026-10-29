@@ -2676,6 +2676,10 @@ export function isSupportedImageFile(f) {
     return /\.(png|pcx|bmp|jpe?g|jfif|pjpeg|pjp|webp|gif|avif|ico|svg|tif?f)$/i.test(f.name || '');
 }
 
+function isPdnFile(f) {
+    return Boolean(f && f.name && /\.(pdn|psd|psb)$/i.test(f.name));
+}
+
 export function detectFileType(buffer) {
     if (buffer && ArrayBuffer.isView(buffer)) {
         buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteLength + buffer.byteOffset);
@@ -3108,12 +3112,13 @@ export async function openNativePaths(paths) {
                 return;
             }
         }
+        const pdnFiles = files.filter(isPdnFile);
         const imageFiles = files.filter(isSupportedImageFile);
         const nonImageIndices = [];
         files.forEach((f, idx) => {
-            if (!isSupportedImageFile(f)) nonImageIndices.push(idx);
+            if (!isSupportedImageFile(f) && !isPdnFile(f)) nonImageIndices.push(idx);
         });
-        if (imageFiles.length > 0 && nonImageIndices.length === 0) {
+        if (imageFiles.length > 0 && nonImageIndices.length === 0 && pdnFiles.length === 0) {
             if (state.frames && state.frames.length > 0) {
                 await handleFrameDrop(imageFiles);
             } else {
@@ -3126,8 +3131,8 @@ export async function openNativePaths(paths) {
             const nonImgPaths = nonImageIndices.map(i => filePaths[i]);
             await openFilesBatch(nonImgFiles, [], nonImgPaths);
         }
-        if (imageFiles.length > 0) {
-            await openDropImagePaletteDialog(imageFiles);
+        if (pdnFiles.length > 0 || imageFiles.length > 0) {
+            await openDropImagePaletteDialog([...pdnFiles, ...imageFiles]);
         }
     }
 }
@@ -3267,13 +3272,14 @@ document.addEventListener('drop', async (e) => {
         })
     );
 
+    const pdnFiles = files.filter(isPdnFile);
     const imageFiles = files.filter(isSupportedImageFile);
     const nonImageIndices = [];
     files.forEach((f, idx) => {
-        if (!isSupportedImageFile(f)) nonImageIndices.push(idx);
+        if (!isSupportedImageFile(f) && !isPdnFile(f)) nonImageIndices.push(idx);
     });
 
-    if (imageFiles.length > 0 && nonImageIndices.length === 0) {
+    if (imageFiles.length > 0 && nonImageIndices.length === 0 && pdnFiles.length === 0) {
         if (state.frames && state.frames.length > 0) {
             await handleFrameDrop(imageFiles);
         } else {
@@ -3300,7 +3306,7 @@ document.addEventListener('drop', async (e) => {
         const nonImgPaths = nonImageIndices.map(i => filePaths[i]);
         await openFilesBatch(nonImgFiles, nonImgHandles, nonImgPaths);
     }
-    if (imageFiles.length > 0) {
-        await openDropImagePaletteDialog(imageFiles);
+    if (pdnFiles.length > 0 || imageFiles.length > 0) {
+        await openDropImagePaletteDialog([...pdnFiles, ...imageFiles]);
     }
 });

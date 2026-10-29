@@ -213,26 +213,28 @@ function aresDrawGrid() {
     const requiredW = Math.ceil(2 * (Math.max(maxDistX, refW / 2) + margin));
     const requiredH = Math.ceil(2 * (Math.max(maxDistY, refH / 2) + margin));
 
-    const newW = container ? Math.max(container.clientWidth - 4, requiredW) : requiredW;
-    const newH = container ? Math.max(container.clientHeight - 4, requiredH) : requiredH;
+    const dpr = window.devicePixelRatio || 1;
+    const containerPhysW = container ? Math.round((container.clientWidth - 4) * dpr) : 0;
+    const containerPhysH = container ? Math.round((container.clientHeight - 4) * dpr) : 0;
+    const newW = Math.max(containerPhysW, requiredW);
+    const newH = Math.max(containerPhysH, requiredH);
 
     if (cvs.width !== newW) cvs.width = newW;
     if (cvs.height !== newH) cvs.height = newH;
-    // Keep the CSS box in sync with the bitmap so the canvas displays at
-    // 1:1 (no stretching). With overflow:auto on the container, the
-    // grid simply paints past the visible area and the user scrolls to
-    // see it.
-    cvs.style.width = `${newW}px`;
-    cvs.style.height = `${newH}px`;
+    // Keep the CSS box in sync with the physical pixel bitmap (1:1 physical pixels)
+    const cssW = newW / dpr;
+    const cssH = newH / dpr;
+    cvs.style.width = `${cssW}px`;
+    cvs.style.height = `${cssH}px`;
 
     if (container) {
         if (aresIsFirstLayout && container.clientWidth > 0 && container.clientHeight > 0) {
-            container.scrollLeft = (newW - container.clientWidth) / 2;
-            container.scrollTop = (newH - container.clientHeight) / 2;
+            container.scrollLeft = (cssW - container.clientWidth) / 2;
+            container.scrollTop = (cssH - container.clientHeight) / 2;
             aresIsFirstLayout = false;
         } else {
-            const deltaW = newW - oldW;
-            const deltaH = newH - oldH;
+            const deltaW = (newW - oldW) / dpr;
+            const deltaH = (newH - oldH) / dpr;
             if (deltaW !== 0) container.scrollLeft = oldScrollLeft + deltaW / 2;
             if (deltaH !== 0) container.scrollTop = oldScrollTop + deltaH / 2;
         }
@@ -285,7 +287,7 @@ function aresDrawGrid() {
         off.width = frameImg.w;
         off.height = frameImg.h;
         off.getContext('2d').putImageData(frameImg.imageData, 0, 0);
-        ctx.drawImage(off, centerX - frameImg.w / 2, centerY - frameImg.h / 2);
+        ctx.drawImage(off, Math.round(centerX - frameImg.w / 2), Math.round(centerY - frameImg.h / 2));
         ctx.restore();
     }
 
@@ -352,8 +354,10 @@ let aresLastPaintedKey = null;
 
 function aresCellAt(clientX, clientY) {
     const rect = aresCanvas.getBoundingClientRect();
-    const mouseX = clientX - rect.left;
-    const mouseY = clientY - rect.top;
+    const scaleX = rect.width > 0 ? (aresCanvas.width / rect.width) : 1;
+    const scaleY = rect.height > 0 ? (aresCanvas.height / rect.height) : 1;
+    const mouseX = (clientX - rect.left) * scaleX;
+    const mouseY = (clientY - rect.top) * scaleY;
 
     const cx = parseFloat(aresCanvas.dataset.cx);
     const cy = parseFloat(aresCanvas.dataset.cy);

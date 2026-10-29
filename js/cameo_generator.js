@@ -3434,9 +3434,11 @@ export function syncFromActiveEditorLayers() {
     let hasCameoMeta = false;
     for (const l of flatLayers) {
         if (l.cgMeta && l.cgMeta.isCameoLayer) hasCameoMeta = true;
+    }
+    for (const l of flatLayers) {
         const info = parseLayerRoleAndMeta(l);
         if (info) {
-            l.cgLockedName = true;
+            if (hasCameoMeta) l.cgLockedName = true;
             recognized.push({ layer: l, ...info });
         }
     }
@@ -3450,15 +3452,19 @@ export function syncFromActiveEditorLayers() {
 
     const pal = (state.palette && state.palette.some(Boolean)) ? state.palette : getTargetPalette();
 
-    // Keep only the first matching layer for each role (and per lineNum for text_line)
+    // Keep only the first matching layer for each role (and per lineNum for text_line), preferring visible layers
     const firstByRole = {};
     const textLineByNum = new Map();
     for (const item of recognized) {
         if (item.role === 'text_line') {
             const num = (item.meta && item.meta.lineNum) || 1;
-            if (!textLineByNum.has(num)) textLineByNum.set(num, item);
-        } else if (!firstByRole[item.role]) {
-            firstByRole[item.role] = item;
+            const prev = textLineByNum.get(num);
+            if (!prev || (!prev.layer.visible && item.layer.visible)) textLineByNum.set(num, item);
+        } else {
+            const prev = firstByRole[item.role];
+            if (!prev || (!prev.layer.visible && item.layer.visible)) {
+                firstByRole[item.role] = item;
+            }
         }
     }
 

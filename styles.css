@@ -2574,7 +2574,8 @@ input[type="number"]:focus,
 /* Layer Preview in List */
 .layer-preview {
     width: 60px;
-    height: 45px;
+    height: 48px;
+    box-sizing: content-box;
     background-color: #222;
     background-image: conic-gradient(#333 25%, transparent 0 50%, #333 0 75%, transparent 0);
     background-size: 8px 8px;
@@ -2584,7 +2585,6 @@ input[type="number"]:focus,
     flex-shrink: 0;
     image-rendering: pixelated;
     display: block;
-    object-fit: contain;
 }
 
 
@@ -2704,6 +2704,7 @@ input[type="number"]:focus,
 
 .layer-preview {
     border: 1px solid #444;
+    box-sizing: content-box;
     background: #000;
     flex-shrink: 0;
     image-rendering: pixelated;
