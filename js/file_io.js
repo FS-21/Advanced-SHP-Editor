@@ -2,7 +2,7 @@ import { state, generateId, TRANSPARENT_COLOR } from './state.js';
 import { elements } from './constants.js';
 import { ShpFormat80 } from './shp_format.js';
 import { TmpTsFile } from './tmp_format.js';
-import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, renderPaletteSimple, createNewProject, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection, syncStatusCompressionUI } from './ui.js';
+import { renderCanvas, renderFramesList, renderTmpComponentsList, updateLayersList, updateCanvasSize, renderPalette, renderPaletteSimple, createNewProject, showEditorInterface, resetFramesList, renderFrameManager, getActiveLayer, showChoice, showConfirm, renderOverlay, showPasteNotification, commitSelection, syncStatusCompressionUI, addFrame, startAnts } from './ui.js';
 import { pushHistory } from './history.js';
 import { findNearestPaletteIndex, quantizeInfurium, getActivePalette } from './utils.js';
 import { PcxLoader } from './pcx_loader.js';
@@ -2859,12 +2859,12 @@ window.openDropImagePaletteDialog = openDropImagePaletteDialog;
  * Robust entry point for system image pasting (Ctrl+V interceptor).
  * Supports ImageData (Direct API) or Blob/File (Paste Event).
  */
-export async function processSystemImagePaste(input) {
+export async function processSystemImagePaste(input, pasteMode = null) {
     try {
         if (!input) return;
         
         // Let the existing handler do the heavy lifting
-        await handleClipboardPaste(input);
+        await handleClipboardPaste(input, pasteMode);
 
     } catch (err) {
         console.error("Paste processing failed:", err);
@@ -2890,7 +2890,7 @@ function _convertImageDataToPixels(imgData) {
  * Handles pasting an image from the clipboard.
  * Now supports both File/Blob objects and raw ImageData.
  */
-export async function handleClipboardPaste(input) {
+export async function handleClipboardPaste(input, pasteMode = null) {
     if (!input) return;
 
     let data;
@@ -3053,15 +3053,36 @@ export async function handleClipboardPaste(input) {
         }
     }
 
-    // Prompt 1: New Layer vs Current Layer
-    const choice = await showChoice(
-        "PASTE IMAGE",
-        "How do you want to paste this image?",
-        "NEW LAYER",
-        "CURRENT LAYER"
-    );
+    if (pasteMode === 'clipboard_only') {
+        const activePal = getActivePalette();
+        const clipData = new Uint16Array(data.width * data.height).fill(TRANSPARENT_COLOR);
+        for (let y = 0; y < data.height; y++) {
+            for (let x = 0; x < data.width; x++) {
+                const color = data.pixels[y * data.width + x];
+                if (color.a < 128) continue;
+                clipData[y * data.width + x] = quantizeInfurium(data.pixels, data.width, data.height, x, y, activePal);
+            }
+        }
+        state.clipboard = { w: data.width, h: data.height, data: clipData, x: 0, y: 0, type: 'rect', maskData: null };
+        state.lastExportedClipboardImage = null;
+        return;
+    }
 
-    if (choice === 'cancel') return;
+    // Prompt 1: New Layer vs Current Layer (unless pasteMode was explicitly specified)
+    let choice;
+    if (pasteMode === 'top' || pasteMode === 'bottom') {
+        choice = 'opt1';
+    } else if (pasteMode === 'active' || pasteMode === 'frame') {
+        choice = 'opt2';
+    } else {
+        choice = await showChoice(
+            "PASTE IMAGE",
+            "How do you want to paste this image?",
+            "NEW LAYER",
+            "CURRENT LAYER"
+        );
+        if (choice === 'cancel') return;
+    }
 
     // Check if image is larger than canvas and prompt for resize
     let shouldResize = false;
@@ -3083,6 +3104,10 @@ export async function handleClipboardPaste(input) {
 
     pushHistory();
 
+    if (pasteMode === 'frame') {
+        addFrame(true, state.currentFrameIdx + 1);
+    }
+
     const sw = state.canvasW;
     const sh = state.canvasH;
     const indices = new Uint16Array(sw * sh).fill(TRANSPARENT_COLOR);
@@ -3099,6 +3124,16 @@ export async function handleClipboardPaste(input) {
         }
     }
 
+    // Update internal clipboard so subsequent Ctrl+V pastes use these quantized indices
+    const clipData = new Uint16Array(dw * dh);
+    for (let y = 0; y < dh; y++) {
+        for (let x = 0; x < dw; x++) {
+            clipData[y * dw + x] = indices[y * sw + x];
+        }
+    }
+    state.clipboard = { w: dw, h: dh, data: clipData, x: 0, y: 0, type: 'rect', maskData: null };
+    state.lastExportedClipboardImage = null;
+
     if (choice === 'opt1') {
         // New Layer
         const frame = state.frames[state.currentFrameIdx];
@@ -3112,7 +3147,11 @@ export async function handleClipboardPaste(input) {
             mask: null,
             editMask: false
         };
-        frame.layers.unshift(newLayer);
+        if (pasteMode === 'bottom') {
+            frame.layers.push(newLayer);
+        } else {
+            frame.layers.unshift(newLayer);
+        }
         state.activeLayerId = newLayer.id;
         frame._v = (frame._v || 0) + 1;
     } else {
@@ -3138,7 +3177,11 @@ export async function handleClipboardPaste(input) {
                 visible: true,
                 width: sw, height: sh
             };
-            frame.layers.unshift(newLayer);
+            if (pasteMode === 'bottom') {
+                frame.layers.push(newLayer);
+            } else {
+                frame.layers.unshift(newLayer);
+            }
             frame._v = (frame._v || 0) + 1;
         }
     }
@@ -3149,12 +3192,15 @@ export async function handleClipboardPaste(input) {
 
     // Create selection around pasted content
     state.selection = {
+        type: 'rect',
         x: 0,
         y: 0,
         w: dw,
         h: dh
     };
+    startAnts();
     renderOverlay();
+    if (typeof updateUIState === 'function') updateUIState();
 }
 
 // ─────────────────────────────────────────────────────────────────

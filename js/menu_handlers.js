@@ -63,13 +63,13 @@ export function updateMenuState(hasProject) {
         'menuRedo': state.historyPtr < state.history.length - 1,
         'menuCut': !!state.selection,
         'menuCopy': !!state.selection,
-        'menuPasteActive': !!state.clipboard,
-        'menuPasteNewLayer': !!state.clipboard,
-        'menuPasteNewLayerRange': !!state.clipboard,
-        'menuPasteNewLayerBottom': !!state.clipboard,
-        'menuPasteNewLayerBottomRange': !!state.clipboard,
-        'menuPasteNewFrame': !!state.clipboard,
-        'triggerPaste': !!state.clipboard,
+        'menuPasteActive': hasProject,
+        'menuPasteNewLayer': hasProject,
+        'menuPasteNewLayerRange': hasProject,
+        'menuPasteNewLayerBottom': hasProject,
+        'menuPasteNewLayerBottomRange': hasProject,
+        'menuPasteNewFrame': hasProject,
+        'triggerPaste': hasProject,
         'menuFill': !!state.selection,
         'menuDelete': !!state.selection,
         'menuSelectAll': hasProject,
@@ -1556,17 +1556,36 @@ async function getFrameAsBlob(frameIdx, format) {
 }
 
 function setupEditMenu() {
+    const runPasteMenuAction = async (pasteMode, internalFn) => {
+        if ((isNativeApp() || !state.clipboard || state.clipboardExternalCheckNeeded) && typeof window.systemClipboardInterceptor === 'function') {
+            const handled = await window.systemClipboardInterceptor(pasteMode);
+            if (handled) return;
+        }
+        if (state.clipboard) {
+            internalFn();
+        }
+    };
+
+    const runPasteRangeMenuAction = async (position) => {
+        if ((isNativeApp() || !state.clipboard || state.clipboardExternalCheckNeeded) && typeof window.systemClipboardInterceptor === 'function') {
+            await window.systemClipboardInterceptor('clipboard_only');
+        }
+        if (state.clipboard) {
+            openPasteRangeDialog(position);
+        }
+    };
+
     const handlers = {
         'menuUndo': () => undo(),
         'menuRedo': () => redo(),
         'menuCut': () => { cutSelection(); },
         'menuCopy': () => copySelection(),
-        'menuPasteActive': () => pasteClipboard(false),
-        'menuPasteNewLayer': () => pasteClipboard(true),
-        'menuPasteNewLayerRange': () => openPasteRangeDialog('top'),
-        'menuPasteNewLayerBottom': () => pasteClipboard('bottom'),
-        'menuPasteNewLayerBottomRange': () => openPasteRangeDialog('bottom'),
-        'menuPasteNewFrame': () => pasteAsNewFrame(),
+        'menuPasteActive': () => runPasteMenuAction('active', () => pasteClipboard(false)),
+        'menuPasteNewLayer': () => runPasteMenuAction('top', () => pasteClipboard(true)),
+        'menuPasteNewLayerRange': () => runPasteRangeMenuAction('top'),
+        'menuPasteNewLayerBottom': () => runPasteMenuAction('bottom', () => pasteClipboard('bottom')),
+        'menuPasteNewLayerBottomRange': () => runPasteRangeMenuAction('bottom'),
+        'menuPasteNewFrame': () => runPasteMenuAction('frame', () => pasteAsNewFrame()),
         'menuFill': () => fillSelection(),
         'menuDelete': () => deleteSelection(),
         'menuSelectAll': () => selectAll(),
@@ -2590,14 +2609,24 @@ function setupUnifiedCanvasResizeDialog() {
 
     // --- Classic Mode Logic ---
     if (elements.inpCanvasW) elements.inpCanvasW.oninput = () => {
-        if (elements.chkResizeAspectRatio.checked) elements.inpCanvasH.value = Math.round(elements.inpCanvasW.value / state.canvasW * state.canvasH);
+        if (elements.chkCanvasAspectRatio && elements.chkCanvasAspectRatio.checked && state.canvasW > 0) {
+            elements.inpCanvasH.value = Math.round(elements.inpCanvasW.value / state.canvasW * state.canvasH);
+        }
         update();
     };
     if (elements.inpCanvasH) elements.inpCanvasH.oninput = () => {
         if (elements.radioResizeModeClassic.checked) {
-            if (elements.chkResizeAspectRatio.checked) elements.inpCanvasW.value = Math.round(elements.inpCanvasH.value / state.canvasH * state.canvasW);
+            if (elements.chkCanvasAspectRatio && elements.chkCanvasAspectRatio.checked && state.canvasH > 0) {
+                elements.inpCanvasW.value = Math.round(elements.inpCanvasH.value / state.canvasH * state.canvasW);
+            }
         }
         update();
+    };
+    if (elements.chkCanvasAspectRatio) elements.chkCanvasAspectRatio.onchange = () => {
+        if (elements.chkCanvasAspectRatio.checked && state.canvasW > 0) {
+            elements.inpCanvasH.value = Math.round(elements.inpCanvasW.value / state.canvasW * state.canvasH);
+            update();
+        }
     };
 
 

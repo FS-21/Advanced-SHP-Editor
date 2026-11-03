@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shp-editor-20261029_213331';
+const CACHE_NAME = 'shp-editor-20261103_140401';
 const ASSETS = [
     './',
     './advanced_shp_editor.html',

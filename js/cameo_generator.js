@@ -2798,8 +2798,7 @@ export async function copyCameoToClipboard() {
         const blob = await new Promise(resolve => c.toBlob(resolve, 'image/png'));
         if (!blob) return;
         if (isNativeApp()) {
-            const ab = await blob.arrayBuffer();
-            await nativeWriteClipboardImage(new Uint8Array(ab));
+            await nativeWriteClipboardImage(W, H, imgData.data);
         } else if (navigator.clipboard && window.ClipboardItem) {
             await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         }

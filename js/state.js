@@ -131,6 +131,8 @@ export const state = {
     canvasH: 48,
     compression: 3, // Default compression (3=RLE)
     copyClipboard: null,
+    lastExportedClipboardImage: null,
+    clipboardExternalCheckNeeded: true,
 
     // View Options
     showBackground: true, // true=Solid (Index 0), false=Checkerboard
@@ -238,7 +240,7 @@ export const state = {
             tab.framesListScrollTop = framesListEl.scrollTop;
         }
         const ignoredKeys = [
-            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
+            'id', 'fileName', 'idName', 'internalClipboard', 'clipboard', 'lastExportedClipboardImage', 'clipboardExternalCheckNeeded', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
             'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard',
             'tabs', 'activeTabIndex', 'newFileCounter', '_currentLoadedTab', 'saveToTab', 'loadFromTab'
@@ -261,7 +263,7 @@ export const state = {
         if (!tab) return;
         this._currentLoadedTab = tab;
         const ignoredKeys = [
-            'id', 'fileName', 'idName', 'internalClipboard', 'fileHandle', 'filePath', 'fileLastModified',
+            'id', 'fileName', 'idName', 'internalClipboard', 'clipboard', 'lastExportedClipboardImage', 'clipboardExternalCheckNeeded', 'fileHandle', 'filePath', 'fileLastModified',
             'replacePairs', 'replaceSelection', 'isPickingForReplace', 'isPreviewingReplacement',
             'isReplacePreviewActive', 'multiPickCounter', 'lastReplaceIdx', 'replaceClipboard',
             'tabs', 'activeTabIndex', 'newFileCounter', '_currentLoadedTab', 'saveToTab', 'loadFromTab'

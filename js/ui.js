@@ -9,7 +9,7 @@ import { openExternalShpDialog } from './external_shp.js';
 import { t, applyTranslations } from './translations.js';
 import { getCurrentEditedTiles } from './file_io.js';
 import { TmpTsFile } from './tmp_format.js';
-import { isNativeApp, nativeWriteClipboardImage } from './native_bridge.js';
+import { isNativeApp, nativeWriteClipboardImage, nativeReadClipboardImage } from './native_bridge.js';
 
 /* Animation for Marching Ants */
 export function startAnts() {
@@ -4880,6 +4880,23 @@ export function copySelection() {
  * navigator.clipboard.write() does NOT require user permission — only read() does.
  * This allows pasting into external apps without any browser prompt.
  */
+export function isSameClipboardRgba(imgA, imgB) {
+    if (!imgA || !imgB) return false;
+    if (imgA.width !== imgB.width || imgA.height !== imgB.height) return false;
+    const a = imgA.rgba;
+    const b = imgB.rgba;
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 4) {
+        const alphaA = a[i + 3];
+        const alphaB = b[i + 3];
+        if (alphaA === 0 && alphaB === 0) continue;
+        if (alphaA !== alphaB || a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
     try {
         let canvas;
@@ -4898,9 +4915,10 @@ export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
             const ctx = canvas.getContext('2d');
 
             const imageData = ctx.createImageData(width, height);
+            const activePal = getActivePalette();
             for (let i = 0; i < indices.length; i++) {
                 const paletteIdx = indices[i];
-                const color = state.palette[paletteIdx] || { r: 0, g: 0, b: 0 };
+                const color = activePal[paletteIdx] || { r: 0, g: 0, b: 0 };
                 const offset = i * 4;
                 imageData.data[offset] = color.r;
                 imageData.data[offset + 1] = color.g;
@@ -4911,9 +4929,20 @@ export async function exportToSystemClipboard(indicesOrCanvas, width, height) {
             rgbaData = imageData.data;
         }
 
+        state.lastExportedClipboardImage = {
+            width,
+            height,
+            rgba: new Uint8ClampedArray(rgbaData)
+        };
+        state.clipboardExternalCheckNeeded = false;
+
         if (isNativeApp()) {
             const ok = await nativeWriteClipboardImage(width, height, rgbaData);
             if (ok) {
+                const roundtrip = await nativeReadClipboardImage();
+                if (roundtrip && roundtrip.width && roundtrip.height && roundtrip.rgba) {
+                    state.lastExportedClipboardImage = roundtrip;
+                }
                 console.log('Image copied directly to OS clipboard via native bridge.');
                 showPasteNotification(t('msg_selection_copied_clipboard'), "success", 2500);
                 return;

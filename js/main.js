@@ -35,7 +35,7 @@ import {
     showEditorInterface, renderPaletteSimple, initFrameManager,
     showConfirm, showChoice, setColor, updateActiveLayerPreview, setupSubmenusRecursive,
     openActiveLayerProperties, setupTooltips, getLayerDataSnapshot, setupToolbarOverflow,
-    showPasteNotification, initPasteRangeDialog, setHoveredPaletteIndex
+    showPasteNotification, initPasteRangeDialog, setHoveredPaletteIndex, isSameClipboardRgba
 } from './ui.js';
 import { initPreviewWindow, openPreview } from './preview_window.js';
 import {
@@ -286,13 +286,29 @@ function setupEventListeners() {
             return;
         }
 
-        if (isNativeApp() && (e.key === 'F5' || (ctrl && k === 'r'))) {
+        if (isNativeApp() && e.key === 'F5') {
             const hasUnsaved = state.tabs && state.tabs.some(t => t.hasChanges);
             if (hasUnsaved) {
                 e.preventDefault();
                 showPasteNotification(t('msg_reload_blocked_unsaved'), "warning", 4000);
                 return;
             }
+        }
+
+        if (ctrl && k === 'r') {
+            e.preventDefault();
+            if (!document.querySelector('dialog[open]') && state.frames && state.frames.length > 0 && !state.isTmpMode) {
+                if (e.shiftKey) {
+                    if (typeof window.showUnifiedCanvasResizeDialog === 'function') {
+                        window.showUnifiedCanvasResizeDialog();
+                    }
+                } else {
+                    if (typeof window.showResizeImageDialog === 'function') {
+                        window.showResizeImageDialog();
+                    }
+                }
+            }
+            return;
         }
 
         if (k === 'g' && !ctrl) {
@@ -338,15 +354,43 @@ function setupEventListeners() {
             if (isEditableTextInput(e.target)) return;
             e.preventDefault();
 
+            const cgDlg = document.getElementById('cameoGeneratorDialog');
+            if (cgDlg && cgDlg.open) {
+                if (isNativeApp() && typeof window.loadCameoImageFromFile === 'function') {
+                    const nativeImg = await nativeReadClipboardImage();
+                    if (nativeImg && nativeImg.width && nativeImg.height && nativeImg.rgba) {
+                        const tmpCanvas = document.createElement('canvas');
+                        tmpCanvas.width = nativeImg.width;
+                        tmpCanvas.height = nativeImg.height;
+                        tmpCanvas.getContext('2d').putImageData(new ImageData(nativeImg.rgba, nativeImg.width, nativeImg.height), 0, 0);
+                        const blob = await new Promise(resolve => tmpCanvas.toBlob(resolve, 'image/png'));
+                        if (blob) await window.loadCameoImageFromFile(blob);
+                    }
+                }
+                return;
+            }
+
             const replacePanel = document.getElementById('sidePanelExtra');
             const isReplaceActive = replacePanel && !replacePanel.classList.contains('collapsed');
 
             if (isReplaceActive && state.replaceClipboard && state.replaceClipboard.length > 0) {
                 pasteReplacePairs();
             } else {
-                if (state.clipboard) {
-                    // Internal clipboard has data: paste without touching navigator.clipboard.read()
-                    // (reading from system clipboard always triggers the browser permission prompt).
+                let pasteMode = null;
+                if (e.shiftKey && e.altKey) {
+                    pasteMode = 'bottom';
+                } else if (e.altKey) {
+                    pasteMode = 'frame';
+                } else if (e.shiftKey) {
+                    pasteMode = 'top';
+                }
+
+                let hadExternalPaste = false;
+                if (isNativeApp() || !state.clipboard || state.clipboardExternalCheckNeeded) {
+                    hadExternalPaste = await systemClipboardInterceptor(pasteMode);
+                }
+
+                if (!hadExternalPaste && state.clipboard) {
                     if (e.shiftKey && e.altKey) {
                         pasteClipboard('bottom');
                     } else if (e.altKey) {
@@ -356,13 +400,6 @@ function setupEventListeners() {
                     } else {
                         pasteClipboard(false); // To Active Layer
                     }
-                } else {
-                    // No internal clipboard — try to paste from system (external image).
-                    // This may trigger the browser permission prompt, which is expected
-                    // when pasting something copied from outside this editor.
-                    const hadExternalPaste = await systemClipboardInterceptor();
-                    // systemClipboardInterceptor handles paste internally if it finds an image.
-                    void hadExternalPaste;
                 }
             }
         }
@@ -470,24 +507,26 @@ function setupEventListeners() {
 
         if (isEditableTextInput(document.activeElement) || (document.activeElement && document.activeElement.tagName.toLowerCase() === 'select')) return;
 
-        if (k === 'p') setTool('pencil');
-        if (k === 'l') setTool('line');
-        if (k === 'r') setTool('rect');
-        if (k === 'e') setTool('eraser');
-        if (k === 'm') {
-            if (activeTool === 'movePixels') setTool('moveSelectionArea');
-            else setTool('movePixels');
-        }
-        if (k === 's') setTool('select');
-        if (k === 'n') setTool('lasso');
-        if (k === 'w') setTool('wand');
-        if (k === 'y') {
-            setTool('spray');
-            if (state.toolSettings.brushSize === 1) {
-                if (typeof updateBrushSizeDisplay === 'function') updateBrushSizeDisplay(7);
+        if (!ctrl && !e.altKey) {
+            if (k === 'p') setTool('pencil');
+            if (k === 'l') setTool('line');
+            if (k === 'r') setTool('rect');
+            if (k === 'e') setTool('eraser');
+            if (k === 'm') {
+                if (activeTool === 'movePixels') setTool('moveSelectionArea');
+                else setTool('movePixels');
             }
+            if (k === 's') setTool('select');
+            if (k === 'n') setTool('lasso');
+            if (k === 'w') setTool('wand');
+            if (k === 'y') {
+                setTool('spray');
+                if (state.toolSettings.brushSize === 1) {
+                    if (typeof updateBrushSizeDisplay === 'function') updateBrushSizeDisplay(7);
+                }
+            }
+            if (k === 'i') setTool('picker');
         }
-        if (k === 'i') setTool('picker');
         // Removed redundant deleteSelection call here, it's handled by 'delete' key
         // if (k === 'delete' && state.selection) deleteSelection();
 
@@ -2522,9 +2561,21 @@ function initNewShpDialog() {
     }
 }
 
+window.addEventListener('blur', () => {
+    state.clipboardExternalCheckNeeded = true;
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        state.clipboardExternalCheckNeeded = true;
+    }
+});
+
 window.addEventListener('paste', (e) => {
     // Only handle image paste if we are not in an input
-    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (isEditableTextInput(document.activeElement)) return;
+    const cgDlg = document.getElementById('cameoGeneratorDialog');
+    if (cgDlg && cgDlg.open) return;
 
     if (e.clipboardData && e.clipboardData.items) {
         for (const item of e.clipboardData.items) {
@@ -2537,23 +2588,67 @@ window.addEventListener('paste', (e) => {
     }
 });
 
+async function decodeClipboardBlobToRgba(blob) {
+    try {
+        if (typeof createImageBitmap === 'function') {
+            const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+            const canvas = document.createElement('canvas');
+            canvas.width = bmp.width;
+            canvas.height = bmp.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(bmp, 0, 0);
+            if (typeof bmp.close === 'function') bmp.close();
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            return { width: canvas.width, height: canvas.height, rgba: imgData.data };
+        }
+    } catch (e) {
+        // Fallback to HTMLImageElement below
+    }
+    return new Promise((resolve) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(url);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            resolve({ width: canvas.width, height: canvas.height, rgba: imgData.data });
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+        };
+        img.src = url;
+    });
+}
+
 /**
  * Modern Clipboard API Interceptor (Reliable Ctrl+V)
  * Bridges the gap when standard onpaste event isn't triggered or is restricted.
  */
-async function systemClipboardInterceptor() {
+async function systemClipboardInterceptor(pasteMode = null) {
     if (isNativeApp()) {
         const text = await nativeReadClipboardText();
         if (text === "__SHP_DATA__") {
             console.log("Internal SHP Sentinel detected via native bridge - Skipping system paste.");
+            state.clipboardExternalCheckNeeded = false;
             return false;
         }
         const nativeImg = await nativeReadClipboardImage();
         if (nativeImg && nativeImg.width && nativeImg.height && nativeImg.rgba) {
+            if (state.clipboard && state.lastExportedClipboardImage && isSameClipboardRgba(nativeImg, state.lastExportedClipboardImage)) {
+                state.clipboardExternalCheckNeeded = false;
+                return false;
+            }
             const imgData = new ImageData(nativeImg.rgba, nativeImg.width, nativeImg.height);
-            await processSystemImagePaste(imgData);
+            await processSystemImagePaste(imgData, pasteMode);
+            state.clipboardExternalCheckNeeded = false;
             return true;
         }
+        state.clipboardExternalCheckNeeded = false;
         return false;
     }
 
@@ -2570,6 +2665,7 @@ async function systemClipboardInterceptor() {
                 const text = await textBlob.text();
                 if (text === "__SHP_DATA__") {
                     console.log("Internal SHP Sentinel detected - Skipping system paste to use internal indices.");
+                    state.clipboardExternalCheckNeeded = false;
                     return false; // Let the internal clipboard handler proceed
                 }
             }
@@ -2578,11 +2674,20 @@ async function systemClipboardInterceptor() {
             for (const type of item.types) {
                 if (type.startsWith('image/')) {
                     const blob = await item.getType(type);
-                    processSystemImagePaste(blob);
+                    if (state.clipboard && state.lastExportedClipboardImage) {
+                        const decoded = await decodeClipboardBlobToRgba(blob);
+                        if (decoded && isSameClipboardRgba(decoded, state.lastExportedClipboardImage)) {
+                            state.clipboardExternalCheckNeeded = false;
+                            return false;
+                        }
+                    }
+                    await processSystemImagePaste(blob, pasteMode);
+                    state.clipboardExternalCheckNeeded = false;
                     return true;
                 }
             }
         }
+        state.clipboardExternalCheckNeeded = false;
     } catch (err) {
         console.warn("Clipboard API restricted or blocked by user. Standard paste event remains fallback.");
         if (err.name === 'NotAllowedError') {
@@ -2591,6 +2696,7 @@ async function systemClipboardInterceptor() {
     }
     return false;
 }
+window.systemClipboardInterceptor = systemClipboardInterceptor;
 
 window.onload = init;
 
@@ -2662,7 +2768,7 @@ window.addEventListener('wheel', (e) => {
 window.addEventListener('keydown', (e) => {
     if (!e.key) return;
     const k = e.key.toLowerCase();
-    if (e.ctrlKey && (k === '+' || k === '=' || k === '-' || k === '0')) {
+    if ((e.ctrlKey || e.metaKey) && (k === '+' || k === '=' || k === '-' || k === '0' || k === 'r')) {
         // We still allow Ctrl+0 via our main shortcut listener so it triggers the "Center" button,
         // but this stops the browser's native zoom reset.
         e.preventDefault();
